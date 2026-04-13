@@ -176,11 +176,13 @@ enum PyMobileDevice {
         // Try JSON parse first
         if let data = output.data(using: .utf8),
            let json = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+            // Deduplicate - same device appears via USB + Network
+            var seen = Set<String>()
             return json.compactMap {
                 $0["Identifier"] as? String
                     ?? $0["UniqueDeviceID"] as? String
                     ?? $0["SerialNumber"] as? String
-            }
+            }.filter { seen.insert($0).inserted }
         }
 
         // Fallback: line-based parsing
