@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Phosphor - Free iOS Device Manager for macOS</title>
+<meta name="description" content="Free and open-source iOS device manager for macOS. Browse backups, export messages, extract photos, manage apps. No subscriptions, no iCloud lock-in.">
+<meta property="og:title" content="Phosphor - Free iOS Device Manager for macOS">
+<meta property="og:description" content="Open-source replacement for iMazing. Browse backups, export iMessages, extract photos, manage apps.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://momenbasel.github.io/Phosphor/">
+<style>
+  :root {
+    --indigo: #5856D6;
+    --indigo-light: #7B79E0;
+    --indigo-dark: #3D3BBF;
+    --bg: #0D0D12;
+    --bg-card: #16161F;
+    --text: #F5F5F7;
+    --text-secondary: #86868B;
+    --border: #2A2A35;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .container { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+  /* Nav */
+  nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    background: rgba(13,13,18,0.8);
+    border-bottom: 1px solid var(--border);
+  }
+  nav .container {
+    display: flex; align-items: center; justify-content: space-between;
+    height: 56px;
+  }
+  nav .logo {
+    font-size: 18px; font-weight: 700; color: var(--text);
+    text-decoration: none; display: flex; align-items: center; gap: 8px;
+  }
+  nav .logo .icon {
+    width: 28px; height: 28px; background: var(--indigo);
+    border-radius: 7px; display: flex; align-items: center; justify-content: center;
+    font-size: 16px; font-weight: 800; color: white;
+  }
+  nav .links { display: flex; gap: 24px; align-items: center; }
+  nav .links a {
+    color: var(--text-secondary); text-decoration: none; font-size: 14px;
+    transition: color 0.2s;
+  }
+  nav .links a:hover { color: var(--text); }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 10px 20px; border-radius: 10px; font-size: 14px; font-weight: 600;
+    text-decoration: none; transition: all 0.2s;
+  }
+  .btn-primary {
+    background: var(--indigo); color: white;
+  }
+  .btn-primary:hover { background: var(--indigo-light); transform: translateY(-1px); }
+  .btn-secondary {
+    background: transparent; color: var(--text); border: 1px solid var(--border);
+  }
+  .btn-secondary:hover { border-color: var(--indigo); color: var(--indigo-light); }
+
+  /* Hero */
+  .hero {
+    padding: 140px 0 80px; text-align: center;
+    background: radial-gradient(ellipse at 50% 0%, rgba(88,86,214,0.15) 0%, transparent 60%);
+  }
+  .hero .badge {
+    display: inline-block; padding: 6px 14px; border-radius: 20px;
+    background: rgba(88,86,214,0.15); color: var(--indigo-light);
+    font-size: 13px; font-weight: 600; margin-bottom: 20px;
+    border: 1px solid rgba(88,86,214,0.25);
+  }
+  .hero h1 {
+    font-size: clamp(40px, 6vw, 64px); font-weight: 800;
+    letter-spacing: -0.03em; line-height: 1.1; margin-bottom: 16px;
+  }
+  .hero h1 .gradient {
+    background: linear-gradient(135deg, var(--indigo-light), #A78BFA, var(--indigo));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .hero p {
+    font-size: 18px; color: var(--text-secondary); max-width: 560px;
+    margin: 0 auto 32px;
+  }
+  .hero .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .hero .install-cmd {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--bg-card); border: 1px solid var(--border);
+    padding: 12px 20px; border-radius: 10px; font-family: 'SF Mono', monospace;
+    font-size: 14px; color: var(--text-secondary); margin-top: 24px;
+    cursor: pointer; transition: border-color 0.2s;
+  }
+  .hero .install-cmd:hover { border-color: var(--indigo); }
+  .hero .install-cmd code { color: var(--text); }
+
+  /* Features */
+  .features { padding: 80px 0; }
+  .features h2 {
+    font-size: 36px; font-weight: 700; text-align: center;
+    margin-bottom: 12px; letter-spacing: -0.02em;
+  }
+  .features .subtitle {
+    text-align: center; color: var(--text-secondary); margin-bottom: 48px;
+    font-size: 16px;
+  }
+  .feature-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 16px;
+  }
+  .feature-card {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 16px; padding: 28px;
+    transition: border-color 0.3s, transform 0.3s;
+  }
+  .feature-card:hover {
+    border-color: rgba(88,86,214,0.4); transform: translateY(-2px);
+  }
+  .feature-card .icon-wrap {
+    width: 44px; height: 44px; border-radius: 12px;
+    background: rgba(88,86,214,0.12); display: flex;
+    align-items: center; justify-content: center;
+    font-size: 20px; margin-bottom: 16px;
+  }
+  .feature-card h3 { font-size: 17px; font-weight: 600; margin-bottom: 8px; }
+  .feature-card p { font-size: 14px; color: var(--text-secondary); line-height: 1.5; }
+
+  /* Comparison */
+  .comparison { padding: 80px 0; }
+  .comparison h2 {
+    font-size: 36px; font-weight: 700; text-align: center;
+    margin-bottom: 40px; letter-spacing: -0.02em;
+  }
+  table {
+    width: 100%; border-collapse: collapse;
+    background: var(--bg-card); border-radius: 16px;
+    overflow: hidden; border: 1px solid var(--border);
+  }
+  th {
+    text-align: left; padding: 16px 20px; font-size: 13px;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--text-secondary); background: rgba(0,0,0,0.3);
+    border-bottom: 1px solid var(--border);
+  }
+  td {
+    padding: 14px 20px; font-size: 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  tr:last-child td { border-bottom: none; }
+  .check { color: #34C759; }
+  .cross { color: #FF3B30; }
+  .planned { color: #FF9500; font-style: italic; }
+  .highlight-col { background: rgba(88,86,214,0.06); }
+
+  /* CTA */
+  .cta-section {
+    padding: 80px 0; text-align: center;
+    border-top: 1px solid var(--border);
+  }
+  .cta-section h2 {
+    font-size: 32px; font-weight: 700; margin-bottom: 12px;
+  }
+  .cta-section p {
+    color: var(--text-secondary); margin-bottom: 28px; font-size: 16px;
+  }
+
+  /* Footer */
+  footer {
+    padding: 32px 0; border-top: 1px solid var(--border);
+    text-align: center; color: var(--text-secondary); font-size: 13px;
+  }
+  footer a { color: var(--indigo-light); text-decoration: none; }
+
+  @media (max-width: 640px) {
+    .feature-grid { grid-template-columns: 1fr; }
+    table { font-size: 12px; }
+    th, td { padding: 10px 12px; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="container">
+    <a href="/" class="logo">
+      <span class="icon">P</span> Phosphor
+    </a>
+    <div class="links">
+      <a href="#features">Features</a>
+      <a href="#comparison">Compare</a>
+      <a href="https://github.com/momenbasel/Phosphor">GitHub</a>
+      <a href="https://github.com/momenbasel/Phosphor/releases/latest" class="btn btn-primary">Download</a>
+    </div>
+  </div>
+</nav>
+
+<section class="hero">
+  <div class="container">
+    <span class="badge">v1.0.0 - Now Available</span>
+    <h1>Your iPhone.<br><span class="gradient">Your data.</span></h1>
+    <p>A free, open-source iOS device manager that does everything the $50/year tools do. No subscriptions. No iCloud. No compromises.</p>
+    <div class="cta">
+      <a href="https://github.com/momenbasel/Phosphor/releases/latest" class="btn btn-primary">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 12l-4-4h2.5V4h3v4H12L8 12z"/><path d="M2 14h12v-1.5H2V14z"/></svg>
+        Download DMG
+      </a>
+      <a href="https://github.com/momenbasel/Phosphor" class="btn btn-secondary">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        View Source
+      </a>
+    </div>
+    <div class="install-cmd" onclick="navigator.clipboard.writeText('brew install --cask phosphor')">
+      $ <code>brew install --cask phosphor</code>
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" opacity="0.5"><path d="M4 4v10h8V4H4zm7 9H5V5h6v8zM6 2v1h5v1h1V2c0-.6-.4-1-1-1H7c-.6 0-1 .4-1 1z"/></svg>
+    </div>
+  </div>
+</section>
+
+<section id="features" class="features">
+  <div class="container">
+    <h2>Everything you need. Nothing you don't.</h2>
+    <p class="subtitle">Built natively with SwiftUI. Powered by libimobiledevice.</p>
+
+    <div class="feature-grid">
+      <div class="feature-card">
+        <div class="icon-wrap">&#128241;</div>
+        <h3>Device Dashboard</h3>
+        <p>Auto-detect connected devices. View model, iOS version, serial number, UDID, IMEI, battery health, and storage breakdown at a glance.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon-wrap">&#128190;</div>
+        <h3>Smart Backups</h3>
+        <p>Full and incremental local backups. Browse backup contents through Manifest.db. Extract individual files without restoring the entire device.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon-wrap">&#128172;</div>
+        <h3>Message Export</h3>
+        <p>Browse all iMessage and SMS conversations. Export to CSV, HTML, JSON, or plain text. HTML export styled with native chat bubbles.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon-wrap">&#127748;</div>
+        <h3>Photo Extraction</h3>
+        <p>Browse Camera Roll from any backup. Filter by photos, videos, or screenshots. Batch extract to any folder with original filenames.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon-wrap">&#128230;</div>
+        <h3>App Management</h3>
+        <p>Install and remove IPAs directly. Browse app data in backups. Extract individual app containers - Documents, Library, tmp directories.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon-wrap">&#128196;</div>
+        <h3>File Browser</h3>
+        <p>Mount the device filesystem via AFC. Navigate directories, copy files to and from your device, view file metadata and sizes.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon-wrap">&#9889;</div>
+        <h3>Diagnostics</h3>
+        <p>Battery health with mAh details. Storage breakdown by category. Real-time syslog streaming with filtering and export.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon-wrap">&#128274;</div>
+        <h3>No Lock-in</h3>
+        <p>Everything stays local. No iCloud dependency. No account required. No subscription. Your data never leaves your machine.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon-wrap">&#128736;</div>
+        <h3>Open Source</h3>
+        <p>MIT licensed. Read every line of code. Fork it, modify it, ship it. Zero external Swift dependencies - just system frameworks.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="comparison" class="comparison">
+  <div class="container">
+    <h2>How Phosphor compares</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Feature</th>
+          <th>Finder</th>
+          <th>iMazing ($50/yr)</th>
+          <th class="highlight-col">Phosphor (Free)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Full device backup</td><td class="check">Yes</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
+        <tr><td>Incremental backup</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
+        <tr><td>Browse backup files</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
+        <tr><td>Selective restore</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
+        <tr><td>Export iMessages</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
+        <tr><td>Export WhatsApp</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col planned">Planned</td></tr>
+        <tr><td>Photo extraction</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
+        <tr><td>App management</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
+        <tr><td>Battery diagnostics</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
+        <tr><td>Device console</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
+        <tr><td>Open source</td><td class="cross">No</td><td class="cross">No</td><td class="highlight-col check"><strong>MIT</strong></td></tr>
+        <tr><td>Price</td><td>Free</td><td>$49.99/yr</td><td class="highlight-col"><strong>Free forever</strong></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="cta-section">
+  <div class="container">
+    <h2>Take control of your device.</h2>
+    <p>No sign-up. No payment. Just download and go.</p>
+    <div style="display: flex; gap: 12px; justify-content: center;">
+      <a href="https://github.com/momenbasel/Phosphor/releases/latest" class="btn btn-primary">Download Phosphor</a>
+      <a href="https://github.com/momenbasel/Phosphor" class="btn btn-secondary">Star on GitHub</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <p>Phosphor is open source under the <a href="https://github.com/momenbasel/Phosphor/blob/main/LICENSE">MIT License</a>. Built by <a href="https://github.com/momenbasel">Moamen Basel</a>.</p>
+  </div>
+</footer>
+
+</body>
+</html>
