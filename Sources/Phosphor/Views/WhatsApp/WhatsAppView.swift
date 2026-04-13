@@ -11,10 +11,8 @@ struct WhatsAppView: View {
     @State private var errorMessage: String?
     @State private var searchText = ""
 
-    private var exporter: WhatsAppExporter? {
-        guard let backup = backupVM.selectedBackup else { return nil }
-        return try? WhatsAppExporter(backupPath: backup.path)
-    }
+    /// Cached exporter - avoid recreating on every access
+    @State private var cachedExporter: WhatsAppExporter?
 
     var body: some View {
         HSplitView {
@@ -23,6 +21,13 @@ struct WhatsAppView: View {
             messagePane
         }
         .onAppear(perform: loadChats)
+        .onChange(of: selectedChat) { _, newChat in
+            guard let chat = newChat, let exp = cachedExporter else {
+                messages = []
+                return
+            }
+            messages = (try? exp.getMessages(chatId: chat.id)) ?? []
+        }
     }
 
     // MARK: - Chat List
@@ -193,6 +198,7 @@ struct WhatsAppView: View {
 
         do {
             let wa = try WhatsAppExporter(backupPath: backup.path)
+            cachedExporter = wa
             chats = try wa.getChats()
         } catch {
             errorMessage = error.localizedDescription
@@ -204,16 +210,7 @@ struct WhatsAppView: View {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "\(chat.displayName).\(format.fileExtension)"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? exporter?.exportChat(chatId: chat.id, format: format, to: url.path)
+        try? cachedExporter?.exportChat(chatId: chat.id, format: format, to: url.path)
     }
 
-    // MARK: - Selection handler
-    // onChange doesn't work well with optional bindings in older SwiftUI, handle via task
-}
-
-extension WhatsAppView {
-    func onChatSelected(_ chat: WhatsAppExporter.WAChat) {
-        guard let exp = exporter else { return }
-        messages = (try? exp.getMessages(chatId: chat.id)) ?? []
-    }
 }

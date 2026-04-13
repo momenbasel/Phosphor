@@ -1,0 +1,109 @@
+/* Phosphor - Arabic */
+
+/* Sidebar */
+"sidebar.devices" = "الاجهزة";
+"sidebar.backups" = "النسخ الاحتياطية";
+"sidebar.backupBrowser" = "متصفح النسخ";
+"sidebar.timeMachine" = "آلة الزمن";
+"sidebar.messages" = "الرسائل";
+"sidebar.whatsapp" = "واتساب";
+"sidebar.photos" = "الصور";
+"sidebar.apps" = "التطبيقات";
+"sidebar.notes" = "الملاحظات";
+"sidebar.callLog" = "سجل المكالمات";
+"sidebar.safari" = "سفاري";
+"sidebar.health" = "الصحة";
+"sidebar.music" = "الموسيقى";
+"sidebar.files" = "نظام الملفات";
+"sidebar.diagnostics" = "التشخيصات";
+"sidebar.watch" = "ساعة ابل";
+"sidebar.contacts" = "جهات الاتصال";
+"sidebar.calendar" = "التقويم";
+
+/* Section Groups */
+"group.device" = "الجهاز";
+"group.data" = "البيانات";
+"group.backups" = "النسخ الاحتياطية";
+"group.tools" = "الادوات";
+
+/* Common Actions */
+"action.refresh" = "تحديث";
+"action.export" = "تصدير...";
+"action.exportAll" = "تصدير الكل...";
+"action.extractHere" = "استخراج هنا";
+"action.browse" = "تصفح";
+"action.delete" = "حذف";
+"action.cancel" = "الغاء";
+"action.save" = "حفظ";
+"action.search" = "بحث...";
+"action.copyToMac" = "نسخ الى الماك...";
+"action.copyToDevice" = "نسخ الى الجهاز...";
+"action.mount" = "تحميل الجهاز";
+"action.unmount" = "الغاء التحميل";
+"action.restore" = "استعادة";
+"action.pair" = "اقتران الجهاز";
+"action.newBackup" = "نسخة جديدة";
+"action.importArchive" = "استيراد .phosphor";
+"action.exportArchive" = "تصدير .phosphor";
+
+/* Device */
+"device.noDeviceConnected" = "لا يوجد جهاز متصل";
+"device.connectViaUSB" = "قم بتوصيل iPhone او iPad او iPod touch عبر USB لادارته باستخدام Phosphor.";
+"device.scanForDevices" = "البحث عن اجهزة";
+"device.noDevice" = "لا يوجد جهاز متصل";
+"device.connectViaUSBOrWiFi" = "اتصل عبر USB او Wi-Fi";
+"device.batteryHealth" = "صحة البطارية";
+"device.storage" = "التخزين";
+"device.deviceInfo" = "معلومات الجهاز";
+"device.quickActions" = "اجراءات سريعة";
+"device.restart" = "اعادة تشغيل";
+"device.sleep" = "سكون";
+"device.screenshot" = "لقطة شاشة";
+
+/* Backups */
+"backup.backups" = "النسخ الاحتياطية";
+"backup.noBackupsFound" = "لا توجد نسخ احتياطية";
+"backup.createBackupDesc" = "انشئ نسخة احتياطية لتصفح المحتويات واستخراج الرسائل والصور وبيانات التطبيقات.";
+"backup.createBackup" = "انشاء نسخة";
+"backup.deleteBackup" = "حذف النسخة؟";
+"backup.deleteConfirm" = "سيتم حذف نسخة %@ (%@) نهائيا. لا يمكن التراجع.";
+"backup.encrypted" = "نسخة مشفرة";
+"backup.browseContents" = "تصفح المحتويات";
+"backup.showInFinder" = "عرض في Finder";
+"backup.backupComplete" = "اكتمل النسخ الاحتياطي";
+"backup.backupFailed" = "فشل النسخ الاحتياطي";
+"backup.timeMachine" = "آلة الزمن";
+"backup.restoreThisBackup" = "استعادة هذه النسخة";
+"backup.restoreWarning" = "سيتم استعادة جهازك الى حالة %@. سيتم اعادة تشغيل الجهاز.";
+"backup.scheduled" = "النسخ المجدول";
+
+/* Messages */
+"messages.messages" = "الرسائل";
+"messages.noBackupSelected" = "لم يتم اختيار نسخة";
+"messages.selectBackup" = "اختر نسخة احتياطية لعرض محادثات iMessage و SMS.";
+"messages.noConversations" = "لا توجد محادثات";
+"messages.exportCSV" = "تصدير CSV";
+"messages.exportHTML" = "تصدير HTML";
+"messages.exportJSON" = "تصدير JSON";
+
+/* Photos */
+"photos.photos" = "الصور والفيديو";
+"photos.noPhotos" = "لا توجد صور";
+"photos.selectBackup" = "اختر نسخة احتياطية لتصفح صور الكاميرا والفيديو.";
+"photos.filter.all" = "الكل";
+"photos.filter.photos" = "صور";
+"photos.filter.videos" = "فيديو";
+"photos.filter.screenshots" = "لقطات شاشة";
+"photos.extractSelected" = "استخراج المحدد";
+
+/* Watch */
+"watch.appleWatch" = "ساعة ابل";
+"watch.noWatch" = "لم يتم العثور على ساعة ابل";
+"watch.selectBackup" = "اختر نسخة من iPhone مقترن لعرض بيانات ساعة ابل.";
+"watch.overview" = "نظرة عامة";
+"watch.apps" = "تطبيقات الساعة";
+"watch.activity" = "النشاط";
+
+/* Welcome */
+"welcome.title" = "مرحبا بك في Phosphor";
+"welcome.subtitle" = "قم بتوصيل جهاز iOS او اختر قسما من الشريط الجانبي.";

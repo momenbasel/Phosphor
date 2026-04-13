@@ -48,6 +48,14 @@ Apple's Finder integration is all-or-nothing. Proprietary tools like iMazing cos
 | Battery health diagnostics | No | Yes | Yes |
 | Real-time device console | No | Yes | Yes |
 | Device file system browser | No | Yes | Yes |
+| Drag-and-drop file transfer | No | Yes | Yes |
+| Scheduled Wi-Fi backups | No | Yes | Yes |
+| Time Machine backup restore | No | No | **Yes** |
+| Contacts export (vCard/CSV) | No | Yes | Yes |
+| Calendar export (ICS/CSV) | No | Yes | Yes |
+| Apple Watch data browsing | No | Yes | Yes |
+| Backup archive format | No | .imazing | **.phosphor** |
+| Localization (7 languages) | No | Yes | Yes |
 | Price | Free | $49.99/yr | Free |
 | Open source | No | No | **MIT** |
 
@@ -98,6 +106,23 @@ Apple's Finder integration is all-or-nothing. Proprietary tools like iMazing cos
 - Mount specific app containers
 - Delete files on device
 
+### Contacts
+- Browse all contacts from backup AddressBook database
+- View phone numbers, emails, organization details
+- Search across all contacts
+- Export as **vCard (.vcf)** or **CSV**
+
+### Calendar
+- Browse calendars and events from backup
+- View event details, duration, all-day status
+- Export as **ICS (iCalendar)** or **CSV**
+
+### Apple Watch
+- View paired Apple Watch info from iPhone backup
+- Browse WatchKit extension apps with data sizes
+- Activity ring history (Move, Exercise, Stand)
+- Extract all Watch-related data from backup
+
 ### Diagnostics
 - Battery: current charge, charging status, health percentage, design vs. actual capacity (mAh)
 - Storage: total capacity, usage breakdown (Apps, Photos, Media, Other), available space
@@ -106,6 +131,13 @@ Apple's Finder integration is all-or-nothing. Proprietary tools like iMazing cos
 - Filter and search logs
 - Export logs to file
 - Color-coded log levels (Error/Warning/Debug)
+
+### Backup Management
+- **Time Machine mode**: 3D animated backup browser for visual restore
+- **Scheduled backups**: automatic hourly/daily/weekly/monthly via USB or Wi-Fi
+- **.phosphor archives**: portable backup export/import format
+- Backup encryption management (enable/disable/verify)
+- Drag-and-drop file transfer in file browser
 
 ## Installation
 
@@ -203,9 +235,16 @@ Phosphor parses this to provide file-system-like browsing without modifying the 
 - [x] Batch operations (multi-select extract in Photos, Music)
 - [x] Wi-Fi device connection (libimobiledevice network mode)
 - [x] Encrypted backup browsing (via iphone-backup-decrypt)
-- [ ] Drag-and-drop file transfer
-- [ ] Localization
-- [ ] Apple Watch data through paired iPhone
+- [x] Drag-and-drop file transfer
+- [x] Localization (English, Arabic, Spanish, French, German, Japanese, Chinese)
+- [x] Apple Watch data through paired iPhone
+- [x] Time Machine-style backup restore with 3D animation
+- [x] Scheduled automatic backups (hourly/daily/weekly/monthly, Wi-Fi support)
+- [x] .phosphor backup archive format (portable backup export/import)
+- [x] Contacts browsing and export (vCard, CSV)
+- [x] Calendar events browsing and export (ICS, CSV)
+- [x] Device-to-device transfer (clone) - backup source, restore to destination
+- [ ] Voicemail browsing
 
 ## Contributing
 

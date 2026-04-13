@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "Phosphor",
+    defaultLocalization: "en",
     platforms: [.macOS(.v14)],
     products: [
         .executable(name: "Phosphor", targets: ["Phosphor"])

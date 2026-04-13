@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Browse the iOS device filesystem via AFC (Apple File Conduit) using ifuse mount.
 struct FileBrowserView: View {
@@ -7,6 +8,8 @@ struct FileBrowserView: View {
     @StateObject private var fileManager = FileTransferManager()
     @State private var selectedFile: FileTransferManager.FileEntry?
     @State private var showCopyToDevice = false
+    @State private var isDragOver = false
+    @State private var dragDropStatus: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -89,41 +92,80 @@ struct FileBrowserView: View {
     // MARK: - Mounted
 
     private var mountedView: some View {
-        Group {
-            if fileManager.isLoading {
-                LoadingOverlay(message: "Loading...")
-            } else if fileManager.entries.isEmpty {
-                EmptyStateView(
-                    icon: "folder",
-                    title: "Empty Directory",
-                    subtitle: "This directory contains no files."
-                )
-            } else {
-                List(fileManager.entries, selection: $selectedFile) { entry in
-                    fileRow(entry)
-                        .tag(entry)
-                        .onTapGesture(count: 2) {
-                            if entry.isDirectory {
-                                Task { await fileManager.navigateInto(entry) }
-                            }
-                        }
-                        .contextMenu {
-                            if !entry.isDirectory {
-                                Button("Copy to Mac...") { copyToMac(entry) }
-                            }
-                            if entry.isDirectory {
-                                Button("Open") {
+        ZStack {
+            Group {
+                if fileManager.isLoading {
+                    LoadingOverlay(message: "Loading...")
+                } else if fileManager.entries.isEmpty {
+                    EmptyStateView(
+                        icon: "folder",
+                        title: "Empty Directory",
+                        subtitle: "This directory contains no files. Drop files here to transfer to device."
+                    )
+                } else {
+                    List(fileManager.entries, selection: $selectedFile) { entry in
+                        fileRow(entry)
+                            .tag(entry)
+                            .onTapGesture(count: 2) {
+                                if entry.isDirectory {
                                     Task { await fileManager.navigateInto(entry) }
                                 }
                             }
-                            Divider()
-                            Button("Delete", role: .destructive) {
-                                try? fileManager.deleteFile(entry)
+                            .contextMenu {
+                                if !entry.isDirectory {
+                                    Button("Copy to Mac...") { copyToMac(entry) }
+                                }
+                                if entry.isDirectory {
+                                    Button("Open") {
+                                        Task { await fileManager.navigateInto(entry) }
+                                    }
+                                }
+                                Divider()
+                                Button("Delete", role: .destructive) {
+                                    try? fileManager.deleteFile(entry)
+                                }
                             }
-                        }
+                    }
+                    .listStyle(.inset)
                 }
-                .listStyle(.inset)
             }
+
+            // Drag-and-drop overlay
+            if isDragOver {
+                VStack(spacing: 12) {
+                    Image(systemName: "arrow.down.doc.fill")
+                        .font(.system(size: 36))
+                        .foregroundStyle(.white)
+                    Text("Drop files to transfer to device")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                    Text("Current path: \(fileManager.currentPath)")
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.7))
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.indigo.opacity(0.85))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .padding(4)
+            }
+
+            // Status toast
+            if let status = dragDropStatus {
+                VStack {
+                    Spacer()
+                    Text(status)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(Capsule().fill(Color.indigo))
+                        .padding(.bottom, 16)
+                }
+            }
+        }
+        .onDrop(of: [.fileURL], isTargeted: $isDragOver) { providers in
+            handleDrop(providers: providers)
+            return true
         }
     }
 
@@ -172,5 +214,36 @@ struct FileBrowserView: View {
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
         try? fileManager.copyToLocal(entry: entry, destination: url.path)
+    }
+
+    // MARK: - Drag and Drop
+
+    private func handleDrop(providers: [NSItemProvider]) {
+        for provider in providers {
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, error in
+                guard let data = item as? Data,
+                      let url = URL(dataRepresentation: data, relativeTo: nil) else { return }
+
+                let localPath = url.path
+                let fileName = url.lastPathComponent
+                let devicePath = (fileManager.currentPath as NSString).appendingPathComponent(fileName)
+
+                Task { @MainActor in
+                    do {
+                        try fileManager.copyToDevice(localPath: localPath, devicePath: devicePath)
+                        dragDropStatus = "Transferred: \(fileName)"
+                        await fileManager.browse(path: fileManager.currentPath) // Refresh
+
+                        // Auto-dismiss status after 3 seconds
+                        try? await Task.sleep(for: .seconds(3))
+                        dragDropStatus = nil
+                    } catch {
+                        dragDropStatus = "Failed: \(error.localizedDescription)"
+                        try? await Task.sleep(for: .seconds(3))
+                        dragDropStatus = nil
+                    }
+                }
+            }
+        }
     }
 }

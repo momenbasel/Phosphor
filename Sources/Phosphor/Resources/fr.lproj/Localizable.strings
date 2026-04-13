@@ -1,0 +1,50 @@
+/* Phosphor - French */
+
+/* Sidebar */
+"sidebar.devices" = "Appareils";
+"sidebar.backups" = "Sauvegardes";
+"sidebar.backupBrowser" = "Explorateur";
+"sidebar.timeMachine" = "Time Machine";
+"sidebar.messages" = "Messages";
+"sidebar.whatsapp" = "WhatsApp";
+"sidebar.photos" = "Photos";
+"sidebar.apps" = "Applications";
+"sidebar.notes" = "Notes";
+"sidebar.callLog" = "Journal d'appels";
+"sidebar.safari" = "Safari";
+"sidebar.health" = "Sante";
+"sidebar.music" = "Musique";
+"sidebar.files" = "Systeme de fichiers";
+"sidebar.diagnostics" = "Diagnostics";
+"sidebar.watch" = "Apple Watch";
+
+/* Section Groups */
+"group.device" = "Appareil";
+"group.data" = "Donnees";
+"group.backups" = "Sauvegardes";
+"group.tools" = "Outils";
+
+/* Common Actions */
+"action.refresh" = "Actualiser";
+"action.export" = "Exporter...";
+"action.browse" = "Parcourir";
+"action.delete" = "Supprimer";
+"action.cancel" = "Annuler";
+"action.save" = "Enregistrer";
+"action.search" = "Rechercher...";
+"action.restore" = "Restaurer";
+"action.newBackup" = "Nouvelle sauvegarde";
+
+/* Device */
+"device.noDeviceConnected" = "Aucun appareil connecte";
+"device.connectViaUSB" = "Connectez votre iPhone, iPad ou iPod touch via USB pour le gerer avec Phosphor.";
+"device.scanForDevices" = "Rechercher des appareils";
+
+/* Backups */
+"backup.backups" = "Sauvegardes";
+"backup.noBackupsFound" = "Aucune sauvegarde trouvee";
+"backup.timeMachine" = "Time Machine";
+
+/* Welcome */
+"welcome.title" = "Bienvenue dans Phosphor";
+"welcome.subtitle" = "Connectez un appareil iOS ou selectionnez une section dans la barre laterale.";

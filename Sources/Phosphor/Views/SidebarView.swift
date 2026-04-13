@@ -5,6 +5,7 @@ enum SidebarSection: String, CaseIterable, Identifiable {
     case devices
     case backups
     case backupBrowser
+    case timeMachine
     case messages
     case whatsapp
     case photos
@@ -14,6 +15,10 @@ enum SidebarSection: String, CaseIterable, Identifiable {
     case safari
     case health
     case music
+    case watch
+    case contacts
+    case calendar
+    case clone
     case files
     case diagnostics
 
@@ -24,6 +29,7 @@ enum SidebarSection: String, CaseIterable, Identifiable {
         case .devices: return "Devices"
         case .backups: return "Backups"
         case .backupBrowser: return "Backup Browser"
+        case .timeMachine: return "Time Machine"
         case .messages: return "Messages"
         case .whatsapp: return "WhatsApp"
         case .photos: return "Photos"
@@ -33,6 +39,10 @@ enum SidebarSection: String, CaseIterable, Identifiable {
         case .safari: return "Safari"
         case .health: return "Health"
         case .music: return "Music"
+        case .watch: return "Apple Watch"
+        case .contacts: return "Contacts"
+        case .calendar: return "Calendar"
+        case .clone: return "Device Clone"
         case .files: return "File System"
         case .diagnostics: return "Diagnostics"
         }
@@ -43,6 +53,7 @@ enum SidebarSection: String, CaseIterable, Identifiable {
         case .devices: return "iphone"
         case .backups: return "externaldrive.fill"
         case .backupBrowser: return "folder.fill"
+        case .timeMachine: return "clock.arrow.circlepath"
         case .messages: return "message.fill"
         case .whatsapp: return "bubble.left.and.text.bubble.right.fill"
         case .photos: return "photo.on.rectangle.angled"
@@ -52,6 +63,10 @@ enum SidebarSection: String, CaseIterable, Identifiable {
         case .safari: return "safari"
         case .health: return "heart.fill"
         case .music: return "music.note.list"
+        case .watch: return "applewatch"
+        case .contacts: return "person.crop.circle"
+        case .calendar: return "calendar"
+        case .clone: return "arrow.right.arrow.left.circle"
         case .files: return "doc.on.doc.fill"
         case .diagnostics: return "waveform.path.ecg"
         }
@@ -60,9 +75,9 @@ enum SidebarSection: String, CaseIterable, Identifiable {
     var group: SidebarGroup {
         switch self {
         case .devices: return .device
-        case .backups, .backupBrowser: return .backups
-        case .messages, .whatsapp, .photos, .apps, .notes, .callLog, .safari, .health, .music: return .data
-        case .files, .diagnostics: return .tools
+        case .backups, .backupBrowser, .timeMachine: return .backups
+        case .messages, .whatsapp, .photos, .apps, .notes, .callLog, .safari, .health, .music, .watch, .contacts, .calendar: return .data
+        case .clone, .files, .diagnostics: return .tools
         }
     }
 }
@@ -136,15 +151,20 @@ struct SidebarView: View {
                 sidebarRow(.safari)
                 sidebarRow(.health)
                 sidebarRow(.music)
+                sidebarRow(.watch)
+                sidebarRow(.contacts)
+                sidebarRow(.calendar)
             }
 
             Section("Backups") {
                 sidebarRow(.backups)
                     .badge(backupVM.backups.count)
                 sidebarRow(.backupBrowser)
+                sidebarRow(.timeMachine)
             }
 
             Section("Tools") {
+                sidebarRow(.clone)
                 sidebarRow(.files)
                 sidebarRow(.diagnostics)
             }

@@ -1,0 +1,144 @@
+/* Phosphor - English (Base) */
+
+/* Sidebar */
+"sidebar.devices" = "Devices";
+"sidebar.backups" = "Backups";
+"sidebar.backupBrowser" = "Backup Browser";
+"sidebar.timeMachine" = "Time Machine";
+"sidebar.messages" = "Messages";
+"sidebar.whatsapp" = "WhatsApp";
+"sidebar.photos" = "Photos";
+"sidebar.apps" = "Apps";
+"sidebar.notes" = "Notes";
+"sidebar.callLog" = "Call Log";
+"sidebar.safari" = "Safari";
+"sidebar.health" = "Health";
+"sidebar.music" = "Music";
+"sidebar.files" = "File System";
+"sidebar.diagnostics" = "Diagnostics";
+"sidebar.watch" = "Apple Watch";
+"sidebar.contacts" = "Contacts";
+"sidebar.calendar" = "Calendar";
+
+/* Section Groups */
+"group.device" = "Device";
+"group.data" = "Data";
+"group.backups" = "Backups";
+"group.tools" = "Tools";
+
+/* Common Actions */
+"action.refresh" = "Refresh";
+"action.export" = "Export...";
+"action.exportAll" = "Export All...";
+"action.extractHere" = "Extract Here";
+"action.browse" = "Browse";
+"action.delete" = "Delete";
+"action.cancel" = "Cancel";
+"action.save" = "Save";
+"action.search" = "Search...";
+"action.copyToMac" = "Copy to Mac...";
+"action.copyToDevice" = "Copy to Device...";
+"action.mount" = "Mount Device";
+"action.unmount" = "Unmount";
+"action.restore" = "Restore";
+"action.pair" = "Pair Device";
+"action.newBackup" = "New Backup";
+"action.importArchive" = "Import .phosphor";
+"action.exportArchive" = "Export .phosphor";
+
+/* Device */
+"device.noDeviceConnected" = "No Device Connected";
+"device.connectViaUSB" = "Connect your iPhone, iPad, or iPod touch via USB to manage it with Phosphor.";
+"device.scanForDevices" = "Scan for Devices";
+"device.noDevice" = "No device connected";
+"device.connectViaUSBOrWiFi" = "Connect via USB or Wi-Fi";
+"device.batteryHealth" = "Battery Health";
+"device.storage" = "Storage";
+"device.deviceInfo" = "Device Information";
+"device.quickActions" = "Quick Actions";
+"device.restart" = "Restart";
+"device.sleep" = "Sleep";
+"device.screenshot" = "Screenshot";
+
+/* Backups */
+"backup.backups" = "Backups";
+"backup.noBackupsFound" = "No Backups Found";
+"backup.createBackupDesc" = "Back up your device to browse its contents, extract messages, photos, and app data.";
+"backup.createBackup" = "Create Backup";
+"backup.deleteBackup" = "Delete Backup?";
+"backup.deleteConfirm" = "This will permanently delete the backup of %@ (%@). This cannot be undone.";
+"backup.encrypted" = "Encrypted backup";
+"backup.browseContents" = "Browse Contents";
+"backup.showInFinder" = "Show in Finder";
+"backup.backupComplete" = "Backup completed";
+"backup.backupFailed" = "Backup failed";
+"backup.timeMachine" = "Time Machine";
+"backup.restoreThisBackup" = "Restore This Backup";
+"backup.restoreWarning" = "This will restore your device to the state from %@. The device will restart.";
+"backup.scheduled" = "Scheduled Backups";
+
+/* Messages */
+"messages.messages" = "Messages";
+"messages.noBackupSelected" = "No Backup Selected";
+"messages.selectBackup" = "Select a backup to view iMessage and SMS conversations.";
+"messages.noConversations" = "No Conversations";
+"messages.exportCSV" = "Export CSV";
+"messages.exportHTML" = "Export HTML";
+"messages.exportJSON" = "Export JSON";
+
+/* Photos */
+"photos.photos" = "Photos & Videos";
+"photos.noPhotos" = "No Photos Found";
+"photos.selectBackup" = "Select a backup to browse Camera Roll photos and videos.";
+"photos.filter.all" = "All";
+"photos.filter.photos" = "Photos";
+"photos.filter.videos" = "Videos";
+"photos.filter.screenshots" = "Screenshots";
+"photos.extractSelected" = "Extract Selected";
+
+/* Apps */
+"apps.apps" = "Applications";
+"apps.installed" = "Installed";
+"apps.inBackup" = "In Backup";
+"apps.installIPA" = "Install IPA...";
+"apps.removeApp" = "Remove App";
+
+/* Files */
+"files.fileSystem" = "File System";
+"files.notMounted" = "Device Not Mounted";
+"files.mountDesc" = "Mount the device filesystem to browse and transfer files.";
+"files.emptyDir" = "Empty Directory";
+"files.dropFilesHere" = "Drop files here to transfer to device";
+
+/* Diagnostics */
+"diagnostics.diagnostics" = "Diagnostics";
+"diagnostics.battery" = "Battery";
+"diagnostics.storage" = "Storage";
+"diagnostics.syslog" = "System Log";
+"diagnostics.clear" = "Clear";
+"diagnostics.startStreaming" = "Start Streaming";
+"diagnostics.stopStreaming" = "Stop Streaming";
+
+/* Settings */
+"settings.general" = "General";
+"settings.dependencies" = "Dependencies";
+"settings.about" = "About";
+"settings.backupLocation" = "Backup Location";
+"settings.devicePolling" = "Device Polling";
+"settings.autoRefresh" = "Auto-refresh interval";
+"settings.backupSchedule" = "Backup Schedule";
+"settings.scheduleEnabled" = "Enable scheduled backups";
+"settings.scheduleFrequency" = "Frequency";
+"settings.wifiOnly" = "Wi-Fi only";
+
+/* Watch */
+"watch.appleWatch" = "Apple Watch";
+"watch.noWatch" = "No Apple Watch Found";
+"watch.selectBackup" = "Select a backup from a paired iPhone to view Apple Watch data.";
+"watch.overview" = "Overview";
+"watch.apps" = "Watch Apps";
+"watch.activity" = "Activity";
+
+/* Welcome */
+"welcome.title" = "Welcome to Phosphor";
+"welcome.subtitle" = "Connect an iOS device or select a section from the sidebar.";

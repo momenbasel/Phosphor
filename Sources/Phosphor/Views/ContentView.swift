@@ -34,6 +34,8 @@ struct ContentView: View {
             BackupListView()
         case .backupBrowser:
             BackupBrowserView()
+        case .timeMachine:
+            BackupTimeMachineView()
         case .messages:
             MessageListView()
         case .whatsapp:
@@ -52,6 +54,14 @@ struct ContentView: View {
             HealthView()
         case .music:
             MusicView()
+        case .watch:
+            AppleWatchView()
+        case .contacts:
+            ContactsView()
+        case .calendar:
+            CalendarView()
+        case .clone:
+            DeviceCloneView()
         case .files:
             FileBrowserView()
         case .diagnostics:

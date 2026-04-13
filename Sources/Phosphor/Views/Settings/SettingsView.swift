@@ -3,15 +3,22 @@ import SwiftUI
 /// App settings: backup location, dependencies check, about.
 struct SettingsView: View {
 
-    @State private var backupDirectory = BackupManager.defaultBackupDir
+    @AppStorage("phosphor.backupDirectory") private var backupDirectory = BackupManager.defaultBackupDir
     @State private var dependencyList: [DependencyItem] = []
-    @State private var autoRefreshInterval: Double = 4.0
+    @AppStorage("phosphor.autoRefreshInterval") private var autoRefreshInterval: Double = 4.0
+
+    @StateObject private var scheduler = BackupScheduler()
 
     var body: some View {
         TabView {
             generalTab
                 .tabItem {
                     Label("General", systemImage: "gearshape")
+                }
+
+            backupScheduleTab
+                .tabItem {
+                    Label("Backup Schedule", systemImage: "clock")
                 }
 
             dependenciesTab
@@ -24,7 +31,7 @@ struct SettingsView: View {
                     Label("About", systemImage: "info.circle")
                 }
         }
-        .frame(width: 520, height: 400)
+        .frame(width: 560, height: 460)
         .onAppear {
             let deps = Shell.checkDependencies()
             dependencyList = deps.map { DependencyItem(name: $0.key, installed: $0.value) }
@@ -67,6 +74,66 @@ struct SettingsView: View {
                     Text("\(Int(autoRefreshInterval))s")
                         .font(.system(size: 12, design: .monospaced))
                         .frame(width: 30)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+
+    // MARK: - Backup Schedule
+
+    private var backupScheduleTab: some View {
+        Form {
+            Section("Automatic Backups") {
+                Toggle("Enable scheduled backups", isOn: $scheduler.schedule.enabled)
+
+                if scheduler.schedule.enabled {
+                    Picker("Frequency", selection: $scheduler.schedule.frequency) {
+                        ForEach(BackupScheduler.Frequency.allCases, id: \.self) { freq in
+                            Text(freq.rawValue).tag(freq)
+                        }
+                    }
+
+                    HStack {
+                        Text("Preferred time")
+                        Spacer()
+                        Picker("Hour", selection: $scheduler.schedule.preferredHour) {
+                            ForEach(0..<24, id: \.self) { h in
+                                Text(String(format: "%02d:00", h)).tag(h)
+                            }
+                        }
+                        .frame(width: 100)
+                    }
+
+                    Toggle("Wi-Fi backup only", isOn: $scheduler.schedule.wifiOnly)
+                    Toggle("Incremental backup (faster)", isOn: $scheduler.schedule.incrementalOnly)
+                }
+            }
+
+            if scheduler.schedule.enabled {
+                Section("Status") {
+                    if let lastRun = scheduler.schedule.lastRunDate {
+                        HStack {
+                            Text("Last run")
+                            Spacer()
+                            Text(lastRun.shortString).foregroundStyle(.secondary)
+                        }
+                    }
+                    if let nextRun = scheduler.schedule.nextRunDate {
+                        HStack {
+                            Text("Next run")
+                            Spacer()
+                            Text(nextRun.shortString).foregroundStyle(.secondary)
+                        }
+                    }
+                    if let result = scheduler.schedule.lastResult {
+                        HStack {
+                            Text("Last result")
+                            Spacer()
+                            Text(result).foregroundStyle(result == "Completed" ? .green : .orange)
+                        }
+                    }
                 }
             }
         }
@@ -122,7 +189,7 @@ struct SettingsView: View {
             Text("Phosphor")
                 .font(.title.weight(.bold))
 
-            Text("Version 1.0.0")
+            Text("Version 1.2.0")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 

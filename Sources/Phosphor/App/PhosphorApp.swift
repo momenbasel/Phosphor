@@ -5,6 +5,7 @@ struct PhosphorApp: App {
 
     @StateObject private var deviceVM = DeviceViewModel()
     @StateObject private var backupVM = BackupViewModel()
+    @StateObject private var scheduler = BackupScheduler()
 
     var body: some Scene {
         WindowGroup {
@@ -15,6 +16,7 @@ struct PhosphorApp: App {
                 .onAppear {
                     deviceVM.deviceManager.startPolling(interval: 4.0)
                     backupVM.loadBackups()
+                    scheduler.startMonitoring()
                 }
         }
         .windowStyle(.titleBar)

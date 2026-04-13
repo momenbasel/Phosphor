@@ -48,6 +48,13 @@ fi
 # Copy entitlements for reference
 cp "$PROJECT_DIR/Resources/Phosphor.entitlements" "$APP_BUNDLE/Contents/Resources/"
 
+# Copy SPM resource bundle (localization strings)
+RESOURCE_BUNDLE="$BINARY_PATH/../Phosphor_Phosphor.bundle"
+if [ -d "$RESOURCE_BUNDLE" ]; then
+    cp -R "$RESOURCE_BUNDLE" "$APP_BUNDLE/Contents/Resources/"
+    echo "==> Copied localization resource bundle"
+fi
+
 # Create PkgInfo
 echo -n "APPL????" > "$APP_BUNDLE/Contents/PkgInfo"
 

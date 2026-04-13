@@ -1,0 +1,50 @@
+/* Phosphor - Simplified Chinese */
+
+/* Sidebar */
+"sidebar.devices" = "设备";
+"sidebar.backups" = "备份";
+"sidebar.backupBrowser" = "备份浏览器";
+"sidebar.timeMachine" = "时间机器";
+"sidebar.messages" = "信息";
+"sidebar.whatsapp" = "WhatsApp";
+"sidebar.photos" = "照片";
+"sidebar.apps" = "应用";
+"sidebar.notes" = "备忘录";
+"sidebar.callLog" = "通话记录";
+"sidebar.safari" = "Safari";
+"sidebar.health" = "健康";
+"sidebar.music" = "音乐";
+"sidebar.files" = "文件系统";
+"sidebar.diagnostics" = "诊断";
+"sidebar.watch" = "Apple Watch";
+
+/* Section Groups */
+"group.device" = "设备";
+"group.data" = "数据";
+"group.backups" = "备份";
+"group.tools" = "工具";
+
+/* Common Actions */
+"action.refresh" = "刷新";
+"action.export" = "导出...";
+"action.browse" = "浏览";
+"action.delete" = "删除";
+"action.cancel" = "取消";
+"action.save" = "保存";
+"action.search" = "搜索...";
+"action.restore" = "恢复";
+"action.newBackup" = "新建备份";
+
+/* Device */
+"device.noDeviceConnected" = "未连接设备";
+"device.connectViaUSB" = "通过USB连接您的iPhone、iPad或iPod touch，使用Phosphor进行管理。";
+"device.scanForDevices" = "扫描设备";
+
+/* Backups */
+"backup.backups" = "备份";
+"backup.noBackupsFound" = "未找到备份";
+"backup.timeMachine" = "时间机器";
+
+/* Welcome */
+"welcome.title" = "欢迎使用Phosphor";
+"welcome.subtitle" = "连接iOS设备或从侧边栏选择一个部分。";

@@ -1,0 +1,50 @@
+/* Phosphor - Japanese */
+
+/* Sidebar */
+"sidebar.devices" = "デバイス";
+"sidebar.backups" = "バックアップ";
+"sidebar.backupBrowser" = "バックアップブラウザ";
+"sidebar.timeMachine" = "タイムマシン";
+"sidebar.messages" = "メッセージ";
+"sidebar.whatsapp" = "WhatsApp";
+"sidebar.photos" = "写真";
+"sidebar.apps" = "アプリ";
+"sidebar.notes" = "メモ";
+"sidebar.callLog" = "通話履歴";
+"sidebar.safari" = "Safari";
+"sidebar.health" = "ヘルスケア";
+"sidebar.music" = "ミュージック";
+"sidebar.files" = "ファイルシステム";
+"sidebar.diagnostics" = "診断";
+"sidebar.watch" = "Apple Watch";
+
+/* Section Groups */
+"group.device" = "デバイス";
+"group.data" = "データ";
+"group.backups" = "バックアップ";
+"group.tools" = "ツール";
+
+/* Common Actions */
+"action.refresh" = "更新";
+"action.export" = "書き出す...";
+"action.browse" = "ブラウズ";
+"action.delete" = "削除";
+"action.cancel" = "キャンセル";
+"action.save" = "保存";
+"action.search" = "検索...";
+"action.restore" = "復元";
+"action.newBackup" = "新規バックアップ";
+
+/* Device */
+"device.noDeviceConnected" = "デバイスが接続されていません";
+"device.connectViaUSB" = "iPhone、iPad、またはiPod touchをUSBで接続してPhosphorで管理できます。";
+"device.scanForDevices" = "デバイスを検索";
+
+/* Backups */
+"backup.backups" = "バックアップ";
+"backup.noBackupsFound" = "バックアップが見つかりません";
+"backup.timeMachine" = "タイムマシン";
+
+/* Welcome */
+"welcome.title" = "Phosphorへようこそ";
+"welcome.subtitle" = "iOSデバイスを接続するか、サイドバーからセクションを選択してください。";

@@ -55,7 +55,7 @@ struct AppManagerView: View {
             HStack {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.tertiary)
-                TextField("Search apps...", text: $searchText)
+                TextField("Search apps...", text: $appVM.searchQuery)
                     .textFieldStyle(.plain)
                     .frame(width: 160)
             }
