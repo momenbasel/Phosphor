@@ -189,7 +189,7 @@ struct SettingsView: View {
             Text("Phosphor")
                 .font(.title.weight(.bold))
 
-            Text("Version 1.2.0")
+            Text("Version 1.0")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
