@@ -81,6 +81,7 @@ struct PhotoBrowserView: View {
                 ForEach(SourceMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
+            .labelsHidden()
             .frame(width: 220)
 
             // View mode toggle
@@ -89,6 +90,7 @@ struct PhotoBrowserView: View {
                 Image(systemName: "list.bullet").tag(ViewMode.list)
             }
             .pickerStyle(.segmented)
+            .labelsHidden()
             .frame(width: 72)
 
             // Extract button

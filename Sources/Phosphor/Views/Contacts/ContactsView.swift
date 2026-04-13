@@ -207,6 +207,13 @@ struct ContactsView: View {
         guard let backup = backupVM.selectedBackup else { return }
         isLoading = true
         errorMessage = nil
+
+        guard backup.hasManifest else {
+            errorMessage = BackupInfo.incompleteBackupMessage
+            isLoading = false
+            return
+        }
+
         do {
             let extractor = try ContactsExtractor(backupPath: backup.path)
             contacts = try extractor.getContacts()

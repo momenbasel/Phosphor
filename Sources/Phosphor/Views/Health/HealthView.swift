@@ -53,6 +53,7 @@ struct HealthView: View {
                 ForEach(HealthTab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
+            .labelsHidden()
             .frame(width: 220)
 
             Button("Export All...") { exportAll() }
@@ -235,6 +236,11 @@ struct HealthView: View {
 
     private func load() {
         guard let backup = backupVM.selectedBackup else { return }
+        guard backup.hasManifest else {
+            errorMessage = BackupInfo.incompleteBackupMessage
+            isLoading = false
+            return
+        }
         isLoading = true
         errorMessage = nil
         do {

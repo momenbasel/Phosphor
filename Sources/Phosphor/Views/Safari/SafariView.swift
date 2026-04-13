@@ -54,6 +54,7 @@ struct SafariView: View {
                 }
             }
             .pickerStyle(.segmented)
+            .labelsHidden()
             .frame(width: 220)
 
             HStack {
@@ -187,6 +188,11 @@ struct SafariView: View {
 
     private func load() {
         guard let backup = backupVM.selectedBackup else { return }
+        guard backup.hasManifest else {
+            errorMessage = BackupInfo.incompleteBackupMessage
+            isLoading = false
+            return
+        }
         isLoading = true
         errorMessage = nil
 

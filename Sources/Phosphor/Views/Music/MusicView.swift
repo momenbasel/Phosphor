@@ -49,6 +49,7 @@ struct MusicView: View {
                 ForEach(MusicTab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
+            .labelsHidden()
             .frame(width: 260)
 
             if !selectedTracks.isEmpty {

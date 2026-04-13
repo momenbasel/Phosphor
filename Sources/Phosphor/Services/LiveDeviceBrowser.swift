@@ -38,7 +38,7 @@ final class LiveDeviceBrowser: ObservableObject {
 
     // MARK: - Mount
 
-    /// Mount device media partition via AFC.
+    /// Pull device photos using pymobiledevice3 AFC (no FUSE/ifuse needed).
     func mount(udid: String) async -> Bool {
         let tmpDir = NSTemporaryDirectory() + "phosphor-live-\(udid.prefix(8))"
         let fm = FileManager.default
@@ -46,24 +46,44 @@ final class LiveDeviceBrowser: ObservableObject {
         do {
             try fm.createDirectory(atPath: tmpDir, withIntermediateDirectories: true)
         } catch {
-            lastError = "Failed to create mount point: \(error.localizedDescription)"
+            lastError = "Failed to create temp directory: \(error.localizedDescription)"
             return false
         }
 
-        // Mount with ifuse (default = media partition)
-        let result = await Shell.runAsync("ifuse", arguments: ["-u", udid, tmpDir])
-        if result.succeeded {
+        // Use pymobiledevice3 AFC to pull DCIM
+        let checkPy = await Shell.runAsync("python3", arguments: ["-c", "import pymobiledevice3"], timeout: 10)
+        if checkPy.succeeded {
+            // Pull entire DCIM via pymobiledevice3
+            let dcimDest = (tmpDir as NSString).appendingPathComponent("DCIM")
+            try? fm.createDirectory(atPath: dcimDest, withIntermediateDirectories: true)
+
+            let result = await Shell.runAsync(
+                "python3",
+                arguments: ["-m", "pymobiledevice3", "afc", "pull", "/DCIM", dcimDest],
+                timeout: 300
+            )
+            if result.succeeded || fm.fileExists(atPath: dcimDest) {
+                mountPath = tmpDir
+                isMounted = true
+                return true
+            }
+        }
+
+        // Fallback: try ifuse (works on older macOS or if macFUSE installed)
+        let ifuseResult = await Shell.runAsync("ifuse", arguments: ["-u", udid, tmpDir])
+        if ifuseResult.succeeded {
             mountPath = tmpDir
             isMounted = true
             return true
-        } else {
-            lastError = result.stderr.nilIfEmpty ?? "ifuse mount failed. Is ifuse installed? (brew install ifuse)"
-            return false
         }
+
+        lastError = "Could not access device photos. Install pymobiledevice3: pip3 install pymobiledevice3"
+        return false
     }
 
     func unmount() async {
         guard let mount = mountPath else { return }
+        // Try umount for ifuse, otherwise just clean up temp dir
         let _ = await Shell.runAsync("umount", arguments: [mount])
         try? FileManager.default.removeItem(atPath: mount)
         mountPath = nil

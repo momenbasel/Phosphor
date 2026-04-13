@@ -54,6 +54,7 @@ struct CallLogView: View {
                 Text("Missed").tag(CallLogEntry.CallType.missed as CallLogEntry.CallType?)
             }
             .pickerStyle(.segmented)
+            .labelsHidden()
             .frame(width: 340)
 
             Button("Export CSV...") { exportCSV() }
@@ -128,6 +129,11 @@ struct CallLogView: View {
 
     private func load() {
         guard let backup = backupVM.selectedBackup else { return }
+        guard backup.hasManifest else {
+            errorMessage = BackupInfo.incompleteBackupMessage
+            isLoading = false
+            return
+        }
         isLoading = true
         errorMessage = nil
         do {

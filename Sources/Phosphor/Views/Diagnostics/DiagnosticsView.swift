@@ -59,6 +59,7 @@ struct DiagnosticsView: View {
                 }
             }
             .pickerStyle(.segmented)
+            .labelsHidden()
             .frame(width: 240)
 
             Button {

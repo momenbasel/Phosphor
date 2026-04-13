@@ -59,6 +59,7 @@ struct AppleWatchView: View {
                 ForEach(WatchTab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
+            .labelsHidden()
             .frame(width: 280)
 
             Button("Extract All...") { extractAll() }
@@ -329,6 +330,11 @@ struct AppleWatchView: View {
 
     private func load() {
         guard let backup = backupVM.selectedBackup else { return }
+        guard backup.hasManifest else {
+            errorMessage = BackupInfo.incompleteBackupMessage
+            isLoading = false
+            return
+        }
         isLoading = true
         errorMessage = nil
 

@@ -50,6 +50,7 @@ struct AppManagerView: View {
                 }
             }
             .pickerStyle(.segmented)
+            .labelsHidden()
             .frame(width: 240)
 
             HStack {

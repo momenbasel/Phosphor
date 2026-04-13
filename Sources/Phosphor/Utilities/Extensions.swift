@@ -92,6 +92,18 @@ extension FileManager {
     }
 }
 
+// MARK: - Backup Validation
+
+extension BackupInfo {
+    /// Check if this backup has a complete Manifest.db for data browsing.
+    var hasManifest: Bool {
+        FileManager.default.fileExists(atPath: (path as NSString).appendingPathComponent("Manifest.db"))
+    }
+
+    /// User-friendly message when backup is incomplete.
+    static let incompleteBackupMessage = "Backup is incomplete (no Manifest.db). Create a full backup first. If using iOS 17+, run: pip3 install pymobiledevice3"
+}
+
 // MARK: - View Modifiers
 
 struct CardStyle: ViewModifier {

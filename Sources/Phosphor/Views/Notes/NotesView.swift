@@ -188,6 +188,11 @@ struct NotesView: View {
 
     private func load() {
         guard let backup = backupVM.selectedBackup else { return }
+        guard backup.hasManifest else {
+            errorMessage = BackupInfo.incompleteBackupMessage
+            isLoading = false
+            return
+        }
         isLoading = true
         errorMessage = nil
         do {
