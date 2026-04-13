@@ -26,7 +26,7 @@
 
 ---
 
-Phosphor gives you complete control over your iPhone, iPad, and iPod touch without proprietary software, iCloud lock-in, or subscriptions. Built natively with SwiftUI and powered by [libimobiledevice](https://libimobiledevice.org/).
+Phosphor gives you complete control over your iPhone, iPad, and iPod touch without proprietary software, iCloud lock-in, or subscriptions. Built natively with SwiftUI and powered by [pymobiledevice3](https://github.com/doronz88/pymobiledevice3) with [libimobiledevice](https://libimobiledevice.org/) as fallback. Supports iOS 17-26+.
 
 ---
 
@@ -56,6 +56,11 @@ Apple's Finder integration is all-or-nothing. Proprietary tools like iMazing cos
 | Apple Watch data browsing | No | Yes | Yes |
 | Backup archive format | No | .imazing | **.phosphor** |
 | Localization (7 languages) | No | Yes | Yes |
+| Crash report viewer | No | Yes | Yes |
+| Process monitor | No | Yes | Yes |
+| Ringtone creator | No | Yes | Yes |
+| HEIC to JPG conversion | No | Yes | Yes |
+| iOS 26 support | N/A | Paid | **Yes** |
 | Price | Free | $49.99/yr | Free |
 | Open source | No | No | **MIT** |
 
@@ -100,11 +105,12 @@ Apple's Finder integration is all-or-nothing. Proprietary tools like iMazing cos
 - Extract individual app containers (Documents, Library, tmp)
 
 ### File System
-- Mount device filesystem via AFC (Apple File Conduit)
+- Browse device filesystem via AFC (Apple File Conduit) - no FUSE/ifuse required on macOS Sonoma+
 - Navigate directories, view file metadata
-- Copy files to/from device
-- Mount specific app containers
+- Copy files to/from device via pymobiledevice3 AFC push/pull
+- Browse specific app containers (Documents, Library, tmp)
 - Delete files on device
+- Drag-and-drop file transfer
 
 ### Contacts
 - Browse all contacts from backup AddressBook database
@@ -124,13 +130,15 @@ Apple's Finder integration is all-or-nothing. Proprietary tools like iMazing cos
 - Extract all Watch-related data from backup
 
 ### Diagnostics
-- Battery: current charge, charging status, health percentage, design vs. actual capacity (mAh)
+- Battery: current charge, charging status, health percentage, design vs. actual capacity (mAh), cycle count, temperature
 - Storage: total capacity, usage breakdown (Apps, Photos, Media, Other), available space
 - Visual storage bar similar to macOS About This Mac
-- Real-time device system log (syslog) streaming
+- Real-time device system log (syslog) streaming with proper process termination
 - Filter and search logs
 - Export logs to file
 - Color-coded log levels (Error/Warning/Debug)
+- **Crash report viewer** - Pull and browse device crash reports
+- **Process monitor** - Live process list from device
 
 ### Backup Management
 - **Time Machine mode**: 3D animated backup browser for visual restore
@@ -152,13 +160,17 @@ brew install --cask phosphor
 
 1. Download the latest `.dmg` from [Releases](https://github.com/momenbasel/Phosphor/releases)
 2. Drag `Phosphor.app` to Applications
-3. Install dependencies: `brew install libimobiledevice ideviceinstaller ifuse`
+3. Install pymobiledevice3: `pip3 install pymobiledevice3`
+4. Optional fallback: `brew install libimobiledevice ideviceinstaller`
 
 ### Build from Source
 
 ```bash
-# Install dependencies
-brew install libimobiledevice ideviceinstaller ifuse
+# Install pymobiledevice3 (primary)
+pip3 install pymobiledevice3
+
+# Optional fallback tools
+brew install libimobiledevice ideviceinstaller
 
 # Clone and build
 git clone https://github.com/momenbasel/Phosphor.git
@@ -175,11 +187,12 @@ open .build/Phosphor.app
 ## Requirements
 
 - **macOS 14.0** (Sonoma) or later
-- **libimobiledevice** (core device communication)
-- **ideviceinstaller** (app management)
-- **ifuse** (file system mounting, optional)
+- **pymobiledevice3** (primary backend, supports iOS 17-26+): `pip3 install pymobiledevice3`
+- **libimobiledevice** (optional fallback): `brew install libimobiledevice`
+- **ideviceinstaller** (optional fallback for app management)
+- **ifuse** (legacy file mounting, not needed with pymobiledevice3)
 
-Phosphor checks for missing tools on launch and shows installation instructions in Settings.
+Phosphor checks for available tools on launch and uses the best available backend automatically.
 
 ## Architecture
 
@@ -198,7 +211,8 @@ Sources/Phosphor/
 
 **Key design decisions:**
 
-- **No C bindings** - Wraps libimobiledevice CLI tools via subprocess. Simpler dependency chain, easier to maintain, users just `brew install`.
+- **pymobiledevice3 primary, libimobiledevice fallback** - Every operation tries pymobiledevice3 first (JSON-based, supports latest iOS), falls back to libimobiledevice CLI if unavailable.
+- **No C bindings** - Wraps CLI tools via subprocess. Simpler dependency chain, easier to maintain.
 - **Direct SQLite** - Parses iOS backup databases (`Manifest.db`, `sms.db`) using system `sqlite3`. Zero external Swift dependencies.
 - **MVVM** - Services handle business logic, ViewModels manage UI state, Views are declarative and composable.
 - **Zero external dependencies** - Only system frameworks (SwiftUI, Foundation, sqlite3, UniformTypeIdentifiers).
@@ -244,6 +258,15 @@ Phosphor parses this to provide file-system-like browsing without modifying the 
 - [x] Contacts browsing and export (vCard, CSV)
 - [x] Calendar events browsing and export (ICS, CSV)
 - [x] Device-to-device transfer (clone) - backup source, restore to destination
+- [x] Full pymobiledevice3 migration (72 Shell calls, 13 services)
+- [x] Crash report viewer
+- [x] Process monitor
+- [x] Ringtone creator (afconvert)
+- [x] HEIC to JPG conversion (sips)
+- [x] Backup progress bar with percentage
+- [x] Syslog proper process termination
+- [x] Backup cancel support
+- [x] Backup encryption management (enable/disable/change password)
 - [ ] Voicemail browsing
 
 ## Contributing
@@ -252,8 +275,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Credits
 
-- [libimobiledevice](https://libimobiledevice.org/) - Cross-platform protocol library for iOS devices
-- [ifuse](https://github.com/libimobiledevice/ifuse) - FUSE filesystem for iOS devices
+- [pymobiledevice3](https://github.com/doronz88/pymobiledevice3) - Pure Python implementation of Apple's mobile device protocols (primary backend)
+- [libimobiledevice](https://libimobiledevice.org/) - Cross-platform protocol library for iOS devices (fallback)
+- [ifuse](https://github.com/libimobiledevice/ifuse) - FUSE filesystem for iOS devices (legacy)
 - Apple's SF Symbols for iconography
 
 ## License
