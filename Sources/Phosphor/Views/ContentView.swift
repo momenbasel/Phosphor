@@ -36,10 +36,22 @@ struct ContentView: View {
             BackupBrowserView()
         case .messages:
             MessageListView()
+        case .whatsapp:
+            WhatsAppView()
         case .photos:
             PhotoBrowserView()
         case .apps:
             AppManagerView()
+        case .notes:
+            NotesView()
+        case .callLog:
+            CallLogView()
+        case .safari:
+            SafariView()
+        case .health:
+            HealthView()
+        case .music:
+            MusicView()
         case .files:
             FileBrowserView()
         case .diagnostics:

@@ -41,7 +41,7 @@ Apple's Finder integration is all-or-nothing. Proprietary tools like iMazing cos
 | Browse backup contents | No | Yes | Yes |
 | Selective file restore | No | Yes | Yes |
 | Export iMessages to CSV/HTML | No | Yes | Yes |
-| Export WhatsApp messages | No | Yes | Planned |
+| Export WhatsApp messages | No | Yes | Yes |
 | Photo extraction (no iCloud) | No | Yes | Yes |
 | App data extraction | No | Yes | Yes |
 | Install/remove IPAs | No | Yes | Yes |
@@ -112,6 +112,7 @@ Apple's Finder integration is all-or-nothing. Proprietary tools like iMazing cos
 ### Homebrew (recommended)
 
 ```bash
+brew tap momenbasel/phosphor
 brew install --cask phosphor
 ```
 
@@ -193,16 +194,16 @@ Phosphor parses this to provide file-system-like browsing without modifying the 
 
 ## Roadmap
 
-- [ ] WhatsApp message parsing (ChatStorage.sqlite)
-- [ ] Apple Notes extraction (NoteStore.sqlite)
-- [ ] Call log browsing and export
-- [ ] Safari bookmarks and history
-- [ ] Health data extraction
-- [ ] Music and ringtone transfer
-- [ ] Batch operations (multi-select extract)
+- [x] WhatsApp message parsing (ChatStorage.sqlite)
+- [x] Apple Notes extraction (NoteStore.sqlite)
+- [x] Call log browsing and export
+- [x] Safari bookmarks and history
+- [x] Health data extraction (samples, workouts, all data types)
+- [x] Music and ringtone transfer (extract from backup, install to device via AFC)
+- [x] Batch operations (multi-select extract in Photos, Music)
+- [x] Wi-Fi device connection (libimobiledevice network mode)
+- [x] Encrypted backup browsing (via iphone-backup-decrypt)
 - [ ] Drag-and-drop file transfer
-- [ ] Wi-Fi device connection (libimobiledevice network mode)
-- [ ] Encrypted backup browsing (with password)
 - [ ] Localization
 - [ ] Apple Watch data through paired iPhone
 

@@ -1,7 +1,9 @@
 import Foundation
 import SwiftUI
+import Combine
 
 /// Drives diagnostics UI: battery, storage, syslog, device actions.
+/// Forwards DiagnosticsManager's published syslog changes to trigger SwiftUI updates.
 @MainActor
 final class DiagnosticsViewModel: ObservableObject {
 
@@ -15,10 +17,23 @@ final class DiagnosticsViewModel: ObservableObject {
     @Published var alertMessage = ""
 
     let diagnostics = DiagnosticsManager()
+    private var cancellables = Set<AnyCancellable>()
+
+    init() {
+        // Forward syslogLines from DiagnosticsManager to this ViewModel
+        // so SwiftUI picks up the changes
+        diagnostics.$syslogLines
+            .receive(on: RunLoop.main)
+            .assign(to: &$syslogLines)
+
+        diagnostics.$isStreamingSyslog
+            .receive(on: RunLoop.main)
+            .assign(to: &$isStreamingSyslog)
+    }
 
     var filteredSyslog: [String] {
-        guard !syslogFilter.isEmpty else { return diagnostics.syslogLines }
-        return diagnostics.syslogLines.filter { $0.localizedCaseInsensitiveContains(syslogFilter) }
+        guard !syslogFilter.isEmpty else { return syslogLines }
+        return syslogLines.filter { $0.localizedCaseInsensitiveContains(syslogFilter) }
     }
 
     func loadAll(udid: String) async {
@@ -36,17 +51,18 @@ final class DiagnosticsViewModel: ObservableObject {
         } else {
             diagnostics.startSyslog(udid: udid)
         }
-        isStreamingSyslog = diagnostics.isStreamingSyslog
     }
 
     func clearSyslog() {
         diagnostics.clearSyslog()
+        // Also clear local copy immediately for instant UI feedback
+        syslogLines = []
     }
 
     func exportSyslog(to path: String) {
         do {
             try diagnostics.exportSyslog(to: path)
-            alertMessage = "Syslog exported"
+            alertMessage = "Syslog exported to \(path)"
             showAlert = true
         } catch {
             alertMessage = "Export failed: \(error.localizedDescription)"

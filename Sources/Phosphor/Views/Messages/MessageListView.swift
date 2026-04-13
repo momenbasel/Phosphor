@@ -59,11 +59,30 @@ struct MessageListView: View {
 
             if messageVM.isLoading {
                 LoadingOverlay(message: "Loading messages...")
+            } else if backupVM.selectedBackup == nil && backupVM.backups.isEmpty {
+                EmptyStateView(
+                    icon: "message",
+                    title: "No Backup Available",
+                    subtitle: "Create a backup first from the Backups section. Messages are read from local device backups."
+                )
+            } else if backupVM.selectedBackup == nil {
+                EmptyStateView(
+                    icon: "message",
+                    title: "No Backup Selected",
+                    subtitle: "Go to Backups, select a backup, then return here to browse messages.",
+                    action: {
+                        if let first = backupVM.backups.first {
+                            backupVM.openBackupBrowser(first)
+                            messageVM.loadChats(from: first.path)
+                        }
+                    },
+                    actionLabel: backupVM.backups.isEmpty ? nil : "Use Latest Backup"
+                )
             } else if messageVM.chats.isEmpty {
                 EmptyStateView(
                     icon: "message",
-                    title: "No Messages",
-                    subtitle: "Select a backup first, then come back here to browse messages."
+                    title: "No Messages Found",
+                    subtitle: "This backup doesn't contain messages, or it may be encrypted."
                 )
             } else {
                 List(filteredChats, selection: Binding<MessageChat?>(

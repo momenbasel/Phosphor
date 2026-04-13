@@ -20,11 +20,33 @@ struct PhotoBrowserView: View {
 
             if photoVM.isLoading {
                 LoadingOverlay(message: "Scanning Camera Roll...")
+            } else if backupVM.selectedBackup == nil && backupVM.backups.isEmpty {
+                EmptyStateView(
+                    icon: "photo.on.rectangle.angled",
+                    title: "No Backup Available",
+                    subtitle: "Create a backup first from the Backups section. Photos are extracted from local device backups.",
+                    action: nil,
+                    actionLabel: nil
+                )
+            } else if backupVM.selectedBackup == nil {
+                EmptyStateView(
+                    icon: "photo.on.rectangle.angled",
+                    title: "No Backup Selected",
+                    subtitle: "Go to Backups, select a backup, then return here to browse photos.",
+                    action: {
+                        // Auto-select first backup
+                        if let first = backupVM.backups.first {
+                            backupVM.openBackupBrowser(first)
+                            Task { await photoVM.loadPhotos(from: first.path) }
+                        }
+                    },
+                    actionLabel: backupVM.backups.isEmpty ? nil : "Use Latest Backup"
+                )
             } else if photoVM.items.isEmpty {
                 EmptyStateView(
                     icon: "photo.on.rectangle.angled",
                     title: "No Photos Found",
-                    subtitle: "Select a backup to browse its Camera Roll. Photos, videos, and screenshots will appear here."
+                    subtitle: "This backup doesn't contain Camera Roll photos, or it may be encrypted."
                 )
             } else {
                 switch viewMode {

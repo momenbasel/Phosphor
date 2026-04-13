@@ -17,7 +17,11 @@ final class AppManager: ObservableObject {
         isLoading = true
         lastError = nil
 
-        let result = await Shell.runAsync("ideviceinstaller", arguments: ["-u", udid, "-l", "-o", "list_all"])
+        // Modern syntax: "list --all", Legacy: "-l -o list_all"
+        var result = await Shell.runAsync("ideviceinstaller", arguments: ["-u", udid, "list", "--all"])
+        if !result.succeeded {
+            result = await Shell.runAsync("ideviceinstaller", arguments: ["-u", udid, "-l", "-o", "list_all"])
+        }
         guard result.succeeded else {
             lastError = result.stderr.nilIfEmpty ?? "Failed to list apps. Is ideviceinstaller installed?"
             isLoading = false
@@ -112,28 +116,76 @@ final class AppManager: ObservableObject {
     // MARK: - App Installation
 
     /// Install an IPA file on a connected device.
+    /// Tries modern subcommand syntax first, falls back to legacy -i flag,
+    /// then tries xcrun devicectl as last resort.
     func installIPA(path: String, udid: String) async -> Bool {
-        let result = await Shell.runAsync(
+        // Modern ideviceinstaller (1.2+): "install PATH"
+        var result = await Shell.runAsync(
             "ideviceinstaller",
-            arguments: ["-u", udid, "-i", path],
+            arguments: ["-u", udid, "install", path],
             timeout: 300
         )
-        if !result.succeeded {
-            lastError = result.stderr.nilIfEmpty ?? result.output
+
+        if result.succeeded { return true }
+
+        // Legacy ideviceinstaller: "-i PATH"
+        if result.stderr.contains("invalid option") || result.output.contains("invalid option") {
+            result = await Shell.runAsync(
+                "ideviceinstaller",
+                arguments: ["-u", udid, "-i", path],
+                timeout: 300
+            )
+            if result.succeeded { return true }
         }
-        return result.succeeded
+
+        // Fallback: Apple's xcrun devicectl (Xcode 15+)
+        let devicectlResult = await Shell.runAsync(
+            "xcrun",
+            arguments: ["devicectl", "device", "install", "app", "--device", udid, path],
+            timeout: 300
+        )
+        if devicectlResult.succeeded { return true }
+
+        // Fallback: ios-deploy
+        let iosDeployResult = await Shell.runAsync(
+            "ios-deploy",
+            arguments: ["--id", udid, "--bundle", path],
+            timeout: 300
+        )
+        if iosDeployResult.succeeded { return true }
+
+        lastError = result.stderr.nilIfEmpty ?? result.output.nilIfEmpty ?? devicectlResult.stderr.nilIfEmpty ?? "Installation failed with all methods. Try: brew install ios-deploy"
+        return false
     }
 
     /// Uninstall an app from a connected device.
     func uninstallApp(bundleId: String, udid: String) async -> Bool {
-        let result = await Shell.runAsync(
+        // Modern syntax first
+        var result = await Shell.runAsync(
             "ideviceinstaller",
-            arguments: ["-u", udid, "-U", bundleId]
+            arguments: ["-u", udid, "uninstall", bundleId]
         )
-        if !result.succeeded {
-            lastError = result.stderr.nilIfEmpty ?? result.output
+
+        if result.succeeded { return true }
+
+        // Legacy fallback
+        if result.stderr.contains("invalid option") || result.output.contains("invalid option") {
+            result = await Shell.runAsync(
+                "ideviceinstaller",
+                arguments: ["-u", udid, "-U", bundleId]
+            )
+            if result.succeeded { return true }
         }
-        return result.succeeded
+
+        // Apple devicectl fallback
+        let devicectlResult = await Shell.runAsync(
+            "xcrun",
+            arguments: ["devicectl", "device", "uninstall", "app", "--device", udid, bundleId]
+        )
+        if devicectlResult.succeeded { return true }
+
+        lastError = result.stderr.nilIfEmpty ?? result.output
+        return false
     }
 
     /// Extract app data from a backup to a destination.
