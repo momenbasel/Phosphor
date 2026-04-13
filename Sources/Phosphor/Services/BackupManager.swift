@@ -62,6 +62,8 @@ final class BackupManager: ObservableObject {
     // MARK: - Backup Creation
 
     /// Create a new backup for the specified device.
+    /// Default method: pymobiledevice3 (supports latest iOS).
+    /// Fallback: idevicebackup2 (libimobiledevice).
     func createBackup(
         udid: String,
         encrypted: Bool = false,
@@ -71,10 +73,20 @@ final class BackupManager: ObservableObject {
         backupProgress = "Starting backup..."
         lastError = nil
 
-        let args = ["backup", "--full", "-u", udid, Self.activeBackupDir]
-        if encrypted {
-            // Note: encryption password must be set beforehand via idevicebackup2 encryption
+        // Primary: pymobiledevice3 (supports all iOS versions including latest)
+        let pySuccess = await createBackupViaPymobiledevice(udid: udid, full: true, onProgress: onProgress)
+        if pySuccess {
+            isCreatingBackup = false
+            backupProgress = "Backup complete"
+            discoverBackups()
+            return true
         }
+
+        // Fallback: idevicebackup2 (libimobiledevice)
+        backupProgress = "pymobiledevice3 unavailable, trying idevicebackup2..."
+        onProgress("Falling back to idevicebackup2...")
+
+        let args = ["backup", "--full", "-u", udid, Self.activeBackupDir]
 
         return await withCheckedContinuation { continuation in
             Shell.runStreaming(
@@ -94,10 +106,48 @@ final class BackupManager: ObservableObject {
                             self?.backupProgress = "Backup complete"
                             self?.discoverBackups()
                         } else {
-                            self?.backupProgress = "Backup failed"
+                            self?.backupProgress = "Backup failed. Install pymobiledevice3: pip3 install pymobiledevice3"
+                            self?.lastError = "Both backup methods failed. Your iOS version may require pymobiledevice3."
                         }
                         continuation.resume(returning: exitCode == 0)
                     }
+                }
+            )
+        }
+    }
+
+    /// Backup using pymobiledevice3 (Python, supports latest iOS).
+    private func createBackupViaPymobiledevice(udid: String, full: Bool, onProgress: @escaping (String) -> Void) async -> Bool {
+        // Check if pymobiledevice3 is available
+        let check = await Shell.runAsync("python3", arguments: ["-c", "import pymobiledevice3"], timeout: 10)
+        guard check.succeeded else {
+            lastError = "pymobiledevice3 not installed"
+            return false
+        }
+
+        backupProgress = "Creating backup via pymobiledevice3..."
+        onProgress("Creating backup via pymobiledevice3...")
+
+        var args = ["backup2", "backup"]
+        if full { args.append("--full") }
+        args.append(Self.activeBackupDir)
+
+        return await withCheckedContinuation { continuation in
+            Shell.runStreaming(
+                "python3",
+                arguments: ["-m", "pymobiledevice3"] + args,
+                onOutput: { [weak self] output in
+                    let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty {
+                        self?.backupProgress = trimmed
+                        onProgress(trimmed)
+                    }
+                },
+                onError: { [weak self] error in
+                    self?.lastError = error
+                },
+                completion: { exitCode in
+                    continuation.resume(returning: exitCode == 0)
                 }
             )
         }

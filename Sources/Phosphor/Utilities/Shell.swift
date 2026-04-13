@@ -134,6 +134,11 @@ enum Shell {
         for tool in tools {
             status[tool] = which(tool) != nil
         }
+
+        // Check pymobiledevice3 (Python, required for latest iOS backup)
+        let pyCheck = run("python3", arguments: ["-c", "import pymobiledevice3"])
+        status["pymobiledevice3"] = pyCheck.succeeded
+
         return status
     }
 }

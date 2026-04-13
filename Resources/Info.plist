@@ -36,5 +36,47 @@
     <string>NSApplication</string>
     <key>NSAppleEventsUsageDescription</key>
     <string>Phosphor needs permission to communicate with connected iOS devices.</string>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Phosphor Backup Archive</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>com.phosphor.backup-archive</string>
+            </array>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>phosphor</string>
+            </array>
+        </dict>
+    </array>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.phosphor.backup-archive</string>
+            <key>UTTypeDescription</key>
+            <string>Phosphor Backup Archive</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+                <string>public.archive</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>phosphor</string>
+                </array>
+                <key>public.mime-type</key>
+                <string>application/x-phosphor-backup</string>
+            </dict>
+        </dict>
+    </array>
 </dict>
 </plist>
