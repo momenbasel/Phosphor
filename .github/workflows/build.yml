@@ -1,0 +1,64 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Install Dependencies
+        run: brew install libimobiledevice
+
+      - name: Build Debug
+        run: swift build
+
+      - name: Build Release
+        run: swift build -c release
+
+      - name: Create App Bundle
+        run: bash Scripts/build.sh
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Phosphor.app
+          path: .build/Phosphor.app
+          retention-days: 14
+
+  release:
+    needs: build
+    runs-on: macos-14
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Install Dependencies
+        run: brew install libimobiledevice
+
+      - name: Build Release
+        run: |
+          swift build -c release
+          bash Scripts/build.sh
+
+      - name: Create DMG
+        run: bash Scripts/create-dmg.sh
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: .build/Phosphor.dmg
+          generate_release_notes: true

@@ -1,0 +1,185 @@
+import SwiftUI
+
+/// App settings: backup location, dependencies check, about.
+struct SettingsView: View {
+
+    @State private var backupDirectory = BackupManager.defaultBackupDir
+    @State private var dependencyList: [DependencyItem] = []
+    @State private var autoRefreshInterval: Double = 4.0
+
+    var body: some View {
+        TabView {
+            generalTab
+                .tabItem {
+                    Label("General", systemImage: "gearshape")
+                }
+
+            dependenciesTab
+                .tabItem {
+                    Label("Dependencies", systemImage: "shippingbox")
+                }
+
+            aboutTab
+                .tabItem {
+                    Label("About", systemImage: "info.circle")
+                }
+        }
+        .frame(width: 520, height: 400)
+        .onAppear {
+            let deps = Shell.checkDependencies()
+            dependencyList = deps.map { DependencyItem(name: $0.key, installed: $0.value) }
+                .sorted { $0.name < $1.name }
+        }
+    }
+
+    // MARK: - General
+
+    private var generalTab: some View {
+        Form {
+            Section("Backup Location") {
+                HStack {
+                    TextField("Backup directory", text: $backupDirectory)
+                        .textFieldStyle(.roundedBorder)
+
+                    Button("Browse...") {
+                        let panel = NSOpenPanel()
+                        panel.canChooseFiles = false
+                        panel.canChooseDirectories = true
+                        if panel.runModal() == .OK, let url = panel.url {
+                            backupDirectory = url.path
+                        }
+                    }
+
+                    Button("Reset") {
+                        backupDirectory = BackupManager.defaultBackupDir
+                    }
+                }
+
+                Text("Default: ~/Library/Application Support/MobileSync/Backup")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Device Polling") {
+                HStack {
+                    Text("Auto-refresh interval")
+                    Slider(value: $autoRefreshInterval, in: 1...15, step: 1)
+                    Text("\(Int(autoRefreshInterval))s")
+                        .font(.system(size: 12, design: .monospaced))
+                        .frame(width: 30)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+
+    // MARK: - Dependencies
+
+    private var dependenciesTab: some View {
+        VStack(spacing: 0) {
+            List {
+                Section("Required Tools") {
+                    ForEach(dependencyList) { dep in
+                        DependencyRow(item: dep)
+                    }
+                }
+            }
+            .listStyle(.inset(alternatesRowBackgrounds: true))
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Install all required tools with Homebrew:")
+                    .font(.system(size: 13))
+
+                Text("brew install libimobiledevice ideviceinstaller ifuse")
+                    .font(.system(size: 12, design: .monospaced))
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(.textBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .textSelection(.enabled)
+
+                Button("Check Again") {
+                    let deps = Shell.checkDependencies()
+                    dependencyList = deps.map { DependencyItem(name: $0.key, installed: $0.value) }
+                        .sorted { $0.name < $1.name }
+                }
+            }
+            .padding()
+        }
+    }
+
+    // MARK: - About
+
+    private var aboutTab: some View {
+        VStack(spacing: 16) {
+            Spacer()
+
+            Image(systemName: "light.beacon.max")
+                .font(.system(size: 48))
+                .foregroundStyle(.indigo)
+
+            Text("Phosphor")
+                .font(.title.weight(.bold))
+
+            Text("Version 1.0.0")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            Text("Free and open-source iOS device manager for macOS.\nA complete replacement for proprietary tools.")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 360)
+
+            Divider()
+                .frame(width: 200)
+
+            HStack(spacing: 20) {
+                Link("GitHub", destination: URL(string: "https://github.com/momenbasel/Phosphor")!)
+                Link("Report Issue", destination: URL(string: "https://github.com/momenbasel/Phosphor/issues")!)
+                Link("License (MIT)", destination: URL(string: "https://github.com/momenbasel/Phosphor/blob/main/LICENSE")!)
+            }
+            .font(.system(size: 12))
+
+            Text("Built with libimobiledevice and SwiftUI")
+                .font(.system(size: 11))
+                .foregroundStyle(.tertiary)
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+struct DependencyItem: Identifiable {
+    let id: String
+    let name: String
+    let installed: Bool
+
+    init(name: String, installed: Bool) {
+        self.id = name
+        self.name = name
+        self.installed = installed
+    }
+}
+
+struct DependencyRow: View {
+    let item: DependencyItem
+
+    var body: some View {
+        HStack {
+            Image(systemName: item.installed ? "checkmark.circle.fill" : "xmark.circle.fill")
+                .foregroundStyle(item.installed ? .green : .red)
+
+            Text(item.name)
+                .font(.system(size: 13, design: .monospaced))
+
+            Spacer()
+
+            Text(item.installed ? "Installed" : "Missing")
+                .font(.system(size: 12))
+                .foregroundColor(item.installed ? .secondary : .red)
+        }
+    }
+}
