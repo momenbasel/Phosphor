@@ -1,6 +1,30 @@
-# Phosphor
+<p align="center">
+  <img src="Resources/banner.svg" alt="Phosphor Banner" width="100%">
+</p>
 
-**Free and open-source iOS device manager for macOS.**
+<p align="center">
+  <img src="Resources/AppIcon.svg" alt="Phosphor Icon" width="128" height="128">
+</p>
+
+<h1 align="center">Phosphor</h1>
+
+<p align="center">
+  <strong>Free and open-source iOS device manager for macOS.</strong><br>
+  <a href="https://github.com/momenbasel/Phosphor/releases/latest">Download</a> -
+  <a href="https://momenbasel.github.io/Phosphor/">Website</a> -
+  <a href="#features">Features</a> -
+  <a href="#installation">Install</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/momenbasel/Phosphor/releases/latest"><img src="https://img.shields.io/github/v/release/momenbasel/Phosphor?style=flat-square&color=5856D6" alt="Release"></a>
+  <a href="https://github.com/momenbasel/Phosphor/blob/main/LICENSE"><img src="https://img.shields.io/github/license/momenbasel/Phosphor?style=flat-square&color=34C759" alt="License"></a>
+  <a href="https://github.com/momenbasel/Phosphor/actions"><img src="https://img.shields.io/github/actions/workflow/status/momenbasel/Phosphor/build.yml?style=flat-square" alt="Build"></a>
+  <img src="https://img.shields.io/badge/platform-macOS%2014%2B-blue?style=flat-square" alt="Platform">
+  <img src="https://img.shields.io/badge/swift-5.9-orange?style=flat-square" alt="Swift">
+</p>
+
+---
 
 Phosphor gives you complete control over your iPhone, iPad, and iPod touch without proprietary software, iCloud lock-in, or subscriptions. Built natively with SwiftUI and powered by [libimobiledevice](https://libimobiledevice.org/).
 
