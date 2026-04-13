@@ -2,7 +2,7 @@ import Foundation
 import Combine
 
 /// Automated backup scheduler with Wi-Fi device detection.
-/// Persists schedule in UserDefaults and runs a background timer to trigger backups.
+/// Primary: pymobiledevice3. Fallback: libimobiledevice.
 @MainActor
 final class BackupScheduler: ObservableObject {
 
@@ -28,7 +28,7 @@ final class BackupScheduler: ObservableObject {
         var enabled: Bool = false
         var frequency: Frequency = .daily
         var wifiOnly: Bool = true
-        var preferredHour: Int = 2 // 2 AM default
+        var preferredHour: Int = 2
         var preferredMinute: Int = 0
         var targetUDID: String?
         var lastRunDate: Date?
@@ -68,19 +68,15 @@ final class BackupScheduler: ObservableObject {
 
     // MARK: - Timer Control
 
-    /// Start the schedule check timer. Call on app launch.
     func startMonitoring() {
         stopMonitoring()
         guard schedule.enabled else { return }
 
-        // Check every 5 minutes
         timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 await self?.checkAndRun()
             }
         }
-
-        // Also check immediately
         Task { await checkAndRun() }
         updateNextRunDate()
     }
@@ -90,30 +86,20 @@ final class BackupScheduler: ObservableObject {
         timer = nil
     }
 
-    /// Reload schedule from UserDefaults. Call when settings may have changed externally.
     func reloadFromDefaults() {
         if let data = defaults.data(forKey: scheduleKey),
            let saved = try? JSONDecoder().decode(Schedule.self, from: data) {
-            // Only update if different to avoid triggering didSet save loop
-            if saved != schedule {
-                schedule = saved
-            }
+            if saved != schedule { schedule = saved }
         }
     }
 
-    /// Check if a scheduled backup should run now.
-    /// Uses isRunningScheduledBackup as a lock - set before any async work to prevent races.
     func checkAndRun() async {
-        // Re-read from UserDefaults in case settings changed from another instance (e.g. Settings window)
         reloadFromDefaults()
-
         guard schedule.enabled, !isRunningScheduledBackup else { return }
         guard let nextRun = schedule.nextRunDate, Date() >= nextRun else { return }
 
-        // Set flag immediately before any async work to prevent concurrent executions
         isRunningScheduledBackup = true
 
-        // Check for device availability
         let udid = await findTargetDevice()
         guard let udid else {
             addLog("No device found for scheduled backup", success: false)
@@ -122,10 +108,8 @@ final class BackupScheduler: ObservableObject {
         }
 
         await runScheduledBackup(udid: udid)
-        // isRunningScheduledBackup is reset inside runScheduledBackup
     }
 
-    /// Force-run a scheduled backup now.
     func runNow() async {
         guard !isRunningScheduledBackup else { return }
         let udid = await findTargetDevice()
@@ -169,13 +153,19 @@ final class BackupScheduler: ObservableObject {
     // MARK: - Device Discovery
 
     private func findTargetDevice() async -> String? {
-        // If a specific device is targeted, check that one
+        // Check specific target first
         if let target = schedule.targetUDID {
+            // pymobiledevice3 device listing
+            let allDevices = await PyMobileDevice.listDevices()
+            if allDevices.contains(target) { return target }
+
+            // WiFi check
             if schedule.wifiOnly {
-                let reachable = await isDeviceAvailableWiFi(udid: target)
-                if reachable { return target }
+                let networkDevices = await PyMobileDevice.listNetworkDevices()
+                if networkDevices.contains(target) { return target }
             }
-            // Also check USB
+
+            // Fallback: libimobiledevice
             let usbResult = await Shell.runAsync("idevice_id", arguments: ["-l"])
             if usbResult.succeeded {
                 let devices = usbResult.output.components(separatedBy: "\n").filter { !$0.isEmpty }
@@ -184,16 +174,23 @@ final class BackupScheduler: ObservableObject {
             return nil
         }
 
-        // No specific target - find any available device
-        // Check USB first
+        // No specific target - find any device
+        // pymobiledevice3 USB
+        let pyDevices = await PyMobileDevice.listDevices()
+        if let first = pyDevices.first { return first }
+
+        // Fallback USB
         let usbResult = await Shell.runAsync("idevice_id", arguments: ["-l"])
         if usbResult.succeeded {
             let devices = usbResult.output.components(separatedBy: "\n").filter { !$0.isEmpty }
             if let first = devices.first { return first }
         }
 
-        // Check WiFi
+        // WiFi
         if schedule.wifiOnly {
+            let networkDevices = await PyMobileDevice.listNetworkDevices()
+            if let first = networkDevices.first { return first }
+
             let wifiResult = await Shell.runAsync("idevice_id", arguments: ["-n"])
             if wifiResult.succeeded {
                 let devices = wifiResult.output.components(separatedBy: "\n").filter { !$0.isEmpty }
@@ -202,11 +199,6 @@ final class BackupScheduler: ObservableObject {
         }
 
         return nil
-    }
-
-    private func isDeviceAvailableWiFi(udid: String) async -> Bool {
-        let result = await Shell.runAsync("ideviceinfo", arguments: ["-u", udid, "-n", "-k", "DeviceName"], timeout: 5)
-        return result.succeeded
     }
 
     // MARK: - Scheduling Math
@@ -223,7 +215,6 @@ final class BackupScheduler: ObservableObject {
         if let lastRun = schedule.lastRunDate {
             next = lastRun.addingTimeInterval(schedule.frequency.interval)
         } else {
-            // First run - schedule for preferred time today or tomorrow
             var components = calendar.dateComponents([.year, .month, .day], from: Date())
             components.hour = schedule.preferredHour
             components.minute = schedule.preferredMinute

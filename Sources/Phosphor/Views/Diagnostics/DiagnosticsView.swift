@@ -10,6 +10,8 @@ struct DiagnosticsView: View {
     enum DiagTab: String, CaseIterable {
         case overview = "Overview"
         case syslog = "Console Log"
+        case processes = "Processes"
+        case crashes = "Crash Reports"
     }
 
     var body: some View {
@@ -29,6 +31,10 @@ struct DiagnosticsView: View {
                     overviewTab
                 case .syslog:
                     syslogTab
+                case .processes:
+                    processListTab
+                case .crashes:
+                    crashReportsTab
                 }
             }
         }
@@ -292,5 +298,124 @@ struct DiagnosticsView: View {
         if line.contains("Warning") || line.contains("warning") { return .orange }
         if line.contains("Debug") || line.contains("debug") { return .gray }
         return .primary
+    }
+
+    // MARK: - Process List Tab
+
+    private var processListTab: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("\(diagVM.processes.count) running processes")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Refresh") {
+                    guard let udid = deviceVM.selectedDevice?.id else { return }
+                    Task { await diagVM.loadProcesses(udid: udid) }
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
+
+            Divider()
+
+            if diagVM.isLoadingProcesses {
+                LoadingOverlay(message: "Loading processes...")
+            } else if diagVM.processes.isEmpty {
+                EmptyStateView(
+                    icon: "cpu",
+                    title: "No Processes",
+                    subtitle: "Requires pymobiledevice3 and DeveloperDiskImage on device."
+                )
+            } else {
+                List(diagVM.processes) { proc in
+                    HStack(spacing: 10) {
+                        Text("\(proc.pid)")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 50, alignment: .trailing)
+                        Text(proc.name)
+                            .font(.system(size: 13, weight: .medium))
+                        Spacer()
+                        if let appName = proc.realAppName {
+                            Text(appName)
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(.quaternary)
+                                .clipShape(Capsule())
+                        }
+                    }
+                    .padding(.vertical, 1)
+                }
+                .listStyle(.inset)
+            }
+        }
+    }
+
+    // MARK: - Crash Reports Tab
+
+    private var crashReportsTab: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("\(diagVM.crashReports.count) crash reports")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Pull Crash Reports") {
+                    guard let udid = deviceVM.selectedDevice?.id else { return }
+                    Task { await diagVM.pullCrashReports(udid: udid) }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.indigo)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
+
+            Divider()
+
+            if diagVM.isLoadingCrashes {
+                LoadingOverlay(message: "Pulling crash reports...")
+            } else if diagVM.crashReports.isEmpty {
+                EmptyStateView(
+                    icon: "exclamationmark.triangle",
+                    title: "No Crash Reports",
+                    subtitle: "Click Pull Crash Reports to download from device."
+                )
+            } else {
+                List(diagVM.crashReports) { crash in
+                    HStack(spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .font(.system(size: 14))
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(crash.processName)
+                                .font(.system(size: 13, weight: .medium))
+                            Text(crash.name)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+
+                        Spacer()
+
+                        if let date = crash.date {
+                            Text(date.shortString)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                    .contextMenu {
+                        Button("Reveal in Finder") {
+                            NSWorkspace.shared.selectFile(crash.path, inFileViewerRootedAtPath: "")
+                        }
+                    }
+                }
+                .listStyle(.inset)
+            }
+        }
     }
 }

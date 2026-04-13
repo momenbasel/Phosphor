@@ -59,14 +59,15 @@ enum Shell {
         }
     }
 
-    /// Run a command with real-time output streaming via callback.
+    /// Run a command with real-time output streaming via callback. Returns Process for termination.
+    @discardableResult
     static func runStreaming(
         _ command: String,
         arguments: [String] = [],
         onOutput: @escaping (String) -> Void,
         onError: @escaping (String) -> Void = { _ in },
         completion: @escaping (Int32) -> Void
-    ) {
+    ) -> Process? {
         let process = Process()
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -104,9 +105,11 @@ enum Shell {
 
         do {
             try process.run()
+            return process
         } catch {
             onError("Failed to launch: \(error.localizedDescription)")
             completion(-1)
+            return nil
         }
     }
 

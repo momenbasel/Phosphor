@@ -2,14 +2,18 @@ import Foundation
 import Combine
 
 /// Handles iOS backup operations: discovery, creation, browsing, and selective restore.
-/// Wraps idevicebackup2 CLI and directly parses Apple's backup format (Manifest.db + hashed files).
+/// Primary: pymobiledevice3 (supports iOS 17-26+). Fallback: idevicebackup2.
 @MainActor
 final class BackupManager: ObservableObject {
 
     @Published var backups: [BackupInfo] = []
     @Published var isCreatingBackup = false
     @Published var backupProgress: String = ""
+    @Published var backupPercent: Double = 0
     @Published var lastError: String?
+
+    /// Active backup process for cancellation.
+    private var activeProcess: Process?
 
     /// Default backup location used by Apple and libimobiledevice.
     static let defaultBackupDir: String = {
@@ -28,7 +32,6 @@ final class BackupManager: ObservableObject {
 
     // MARK: - Discovery
 
-    /// Scan the backup directory for all iOS backups and parse their metadata.
     func discoverBackups(at directory: String? = nil) {
         let dir = directory ?? Self.activeBackupDir
         let fm = FileManager.default
@@ -46,7 +49,6 @@ final class BackupManager: ObservableObject {
             var isDir: ObjCBool = false
             guard fm.fileExists(atPath: fullPath, isDirectory: &isDir), isDir.boolValue else { continue }
 
-            // Valid backup directories contain Info.plist
             let infoPlist = (fullPath as NSString).appendingPathComponent("Info.plist")
             guard fm.fileExists(atPath: infoPlist) else { continue }
 
@@ -55,15 +57,12 @@ final class BackupManager: ObservableObject {
             }
         }
 
-        // Sort by date, newest first
         backups = discovered.sorted { ($0.lastBackupDate ?? .distantPast) > ($1.lastBackupDate ?? .distantPast) }
     }
 
     // MARK: - Backup Creation
 
-    /// Create a new backup for the specified device.
-    /// Default method: pymobiledevice3 (supports latest iOS).
-    /// Fallback: idevicebackup2 (libimobiledevice).
+    /// Create a new backup. pymobiledevice3 primary, idevicebackup2 fallback.
     func createBackup(
         udid: String,
         encrypted: Bool = false,
@@ -71,19 +70,24 @@ final class BackupManager: ObservableObject {
     ) async -> Bool {
         isCreatingBackup = true
         backupProgress = "Starting backup..."
+        backupPercent = 0
         lastError = nil
 
-        // Primary: pymobiledevice3 (supports all iOS versions including latest)
+        // Ensure backup directory exists
+        try? FileManager.default.createDirectory(atPath: Self.activeBackupDir, withIntermediateDirectories: true)
+
+        // Primary: pymobiledevice3
         let pySuccess = await createBackupViaPymobiledevice(udid: udid, full: true, onProgress: onProgress)
         if pySuccess {
             isCreatingBackup = false
             backupProgress = "Backup complete"
+            backupPercent = 1.0
             discoverBackups()
             return true
         }
 
-        // Fallback: idevicebackup2 (libimobiledevice)
-        backupProgress = "pymobiledevice3 unavailable, trying idevicebackup2..."
+        // Fallback: idevicebackup2
+        backupProgress = "Trying idevicebackup2..."
         onProgress("Falling back to idevicebackup2...")
 
         let args = ["backup", "--full", "-u", udid, Self.activeBackupDir]
@@ -93,7 +97,11 @@ final class BackupManager: ObservableObject {
                 "idevicebackup2",
                 arguments: args,
                 onOutput: { [weak self] output in
-                    self?.backupProgress = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                    self?.backupProgress = trimmed
+                    if let pct = PyMobileDevice.parseProgress(from: trimmed) {
+                        self?.backupPercent = pct
+                    }
                     onProgress(output)
                 },
                 onError: { [weak self] error in
@@ -104,10 +112,11 @@ final class BackupManager: ObservableObject {
                         self?.isCreatingBackup = false
                         if exitCode == 0 {
                             self?.backupProgress = "Backup complete"
+                            self?.backupPercent = 1.0
                             self?.discoverBackups()
                         } else {
                             self?.backupProgress = "Backup failed. Install pymobiledevice3: pip3 install pymobiledevice3"
-                            self?.lastError = "Both backup methods failed. Your iOS version may require pymobiledevice3."
+                            self?.lastError = "Both backup methods failed."
                         }
                         continuation.resume(returning: exitCode == 0)
                     }
@@ -116,11 +125,9 @@ final class BackupManager: ObservableObject {
         }
     }
 
-    /// Backup using pymobiledevice3 (Python, supports latest iOS).
+    /// Backup using pymobiledevice3.
     private func createBackupViaPymobiledevice(udid: String, full: Bool, onProgress: @escaping (String) -> Void) async -> Bool {
-        // Check if pymobiledevice3 is available
-        let check = await Shell.runAsync("python3", arguments: ["-c", "import pymobiledevice3"], timeout: 10)
-        guard check.succeeded else {
+        guard PyMobileDevice.available() else {
             lastError = "pymobiledevice3 not installed"
             return false
         }
@@ -128,25 +135,33 @@ final class BackupManager: ObservableObject {
         backupProgress = "Creating backup via pymobiledevice3..."
         onProgress("Creating backup via pymobiledevice3...")
 
-        var args = ["backup2", "backup"]
-        if full { args.append("--full") }
-        args.append(Self.activeBackupDir)
-
         return await withCheckedContinuation { continuation in
-            Shell.runStreaming(
-                "python3",
-                arguments: ["-m", "pymobiledevice3"] + args,
+            activeProcess = PyMobileDevice.backup(
+                directory: Self.activeBackupDir,
+                udid: udid,
+                full: full,
                 onOutput: { [weak self] output in
                     let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !trimmed.isEmpty {
                         self?.backupProgress = trimmed
+                        if let pct = PyMobileDevice.parseProgress(from: trimmed) {
+                            self?.backupPercent = pct
+                        }
                         onProgress(trimmed)
                     }
                 },
                 onError: { [weak self] error in
-                    self?.lastError = error
+                    let trimmed = error.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty {
+                        // pymobiledevice3 sends progress on stderr
+                        if let pct = PyMobileDevice.parseProgress(from: trimmed) {
+                            self?.backupPercent = pct
+                            self?.backupProgress = "Backup: \(Int(pct * 100))%"
+                        }
+                    }
                 },
-                completion: { exitCode in
+                completion: { [weak self] exitCode in
+                    self?.activeProcess = nil
                     continuation.resume(returning: exitCode == 0)
                 }
             )
@@ -160,14 +175,34 @@ final class BackupManager: ObservableObject {
     ) async -> Bool {
         isCreatingBackup = true
         backupProgress = "Starting incremental backup..."
+        backupPercent = 0
         lastError = nil
 
+        try? FileManager.default.createDirectory(atPath: Self.activeBackupDir, withIntermediateDirectories: true)
+
+        // Primary: pymobiledevice3 (without --full flag)
+        if PyMobileDevice.available() {
+            let success = await createBackupViaPymobiledevice(udid: udid, full: false, onProgress: onProgress)
+            if success {
+                isCreatingBackup = false
+                backupProgress = "Backup complete"
+                backupPercent = 1.0
+                discoverBackups()
+                return true
+            }
+        }
+
+        // Fallback: idevicebackup2
         return await withCheckedContinuation { continuation in
             Shell.runStreaming(
                 "idevicebackup2",
                 arguments: ["backup", "-u", udid, Self.activeBackupDir],
                 onOutput: { [weak self] output in
-                    self?.backupProgress = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                    self?.backupProgress = trimmed
+                    if let pct = PyMobileDevice.parseProgress(from: trimmed) {
+                        self?.backupPercent = pct
+                    }
                     onProgress(output)
                 },
                 onError: { [weak self] error in
@@ -177,7 +212,10 @@ final class BackupManager: ObservableObject {
                     Task { @MainActor in
                         self?.isCreatingBackup = false
                         self?.backupProgress = exitCode == 0 ? "Backup complete" : "Backup failed"
-                        if exitCode == 0 { self?.discoverBackups() }
+                        if exitCode == 0 {
+                            self?.backupPercent = 1.0
+                            self?.discoverBackups()
+                        }
                         continuation.resume(returning: exitCode == 0)
                     }
                 }
@@ -187,12 +225,28 @@ final class BackupManager: ObservableObject {
 
     // MARK: - Restore
 
-    /// Restore a full backup to a device.
+    /// Restore a backup to a device. pymobiledevice3 primary, idevicebackup2 fallback.
     func restoreBackup(
         backupPath: String,
         udid: String,
         onProgress: @escaping (String) -> Void
     ) async -> Bool {
+        // Primary: pymobiledevice3
+        if PyMobileDevice.available() {
+            return await withCheckedContinuation { continuation in
+                activeProcess = PyMobileDevice.restore(
+                    directory: backupPath,
+                    udid: udid,
+                    onOutput: { output in onProgress(output) },
+                    completion: { [weak self] exitCode in
+                        self?.activeProcess = nil
+                        continuation.resume(returning: exitCode == 0)
+                    }
+                )
+            }
+        }
+
+        // Fallback: idevicebackup2
         return await withCheckedContinuation { continuation in
             Shell.runStreaming(
                 "idevicebackup2",
@@ -206,9 +260,16 @@ final class BackupManager: ObservableObject {
         }
     }
 
+    /// Cancel an active backup/restore.
+    func cancelBackup() {
+        activeProcess?.terminate()
+        activeProcess = nil
+        isCreatingBackup = false
+        backupProgress = "Cancelled"
+    }
+
     // MARK: - Backup Browsing
 
-    /// Open a BackupManifest for browsing backup contents.
     func openManifest(for backup: BackupInfo) -> BackupManifest? {
         do {
             return try BackupManifest(backupPath: backup.path)
@@ -220,7 +281,6 @@ final class BackupManager: ObservableObject {
 
     // MARK: - Selective Extract
 
-    /// Extract specific files from a backup to a destination directory.
     func extractFiles(
         from backup: BackupInfo,
         entries: [BackupManifest.FileEntry],
@@ -235,7 +295,6 @@ final class BackupManager: ObservableObject {
                 try manifest.extractFile(entry, to: destPath)
                 extracted += 1
             } catch {
-                // Log but continue extracting other files
                 lastError = "Failed to extract \(entry.fileName): \(error.localizedDescription)"
             }
         }
@@ -243,7 +302,6 @@ final class BackupManager: ObservableObject {
         return extracted
     }
 
-    /// Extract an entire domain (e.g., CameraRollDomain) from a backup.
     func extractDomain(
         from backup: BackupInfo,
         domain: String,
@@ -256,42 +314,35 @@ final class BackupManager: ObservableObject {
 
     // MARK: - Encryption
 
-    /// Enable backup encryption for a device.
     func enableEncryption(udid: String, password: String) async -> Bool {
-        let result = await Shell.runAsync(
-            "idevicebackup2",
-            arguments: ["-u", udid, "encryption", "on", password]
-        )
-        return result.succeeded
+        if await PyMobileDevice.setEncryption(enabled: true, password: password, udid: udid) { return true }
+        return (await Shell.runAsync("idevicebackup2", arguments: ["-u", udid, "encryption", "on", password])).succeeded
     }
 
-    /// Disable backup encryption.
     func disableEncryption(udid: String, password: String) async -> Bool {
-        let result = await Shell.runAsync(
-            "idevicebackup2",
-            arguments: ["-u", udid, "encryption", "off", password]
-        )
-        return result.succeeded
+        if await PyMobileDevice.setEncryption(enabled: false, password: password, udid: udid) { return true }
+        return (await Shell.runAsync("idevicebackup2", arguments: ["-u", udid, "encryption", "off", password])).succeeded
     }
 
-    /// Check if backup encryption is enabled for a device.
+    func changeEncryptionPassword(udid: String, oldPassword: String, newPassword: String) async -> Bool {
+        return await PyMobileDevice.changeEncryptionPassword(oldPassword: oldPassword, newPassword: newPassword, udid: udid)
+    }
+
     func isEncryptionEnabled(udid: String) async -> Bool {
-        let result = await Shell.runAsync(
-            "idevicebackup2",
-            arguments: ["-u", udid, "encryption"]
-        )
+        if PyMobileDevice.available() {
+            return await PyMobileDevice.encryptionStatus(udid: udid)
+        }
+        let result = await Shell.runAsync("idevicebackup2", arguments: ["-u", udid, "encryption"])
         return result.output.contains("on")
     }
 
     // MARK: - Cleanup
 
-    /// Delete a backup from disk.
     func deleteBackup(_ backup: BackupInfo) throws {
         try FileManager.default.removeItem(atPath: backup.path)
         backups.removeAll { $0.id == backup.id }
     }
 
-    /// Get total size of all backups.
     var totalBackupSize: UInt64 {
         backups.reduce(0) { $0 + $1.size }
     }

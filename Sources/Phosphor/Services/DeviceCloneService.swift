@@ -1,8 +1,7 @@
 import Foundation
 
 /// Device-to-device transfer (clone).
-/// Creates a full backup of the source device, then restores it to the destination device.
-/// Both devices must be connected via USB simultaneously.
+/// Primary: pymobiledevice3. Fallback: libimobiledevice.
 @MainActor
 final class DeviceCloneService: ObservableObject {
 
@@ -17,7 +16,7 @@ final class DeviceCloneService: ObservableObject {
 
     @Published var phase: ClonePhase = .idle
     @Published var progress: String = ""
-    @Published var overallProgress: Double = 0 // 0.0 - 1.0
+    @Published var overallProgress: Double = 0
     @Published var isRunning = false
     @Published var lastError: String?
 
@@ -25,6 +24,18 @@ final class DeviceCloneService: ObservableObject {
 
     /// Get all currently connected devices.
     func getConnectedDevices() async -> [(udid: String, name: String)] {
+        // Primary: pymobiledevice3
+        let pyUdids = await PyMobileDevice.listDevices()
+        if !pyUdids.isEmpty {
+            var devices: [(udid: String, name: String)] = []
+            for udid in pyUdids {
+                let name = await PyMobileDevice.deviceName(udid: udid) ?? "Device \(udid.prefix(8))"
+                devices.append((udid: udid, name: name))
+            }
+            return devices
+        }
+
+        // Fallback: libimobiledevice
         let result = await Shell.runAsync("idevice_id", arguments: ["-l"])
         guard result.succeeded else { return [] }
 
@@ -41,8 +52,6 @@ final class DeviceCloneService: ObservableObject {
     }
 
     /// Clone source device to destination device.
-    /// Phase 1: Full backup of source
-    /// Phase 2: Restore backup to destination
     func clone(
         sourceUDID: String,
         destinationUDID: String,
@@ -57,18 +66,15 @@ final class DeviceCloneService: ObservableObject {
         isRunning = true
         lastError = nil
 
-        // Phase 1: Backup source device
+        // Phase 1: Backup source
         phase = .backingUp
         overallProgress = 0.05
         progress = "Starting backup of source device..."
 
         let backupSuccess = await backupManager.createBackup(udid: sourceUDID, encrypted: encrypted) { [weak self] text in
             self?.progress = text
-            // Estimate backup progress as 0-50%
-            if text.contains("%") {
-                if let pct = self?.extractPercentage(from: text) {
-                    self?.overallProgress = Double(pct) / 200.0 // 0-50%
-                }
+            if let pct = PyMobileDevice.parseProgress(from: text) {
+                self?.overallProgress = pct / 2.0
             }
         }
 
@@ -82,7 +88,7 @@ final class DeviceCloneService: ObservableObject {
         overallProgress = 0.5
         progress = "Backup complete. Preparing restore..."
 
-        // Find the backup we just created
+        // Find backup
         backupManager.discoverBackups()
         guard let latestBackup = backupManager.backups.first(where: { $0.udid == sourceUDID }) else {
             lastError = "Could not find the backup that was just created"
@@ -91,7 +97,7 @@ final class DeviceCloneService: ObservableObject {
             return false
         }
 
-        // Phase 2: Restore to destination device
+        // Phase 2: Restore to destination
         phase = .restoring
         progress = "Restoring to destination device..."
 
@@ -100,10 +106,8 @@ final class DeviceCloneService: ObservableObject {
             udid: destinationUDID
         ) { [weak self] text in
             self?.progress = text
-            if text.contains("%") {
-                if let pct = self?.extractPercentage(from: text) {
-                    self?.overallProgress = 0.5 + Double(pct) / 200.0 // 50-100%
-                }
+            if let pct = PyMobileDevice.parseProgress(from: text) {
+                self?.overallProgress = 0.5 + pct / 2.0
             }
         }
 
@@ -126,14 +130,5 @@ final class DeviceCloneService: ObservableObject {
         overallProgress = 0
         isRunning = false
         lastError = nil
-    }
-
-    private func extractPercentage(from text: String) -> Int? {
-        // Match patterns like "42%" or "Progress: 42%"
-        let pattern = #"(\d+)%"#
-        guard let regex = try? NSRegularExpression(pattern: pattern),
-              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
-              let range = Range(match.range(at: 1), in: text) else { return nil }
-        return Int(text[range])
     }
 }

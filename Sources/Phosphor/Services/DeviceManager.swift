@@ -1,7 +1,8 @@
 import Foundation
 import Combine
 
-/// Manages iOS device detection and information retrieval via libimobiledevice CLI tools.
+/// Manages iOS device detection and information retrieval.
+/// Primary backend: pymobiledevice3. Fallback: libimobiledevice CLI tools.
 @MainActor
 final class DeviceManager: ObservableObject {
 
@@ -30,7 +31,8 @@ final class DeviceManager: ObservableObject {
     }
 
     var hasRequiredTools: Bool {
-        dependencyStatus["idevice_id"] == true && dependencyStatus["ideviceinfo"] == true
+        dependencyStatus["pymobiledevice3"] == true ||
+        (dependencyStatus["idevice_id"] == true && dependencyStatus["ideviceinfo"] == true)
     }
 
     var missingTools: [String] {
@@ -43,20 +45,16 @@ final class DeviceManager: ObservableObject {
         isScanning = true
         lastError = nil
 
-        let result = await Shell.runAsync("idevice_id", arguments: ["-l"])
+        // Primary: pymobiledevice3
+        var udids = await PyMobileDevice.listDevices()
 
-        guard result.succeeded else {
-            if result.stderr.contains("command not found") || result.exitCode == 127 {
-                lastError = "libimobiledevice not installed. Run: brew install libimobiledevice"
-            } else {
-                lastError = result.stderr.nilIfEmpty ?? "No devices found"
+        // Fallback: libimobiledevice
+        if udids.isEmpty {
+            let result = await Shell.runAsync("idevice_id", arguments: ["-l"])
+            if result.succeeded {
+                udids = result.output.components(separatedBy: "\n").filter { !$0.isEmpty }
             }
-            connectedDevices = []
-            isScanning = false
-            return
         }
-
-        let udids = result.output.components(separatedBy: "\n").filter { !$0.isEmpty }
 
         if udids.isEmpty {
             connectedDevices = []
@@ -81,67 +79,94 @@ final class DeviceManager: ObservableObject {
 
     /// Fetch detailed info for a specific device.
     func fetchDeviceInfo(udid: String) async -> DeviceInfo? {
+        // Primary: pymobiledevice3
+        let info = await PyMobileDevice.deviceInfo(udid: udid)
+        if !info.isEmpty {
+            let batteryInfo = await PyMobileDevice.batteryInfo(udid: udid)
+            let isPaired = await PyMobileDevice.validatePair(udid: udid)
+
+            let batteryLevel = batteryInfo["CurrentCapacity"].flatMap(Int.init)
+                ?? batteryInfo["BatteryCurrentCapacity"].flatMap(Int.init)
+            let batteryCharging = batteryInfo["IsCharging"] == "True"
+                || batteryInfo["IsCharging"] == "true"
+                || batteryInfo["BatteryIsCharging"] == "true"
+            let totalDisk = info["TotalDiskCapacity"].flatMap(UInt64.init)
+            let freeDisk = info["AmountDataAvailable"].flatMap(UInt64.init)
+
+            return DeviceInfo(
+                id: udid,
+                name: info["DeviceName"] ?? "Unknown Device",
+                model: info["ProductType"] ?? "Unknown",
+                modelNumber: info["ModelNumber"] ?? "",
+                productType: info["ProductType"] ?? "",
+                iosVersion: info["ProductVersion"] ?? "",
+                buildVersion: info["BuildVersion"] ?? "",
+                serialNumber: info["SerialNumber"] ?? "",
+                wifiAddress: info["WiFiAddress"] ?? "",
+                bluetoothAddress: info["BluetoothAddress"] ?? "",
+                phoneNumber: info["PhoneNumber"],
+                imei: info["InternationalMobileEquipmentIdentity"],
+                batteryLevel: batteryLevel,
+                batteryCharging: batteryCharging,
+                totalDiskCapacity: totalDisk,
+                availableDiskSpace: freeDisk,
+                isPaired: isPaired,
+                isActivated: info["ActivationState"] == "Activated"
+            )
+        }
+
+        // Fallback: libimobiledevice
         let result = await Shell.runAsync("ideviceinfo", arguments: ["-u", udid])
         guard result.succeeded else { return nil }
 
-        let info = result.output.parseKeyValuePairs()
-
-        // Fetch battery info separately (requires different domain)
+        let liInfo = result.output.parseKeyValuePairs()
         let batteryResult = await Shell.runAsync("ideviceinfo", arguments: ["-u", udid, "-q", "com.apple.mobile.battery"])
         let batteryInfo = batteryResult.output.parseKeyValuePairs()
-
-        // Fetch disk usage
         let diskResult = await Shell.runAsync("ideviceinfo", arguments: ["-u", udid, "-q", "com.apple.disk_usage"])
         let diskInfo = diskResult.output.parseKeyValuePairs()
-
-        let batteryLevel = batteryInfo["BatteryCurrentCapacity"].flatMap(Int.init)
-        let batteryCharging = batteryInfo["BatteryIsCharging"].map { $0 == "true" }
-
-        let totalDisk = diskInfo["TotalDiskCapacity"].flatMap(UInt64.init)
-        let freeDisk = diskInfo["AmountDataAvailable"].flatMap(UInt64.init)
-
-        // Check pair status
         let pairResult = await Shell.runAsync("idevicepair", arguments: ["-u", udid, "validate"])
 
         return DeviceInfo(
             id: udid,
-            name: info["DeviceName"] ?? "Unknown Device",
-            model: info["ProductType"] ?? "Unknown",
-            modelNumber: info["ModelNumber"] ?? "",
-            productType: info["ProductType"] ?? "",
-            iosVersion: info["ProductVersion"] ?? "",
-            buildVersion: info["BuildVersion"] ?? "",
-            serialNumber: info["SerialNumber"] ?? "",
-            wifiAddress: info["WiFiAddress"] ?? "",
-            bluetoothAddress: info["BluetoothAddress"] ?? "",
-            phoneNumber: info["PhoneNumber"],
-            imei: info["InternationalMobileEquipmentIdentity"],
-            batteryLevel: batteryLevel,
-            batteryCharging: batteryCharging,
-            totalDiskCapacity: totalDisk,
-            availableDiskSpace: freeDisk,
+            name: liInfo["DeviceName"] ?? "Unknown Device",
+            model: liInfo["ProductType"] ?? "Unknown",
+            modelNumber: liInfo["ModelNumber"] ?? "",
+            productType: liInfo["ProductType"] ?? "",
+            iosVersion: liInfo["ProductVersion"] ?? "",
+            buildVersion: liInfo["BuildVersion"] ?? "",
+            serialNumber: liInfo["SerialNumber"] ?? "",
+            wifiAddress: liInfo["WiFiAddress"] ?? "",
+            bluetoothAddress: liInfo["BluetoothAddress"] ?? "",
+            phoneNumber: liInfo["PhoneNumber"],
+            imei: liInfo["InternationalMobileEquipmentIdentity"],
+            batteryLevel: batteryInfo["BatteryCurrentCapacity"].flatMap(Int.init),
+            batteryCharging: batteryInfo["BatteryIsCharging"].map { $0 == "true" },
+            totalDiskCapacity: diskInfo["TotalDiskCapacity"].flatMap(UInt64.init),
+            availableDiskSpace: diskInfo["AmountDataAvailable"].flatMap(UInt64.init),
             isPaired: pairResult.succeeded,
-            isActivated: info["ActivationState"] == "Activated"
+            isActivated: liInfo["ActivationState"] == "Activated"
         )
     }
 
     /// Pair with a device.
     func pairDevice(udid: String) async -> Bool {
+        // Primary: pymobiledevice3
+        if await PyMobileDevice.pair(udid: udid) { return true }
+        // Fallback
         let result = await Shell.runAsync("idevicepair", arguments: ["-u", udid, "pair"])
-        if !result.succeeded {
-            lastError = result.stderr.nilIfEmpty ?? result.output
-        }
+        if !result.succeeded { lastError = result.stderr.nilIfEmpty ?? result.output }
         return result.succeeded
     }
 
     /// Unpair a device.
     func unpairDevice(udid: String) async -> Bool {
-        let result = await Shell.runAsync("idevicepair", arguments: ["-u", udid, "unpair"])
-        return result.succeeded
+        if await PyMobileDevice.unpair(udid: udid) { return true }
+        return (await Shell.runAsync("idevicepair", arguments: ["-u", udid, "unpair"])).succeeded
     }
 
     /// Get device name.
     func getDeviceName(udid: String) async -> String? {
+        if let name = await PyMobileDevice.deviceName(udid: udid) { return name }
         let result = await Shell.runAsync("idevicename", arguments: ["-u", udid])
         return result.succeeded ? result.output : nil
     }
@@ -154,8 +179,10 @@ final class DeviceManager: ObservableObject {
 
     /// Take a screenshot of the device.
     func takeScreenshot(udid: String, saveTo path: String) async -> Bool {
-        let result = await Shell.runAsync("idevicescreenshot", arguments: ["-u", udid, path])
-        return result.succeeded
+        // Primary: pymobiledevice3
+        if await PyMobileDevice.screenshot(udid: udid, saveTo: path) { return true }
+        // Fallback
+        return (await Shell.runAsync("idevicescreenshot", arguments: ["-u", udid, path])).succeeded
     }
 
     // MARK: - Polling

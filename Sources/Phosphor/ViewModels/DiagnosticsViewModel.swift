@@ -15,6 +15,10 @@ final class DiagnosticsViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var showAlert = false
     @Published var alertMessage = ""
+    @Published var processes: [DiagnosticsManager.DeviceProcess] = []
+    @Published var isLoadingProcesses = false
+    @Published var crashReports: [DiagnosticsManager.CrashReport] = []
+    @Published var isLoadingCrashes = false
 
     let diagnostics = DiagnosticsManager()
     private var cancellables = Set<AnyCancellable>()
@@ -86,5 +90,18 @@ final class DiagnosticsViewModel: ObservableObject {
         let ok = await diagnostics.sleepDevice(udid: udid)
         alertMessage = ok ? "Sleep command sent" : "Sleep failed"
         showAlert = true
+    }
+
+    func loadProcesses(udid: String) async {
+        isLoadingProcesses = true
+        processes = await diagnostics.getProcessList(udid: udid)
+        isLoadingProcesses = false
+    }
+
+    func pullCrashReports(udid: String) async {
+        isLoadingCrashes = true
+        let dir = NSTemporaryDirectory() + "phosphor-crashes-\(udid.prefix(8))"
+        crashReports = await diagnostics.pullCrashReports(udid: udid, to: dir)
+        isLoadingCrashes = false
     }
 }

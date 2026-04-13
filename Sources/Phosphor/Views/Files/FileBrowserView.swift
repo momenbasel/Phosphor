@@ -65,11 +65,15 @@ struct FileBrowserView: View {
                     panel.allowsMultipleSelection = true
                     panel.prompt = "Copy to Device"
                     guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
-                    for url in panel.urls {
-                        let devicePath = (fileManager.currentPath as NSString).appendingPathComponent(url.lastPathComponent)
-                        try? fileManager.copyToDevice(localPath: url.path, devicePath: devicePath)
+                    let urls = panel.urls
+                    let currentPath = fileManager.currentPath
+                    Task {
+                        for url in urls {
+                            let devicePath = (currentPath as NSString).appendingPathComponent(url.lastPathComponent)
+                            try? await fileManager.copyToDevice(localPath: url.path, devicePath: devicePath)
+                        }
+                        await fileManager.browse(path: currentPath)
                     }
-                    Task { await fileManager.browse(path: fileManager.currentPath) }
                 }
                 .buttonStyle(.bordered)
 
@@ -89,7 +93,7 @@ struct FileBrowserView: View {
         EmptyStateView(
             icon: "externaldrive.connected.to.line.below",
             title: "Device Not Mounted",
-            subtitle: "Mount the device filesystem to browse and transfer files. Requires ifuse (brew install ifuse).",
+            subtitle: "Connect to the device filesystem to browse and transfer files via AFC.",
             action: {
                 guard let udid = deviceVM.selectedDevice?.id else { return }
                 Task { let _ = await fileManager.mount(udid: udid) }
@@ -131,7 +135,7 @@ struct FileBrowserView: View {
                                 }
                                 Divider()
                                 Button("Delete", role: .destructive) {
-                                    try? fileManager.deleteFile(entry)
+                                    Task { try? await fileManager.deleteFile(entry) }
                                 }
                             }
                     }
@@ -222,7 +226,7 @@ struct FileBrowserView: View {
         panel.prompt = "Save"
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? fileManager.copyToLocal(entry: entry, destination: url.path)
+        Task { try? await fileManager.copyToLocal(entry: entry, destination: url.path) }
     }
 
     // MARK: - Drag and Drop
@@ -237,13 +241,12 @@ struct FileBrowserView: View {
                 let fileName = url.lastPathComponent
                 let devicePath = (fileManager.currentPath as NSString).appendingPathComponent(fileName)
 
+                let currentDir = fileManager.currentPath
                 Task { @MainActor in
                     do {
-                        try fileManager.copyToDevice(localPath: localPath, devicePath: devicePath)
+                        try await fileManager.copyToDevice(localPath: localPath, devicePath: devicePath)
                         dragDropStatus = "Transferred: \(fileName)"
-                        await fileManager.browse(path: fileManager.currentPath) // Refresh
-
-                        // Auto-dismiss status after 3 seconds
+                        await fileManager.browse(path: currentDir)
                         try? await Task.sleep(for: .seconds(3))
                         dragDropStatus = nil
                     } catch {

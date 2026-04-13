@@ -1,8 +1,7 @@
 import Foundation
 
 /// Browse device content LIVE without needing a backup.
-/// Uses AFC (Apple File Conduit) via ifuse to mount and browse the device directly.
-/// Accessible folders: DCIM (Camera Roll), Downloads, Books, iTunes_Control, etc.
+/// Primary: pymobiledevice3 AFC (no FUSE needed). Fallback: ifuse.
 @MainActor
 final class LiveDeviceBrowser: ObservableObject {
 
@@ -11,9 +10,13 @@ final class LiveDeviceBrowser: ObservableObject {
     @Published var isMounted = false
     @Published var lastError: String?
     @Published var mountPath: String?
+    @Published var photoCount: Int = 0
+
+    private var deviceUDID: String?
+    private var usesAFC = false
 
     struct LivePhoto: Identifiable, Hashable {
-        let id: String // full path
+        let id: String
         let name: String
         let path: String
         let size: UInt64
@@ -26,7 +29,7 @@ final class LiveDeviceBrowser: ObservableObject {
             let ext = (name as NSString).pathExtension.lowercased()
             switch ext {
             case "mov", "mp4", "m4v": return "video.fill"
-            case "png": return "photo" // likely screenshot
+            case "png": return "photo"
             default: return "photo"
             }
         }
@@ -36,83 +39,145 @@ final class LiveDeviceBrowser: ObservableObject {
         }
     }
 
-    // MARK: - Mount
+    // MARK: - Connect
 
-    /// Pull device photos using pymobiledevice3 AFC (no FUSE/ifuse needed).
+    /// Connect to device via pymobiledevice3 AFC (primary) or ifuse (fallback).
     func mount(udid: String) async -> Bool {
-        let tmpDir = NSTemporaryDirectory() + "phosphor-live-\(udid.prefix(8))"
-        let fm = FileManager.default
+        deviceUDID = udid
 
-        do {
-            try fm.createDirectory(atPath: tmpDir, withIntermediateDirectories: true)
-        } catch {
-            lastError = "Failed to create temp directory: \(error.localizedDescription)"
-            return false
-        }
-
-        // Use pymobiledevice3 AFC to pull DCIM
-        let checkPy = await Shell.runAsync("python3", arguments: ["-c", "import pymobiledevice3"], timeout: 10)
-        if checkPy.succeeded {
-            // Pull entire DCIM via pymobiledevice3
-            let dcimDest = (tmpDir as NSString).appendingPathComponent("DCIM")
-            try? fm.createDirectory(atPath: dcimDest, withIntermediateDirectories: true)
-
-            let result = await Shell.runAsync(
-                "python3",
-                arguments: ["-m", "pymobiledevice3", "afc", "pull", "/DCIM", dcimDest],
-                timeout: 300
-            )
-            if result.succeeded || fm.fileExists(atPath: dcimDest) {
-                mountPath = tmpDir
+        // Primary: pymobiledevice3 AFC - scan DCIM structure first
+        if PyMobileDevice.available() {
+            // List DCIM subfolders to count photos before downloading
+            let dcimContents = await PyMobileDevice.afcList(path: "/DCIM", udid: udid)
+            if !dcimContents.isEmpty {
+                usesAFC = true
                 isMounted = true
+
+                // Count photos across DCIM subfolders
+                var count = 0
+                for subfolder in dcimContents {
+                    guard !subfolder.isEmpty, subfolder != ".", subfolder != ".." else { continue }
+                    let subFiles = await PyMobileDevice.afcList(path: "/DCIM/\(subfolder)", udid: udid)
+                    count += subFiles.filter { name in
+                        let ext = (name as NSString).pathExtension.lowercased()
+                        return ["jpg", "jpeg", "heic", "heif", "png", "gif", "mov", "mp4", "m4v"].contains(ext)
+                    }.count
+                }
+                photoCount = count
                 return true
             }
         }
 
-        // Fallback: try ifuse (works on older macOS or if macFUSE installed)
+        // Fallback: ifuse mount
+        let tmpDir = NSTemporaryDirectory() + "phosphor-live-\(udid.prefix(8))"
+        let fm = FileManager.default
+        try? fm.createDirectory(atPath: tmpDir, withIntermediateDirectories: true)
+
         let ifuseResult = await Shell.runAsync("ifuse", arguments: ["-u", udid, tmpDir])
         if ifuseResult.succeeded {
             mountPath = tmpDir
+            usesAFC = false
             isMounted = true
             return true
         }
 
-        lastError = "Could not access device photos. Install pymobiledevice3: pip3 install pymobiledevice3"
+        lastError = "Could not access device. Install pymobiledevice3: pip3 install pymobiledevice3"
         return false
     }
 
     func unmount() async {
-        guard let mount = mountPath else { return }
-        // Try umount for ifuse, otherwise just clean up temp dir
-        let _ = await Shell.runAsync("umount", arguments: [mount])
-        try? FileManager.default.removeItem(atPath: mount)
+        if let mount = mountPath, !usesAFC {
+            let _ = await Shell.runAsync("umount", arguments: [mount])
+            try? FileManager.default.removeItem(atPath: mount)
+        }
         mountPath = nil
+        deviceUDID = nil
         isMounted = false
+        usesAFC = false
         photos = []
+        photoCount = 0
     }
 
     // MARK: - Photo Scanning
 
-    /// Scan DCIM folder for all photos and videos on the device.
+    /// Scan and selectively pull photos from device.
     func scanPhotos() async {
-        guard let mount = mountPath else { return }
         isLoading = true
         photos = []
+
+        if usesAFC {
+            await scanPhotosViaAFC()
+        } else {
+            await scanPhotosViaMount()
+        }
+
+        isLoading = false
+    }
+
+    /// Scan photos via pymobiledevice3 AFC - selective pull per subfolder.
+    private func scanPhotosViaAFC() async {
+        guard let udid = deviceUDID else { return }
+
+        let tmpDir = NSTemporaryDirectory() + "phosphor-photos-\(udid.prefix(8))"
+        let fm = FileManager.default
+        try? fm.createDirectory(atPath: tmpDir, withIntermediateDirectories: true)
+        mountPath = tmpDir
+
+        let photoExtensions = Set(["jpg", "jpeg", "heic", "heif", "png", "gif", "webp",
+                                    "mov", "mp4", "m4v", "3gp"])
+
+        let dcimContents = await PyMobileDevice.afcList(path: "/DCIM", udid: udid)
+        var found: [LivePhoto] = []
+
+        for subfolder in dcimContents.sorted() {
+            guard !subfolder.isEmpty, subfolder != ".", subfolder != ".." else { continue }
+
+            // Pull this subfolder
+            let localSubDir = (tmpDir as NSString).appendingPathComponent("DCIM/\(subfolder)")
+            try? fm.createDirectory(atPath: localSubDir, withIntermediateDirectories: true)
+
+            let remotePath = "/DCIM/\(subfolder)"
+            let _ = await PyMobileDevice.afcPull(remotePath: remotePath, localPath: localSubDir, udid: udid)
+
+            // Scan downloaded files
+            if let files = try? fm.contentsOfDirectory(atPath: localSubDir) {
+                for file in files {
+                    let ext = (file as NSString).pathExtension.lowercased()
+                    guard photoExtensions.contains(ext) else { continue }
+
+                    let fullPath = (localSubDir as NSString).appendingPathComponent(file)
+                    let attrs = try? fm.attributesOfItem(atPath: fullPath)
+                    let size = (attrs?[.size] as? UInt64) ?? 0
+                    let modified = attrs?[.modificationDate] as? Date
+                    let isVideo = ["mov", "mp4", "m4v", "3gp"].contains(ext)
+
+                    found.append(LivePhoto(
+                        id: fullPath, name: file, path: fullPath,
+                        size: size, modified: modified, isVideo: isVideo
+                    ))
+                }
+            }
+        }
+
+        photos = found.sorted { ($0.modified ?? .distantPast) > ($1.modified ?? .distantPast) }
+    }
+
+    /// Scan photos via ifuse mount (legacy).
+    private func scanPhotosViaMount() async {
+        guard let mount = mountPath else { return }
 
         let dcimPath = (mount as NSString).appendingPathComponent("DCIM")
         let fm = FileManager.default
 
         guard fm.fileExists(atPath: dcimPath) else {
             lastError = "DCIM folder not found on device"
-            isLoading = false
             return
         }
 
-        var found: [LivePhoto] = []
         let photoExtensions = Set(["jpg", "jpeg", "heic", "heif", "png", "gif", "webp",
                                     "mov", "mp4", "m4v", "3gp"])
+        var found: [LivePhoto] = []
 
-        // DCIM contains subfolders like 100APPLE, 101APPLE, etc.
         if let subfolders = try? fm.contentsOfDirectory(atPath: dcimPath) {
             for subfolder in subfolders.sorted() {
                 let subPath = (dcimPath as NSString).appendingPathComponent(subfolder)
@@ -131,63 +196,53 @@ final class LiveDeviceBrowser: ObservableObject {
                         let isVideo = ["mov", "mp4", "m4v", "3gp"].contains(ext)
 
                         found.append(LivePhoto(
-                            id: fullPath,
-                            name: file,
-                            path: fullPath,
-                            size: size,
-                            modified: modified,
-                            isVideo: isVideo
+                            id: fullPath, name: file, path: fullPath,
+                            size: size, modified: modified, isVideo: isVideo
                         ))
                     }
                 }
             }
         }
 
-        // Sort newest first
         photos = found.sorted { ($0.modified ?? .distantPast) > ($1.modified ?? .distantPast) }
-        isLoading = false
     }
 
     // MARK: - Export
 
-    /// Copy a photo from device to local path.
     func exportPhoto(_ photo: LivePhoto, to destination: String) throws {
         let fm = FileManager.default
         let destDir = (destination as NSString).deletingLastPathComponent
         try fm.createDirectory(atPath: destDir, withIntermediateDirectories: true)
-        if fm.fileExists(atPath: destination) {
-            try fm.removeItem(atPath: destination)
-        }
+        if fm.fileExists(atPath: destination) { try fm.removeItem(atPath: destination) }
         try fm.copyItem(atPath: photo.path, toPath: destination)
     }
 
-    /// Batch export photos to a directory.
     func exportPhotos(_ photos: [LivePhoto], to directory: String) -> Int {
         let fm = FileManager.default
         try? fm.createDirectory(atPath: directory, withIntermediateDirectories: true)
         var count = 0
         for photo in photos {
             let dest = (directory as NSString).appendingPathComponent(photo.name)
-            do {
-                try exportPhoto(photo, to: dest)
-                count += 1
-            } catch {
-                continue
-            }
+            do { try exportPhoto(photo, to: dest); count += 1 } catch { continue }
         }
         return count
     }
 
+    /// Convert HEIC photos to JPG using macOS sips.
+    func convertHEICtoJPG(inputPath: String, outputPath: String) async -> Bool {
+        let result = await Shell.runAsync("sips", arguments: [
+            "--setProperty", "format", "jpeg", inputPath, "--out", outputPath
+        ])
+        return result.succeeded
+    }
+
     // MARK: - General File Listing
 
-    /// List files at a specific path on the mounted device.
     func listFiles(at relativePath: String) -> [(name: String, isDir: Bool, size: UInt64)] {
         guard let mount = mountPath else { return [] }
         let fullPath = (mount as NSString).appendingPathComponent(relativePath)
         let fm = FileManager.default
-
         guard let contents = try? fm.contentsOfDirectory(atPath: fullPath) else { return [] }
-
         return contents.sorted().compactMap { name in
             let itemPath = (fullPath as NSString).appendingPathComponent(name)
             var isDir: ObjCBool = false
@@ -198,7 +253,6 @@ final class LiveDeviceBrowser: ObservableObject {
         }
     }
 
-    /// Get available top-level folders on device.
     func getTopLevelFolders() -> [String] {
         guard let mount = mountPath else { return [] }
         let fm = FileManager.default
