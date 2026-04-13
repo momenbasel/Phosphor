@@ -60,7 +60,16 @@ struct FileBrowserView: View {
                 }
 
                 Button("Copy to Device...") {
-                    showCopyToDevice = true
+                    let panel = NSOpenPanel()
+                    panel.canChooseFiles = true
+                    panel.allowsMultipleSelection = true
+                    panel.prompt = "Copy to Device"
+                    guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+                    for url in panel.urls {
+                        let devicePath = (fileManager.currentPath as NSString).appendingPathComponent(url.lastPathComponent)
+                        try? fileManager.copyToDevice(localPath: url.path, devicePath: devicePath)
+                    }
+                    Task { await fileManager.browse(path: fileManager.currentPath) }
                 }
                 .buttonStyle(.bordered)
 

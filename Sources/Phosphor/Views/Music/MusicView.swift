@@ -98,6 +98,18 @@ struct MusicView: View {
                         Section("Music (\(musicManager.tracks.count))") {
                             ForEach(musicManager.tracks) { track in
                                 HStack(spacing: 10) {
+                                    // Selection toggle
+                                    Image(systemName: selectedTracks.contains(track.id) ? "checkmark.circle.fill" : "circle")
+                                        .font(.system(size: 16))
+                                        .foregroundColor(selectedTracks.contains(track.id) ? .indigo : .gray)
+                                        .onTapGesture {
+                                            if selectedTracks.contains(track.id) {
+                                                selectedTracks.remove(track.id)
+                                            } else {
+                                                selectedTracks.insert(track.id)
+                                            }
+                                        }
+
                                     Image(systemName: "music.note")
                                         .font(.system(size: 14))
                                         .foregroundStyle(.pink)

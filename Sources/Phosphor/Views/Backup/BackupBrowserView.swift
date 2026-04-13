@@ -72,6 +72,21 @@ struct BackupBrowserView: View {
         .onChange(of: searchText) { _, newValue in
             backupVM.searchBackup(newValue)
         }
+        .onChange(of: showExportSheet) { _, show in
+            guard show else { return }
+            showExportSheet = false
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.canCreateDirectories = true
+            panel.prompt = "Extract Here"
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            let count = backupVM.extractFiles(Array(selectedFiles), to: url.path)
+            if count > 0 {
+                NSWorkspace.shared.open(url)
+                selectedFiles.removeAll()
+            }
+        }
     }
 
     // MARK: - Domain List

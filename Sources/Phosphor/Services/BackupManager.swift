@@ -17,11 +17,20 @@ final class BackupManager: ObservableObject {
         return "\(home)/Library/Application Support/MobileSync/Backup"
     }()
 
+    /// Active backup directory - reads from UserDefaults if customized, falls back to default.
+    static var activeBackupDir: String {
+        let custom = UserDefaults.standard.string(forKey: "phosphor.backupDirectory")
+        if let custom, !custom.isEmpty, custom != defaultBackupDir {
+            return custom
+        }
+        return defaultBackupDir
+    }
+
     // MARK: - Discovery
 
     /// Scan the backup directory for all iOS backups and parse their metadata.
     func discoverBackups(at directory: String? = nil) {
-        let dir = directory ?? Self.defaultBackupDir
+        let dir = directory ?? Self.activeBackupDir
         let fm = FileManager.default
 
         guard fm.fileExists(atPath: dir) else {
@@ -62,7 +71,7 @@ final class BackupManager: ObservableObject {
         backupProgress = "Starting backup..."
         lastError = nil
 
-        let args = ["backup", "--full", "-u", udid, Self.defaultBackupDir]
+        let args = ["backup", "--full", "-u", udid, Self.activeBackupDir]
         if encrypted {
             // Note: encryption password must be set beforehand via idevicebackup2 encryption
         }
@@ -106,7 +115,7 @@ final class BackupManager: ObservableObject {
         return await withCheckedContinuation { continuation in
             Shell.runStreaming(
                 "idevicebackup2",
-                arguments: ["backup", "-u", udid, Self.defaultBackupDir],
+                arguments: ["backup", "-u", udid, Self.activeBackupDir],
                 onOutput: { [weak self] output in
                     self?.backupProgress = output.trimmingCharacters(in: .whitespacesAndNewlines)
                     onProgress(output)

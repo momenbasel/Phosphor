@@ -4,11 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Phosphor - Free iOS Device Manager for macOS</title>
-<meta name="description" content="Free and open-source iOS device manager for macOS. Browse backups, export messages, extract photos, manage apps. No subscriptions, no iCloud lock-in.">
+<meta name="description" content="Free and open-source iOS device manager for macOS. Full backups, message export, photo extraction, app management, Time Machine restore, device clone. No subscriptions.">
 <meta property="og:title" content="Phosphor - Free iOS Device Manager for macOS">
-<meta property="og:description" content="Open-source replacement for iMazing. Browse backups, export iMessages, extract photos, manage apps.">
+<meta property="og:description" content="Open-source replacement for iMazing. 18 features, 7 languages, zero cost.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://momenbasel.github.io/Phosphor/">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>P</text></svg>">
 <style>
   :root {
     --indigo: #5856D6;
@@ -19,31 +20,24 @@
     --text: #F5F5F7;
     --text-secondary: #86868B;
     --border: #2A2A35;
+    --green: #34C759;
+    --red: #FF3B30;
+    --orange: #FF9500;
   }
-
   * { margin: 0; padding: 0; box-sizing: border-box; }
-
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    line-height: 1.6;
-    -webkit-font-smoothing: antialiased;
+    background: var(--bg); color: var(--text); line-height: 1.6; -webkit-font-smoothing: antialiased;
   }
-
   .container { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
 
   /* Nav */
   nav {
     position: fixed; top: 0; left: 0; right: 0; z-index: 100;
     backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-    background: rgba(13,13,18,0.8);
-    border-bottom: 1px solid var(--border);
+    background: rgba(13,13,18,0.85); border-bottom: 1px solid var(--border);
   }
-  nav .container {
-    display: flex; align-items: center; justify-content: space-between;
-    height: 56px;
-  }
+  nav .container { display: flex; align-items: center; justify-content: space-between; height: 56px; }
   nav .logo {
     font-size: 18px; font-weight: 700; color: var(--text);
     text-decoration: none; display: flex; align-items: center; gap: 8px;
@@ -54,23 +48,16 @@
     font-size: 16px; font-weight: 800; color: white;
   }
   nav .links { display: flex; gap: 24px; align-items: center; }
-  nav .links a {
-    color: var(--text-secondary); text-decoration: none; font-size: 14px;
-    transition: color 0.2s;
-  }
+  nav .links a { color: var(--text-secondary); text-decoration: none; font-size: 14px; transition: color 0.2s; }
   nav .links a:hover { color: var(--text); }
   .btn {
     display: inline-flex; align-items: center; gap: 8px;
     padding: 10px 20px; border-radius: 10px; font-size: 14px; font-weight: 600;
-    text-decoration: none; transition: all 0.2s;
+    text-decoration: none; transition: all 0.2s; cursor: pointer;
   }
-  .btn-primary {
-    background: var(--indigo); color: white;
-  }
+  .btn-primary { background: var(--indigo); color: white; }
   .btn-primary:hover { background: var(--indigo-light); transform: translateY(-1px); }
-  .btn-secondary {
-    background: transparent; color: var(--text); border: 1px solid var(--border);
-  }
+  .btn-secondary { background: transparent; color: var(--text); border: 1px solid var(--border); }
   .btn-secondary:hover { border-color: var(--indigo); color: var(--indigo-light); }
 
   /* Hero */
@@ -90,105 +77,88 @@
   }
   .hero h1 .gradient {
     background: linear-gradient(135deg, var(--indigo-light), #A78BFA, var(--indigo));
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    background-clip: text;
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
   }
-  .hero p {
-    font-size: 18px; color: var(--text-secondary); max-width: 560px;
-    margin: 0 auto 32px;
-  }
+  .hero p { font-size: 18px; color: var(--text-secondary); max-width: 600px; margin: 0 auto 32px; }
   .hero .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
   .hero .install-cmd {
     display: inline-flex; align-items: center; gap: 8px;
     background: var(--bg-card); border: 1px solid var(--border);
-    padding: 12px 20px; border-radius: 10px; font-family: 'SF Mono', monospace;
+    padding: 12px 20px; border-radius: 10px; font-family: 'SF Mono', ui-monospace, monospace;
     font-size: 14px; color: var(--text-secondary); margin-top: 24px;
     cursor: pointer; transition: border-color 0.2s;
   }
   .hero .install-cmd:hover { border-color: var(--indigo); }
   .hero .install-cmd code { color: var(--text); }
+  .hero .stats {
+    display: flex; gap: 40px; justify-content: center; margin-top: 40px;
+  }
+  .hero .stat { text-align: center; }
+  .hero .stat .num { font-size: 28px; font-weight: 800; color: var(--indigo-light); }
+  .hero .stat .label { font-size: 12px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; }
 
   /* Features */
   .features { padding: 80px 0; }
-  .features h2 {
-    font-size: 36px; font-weight: 700; text-align: center;
-    margin-bottom: 12px; letter-spacing: -0.02em;
-  }
-  .features .subtitle {
-    text-align: center; color: var(--text-secondary); margin-bottom: 48px;
-    font-size: 16px;
-  }
-  .feature-grid {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-    gap: 16px;
-  }
+  .features h2 { font-size: 36px; font-weight: 700; text-align: center; margin-bottom: 12px; letter-spacing: -0.02em; }
+  .features .subtitle { text-align: center; color: var(--text-secondary); margin-bottom: 48px; font-size: 16px; }
+  .feature-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
   .feature-card {
     background: var(--bg-card); border: 1px solid var(--border);
-    border-radius: 16px; padding: 28px;
-    transition: border-color 0.3s, transform 0.3s;
+    border-radius: 16px; padding: 28px; transition: border-color 0.3s, transform 0.3s;
   }
-  .feature-card:hover {
-    border-color: rgba(88,86,214,0.4); transform: translateY(-2px);
-  }
+  .feature-card:hover { border-color: rgba(88,86,214,0.4); transform: translateY(-2px); }
   .feature-card .icon-wrap {
     width: 44px; height: 44px; border-radius: 12px;
     background: rgba(88,86,214,0.12); display: flex;
-    align-items: center; justify-content: center;
-    font-size: 20px; margin-bottom: 16px;
+    align-items: center; justify-content: center; font-size: 20px; margin-bottom: 16px;
   }
   .feature-card h3 { font-size: 17px; font-weight: 600; margin-bottom: 8px; }
   .feature-card p { font-size: 14px; color: var(--text-secondary); line-height: 1.5; }
 
+  /* New section */
+  .new-features { padding: 60px 0; }
+  .new-features h2 { font-size: 28px; font-weight: 700; text-align: center; margin-bottom: 32px; }
+  .new-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+  .new-item {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px; display: flex; align-items: flex-start; gap: 12px;
+  }
+  .new-item .emoji { font-size: 24px; flex-shrink: 0; }
+  .new-item h4 { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .new-item p { font-size: 12px; color: var(--text-secondary); }
+
   /* Comparison */
   .comparison { padding: 80px 0; }
-  .comparison h2 {
-    font-size: 36px; font-weight: 700; text-align: center;
-    margin-bottom: 40px; letter-spacing: -0.02em;
-  }
+  .comparison h2 { font-size: 36px; font-weight: 700; text-align: center; margin-bottom: 40px; letter-spacing: -0.02em; }
   table {
     width: 100%; border-collapse: collapse;
-    background: var(--bg-card); border-radius: 16px;
-    overflow: hidden; border: 1px solid var(--border);
+    background: var(--bg-card); border-radius: 16px; overflow: hidden; border: 1px solid var(--border);
   }
   th {
     text-align: left; padding: 16px 20px; font-size: 13px;
     text-transform: uppercase; letter-spacing: 0.05em;
-    color: var(--text-secondary); background: rgba(0,0,0,0.3);
-    border-bottom: 1px solid var(--border);
+    color: var(--text-secondary); background: rgba(0,0,0,0.3); border-bottom: 1px solid var(--border);
   }
-  td {
-    padding: 14px 20px; font-size: 14px;
-    border-bottom: 1px solid var(--border);
-  }
+  td { padding: 14px 20px; font-size: 14px; border-bottom: 1px solid var(--border); }
   tr:last-child td { border-bottom: none; }
-  .check { color: #34C759; }
-  .cross { color: #FF3B30; }
-  .planned { color: #FF9500; font-style: italic; }
+  .check { color: var(--green); }
+  .cross { color: var(--red); }
   .highlight-col { background: rgba(88,86,214,0.06); }
 
   /* CTA */
-  .cta-section {
-    padding: 80px 0; text-align: center;
-    border-top: 1px solid var(--border);
-  }
-  .cta-section h2 {
-    font-size: 32px; font-weight: 700; margin-bottom: 12px;
-  }
-  .cta-section p {
-    color: var(--text-secondary); margin-bottom: 28px; font-size: 16px;
-  }
+  .cta-section { padding: 80px 0; text-align: center; border-top: 1px solid var(--border); }
+  .cta-section h2 { font-size: 32px; font-weight: 700; margin-bottom: 12px; }
+  .cta-section p { color: var(--text-secondary); margin-bottom: 28px; font-size: 16px; }
 
   /* Footer */
-  footer {
-    padding: 32px 0; border-top: 1px solid var(--border);
-    text-align: center; color: var(--text-secondary); font-size: 13px;
-  }
+  footer { padding: 32px 0; border-top: 1px solid var(--border); text-align: center; color: var(--text-secondary); font-size: 13px; }
   footer a { color: var(--indigo-light); text-decoration: none; }
 
   @media (max-width: 640px) {
-    .feature-grid { grid-template-columns: 1fr; }
+    .feature-grid, .new-grid { grid-template-columns: 1fr; }
     table { font-size: 12px; }
     th, td { padding: 10px 12px; }
+    .hero .stats { gap: 20px; }
   }
 </style>
 </head>
@@ -196,11 +166,10 @@
 
 <nav>
   <div class="container">
-    <a href="/" class="logo">
-      <span class="icon">P</span> Phosphor
-    </a>
+    <a href="/" class="logo"><span class="icon">P</span> Phosphor</a>
     <div class="links">
       <a href="#features">Features</a>
+      <a href="#new">What's New</a>
       <a href="#comparison">Compare</a>
       <a href="https://github.com/momenbasel/Phosphor">GitHub</a>
       <a href="https://github.com/momenbasel/Phosphor/releases/latest" class="btn btn-primary">Download</a>
@@ -210,9 +179,9 @@
 
 <section class="hero">
   <div class="container">
-    <span class="badge">v1.0.0 - Now Available</span>
-    <h1>Your iPhone.<br><span class="gradient">Your data.</span></h1>
-    <p>A free, open-source iOS device manager that does everything the $50/year tools do. No subscriptions. No iCloud. No compromises.</p>
+    <span class="badge">v1.2.0 - Latest Release</span>
+    <h1>Your iPhone.<br><span class="gradient">Your rules.</span></h1>
+    <p>A free, open-source iOS device manager that replaces $50/year tools. Backups, messages, photos, app management, device cloning, and more. No subscriptions. No iCloud. No compromises.</p>
     <div class="cta">
       <a href="https://github.com/momenbasel/Phosphor/releases/latest" class="btn btn-primary">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 12l-4-4h2.5V4h3v4H12L8 12z"/><path d="M2 14h12v-1.5H2V14z"/></svg>
@@ -227,60 +196,49 @@
       $ <code>brew tap momenbasel/phosphor && brew install --cask phosphor</code>
       <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" opacity="0.5"><path d="M4 4v10h8V4H4zm7 9H5V5h6v8zM6 2v1h5v1h1V2c0-.6-.4-1-1-1H7c-.6 0-1 .4-1 1z"/></svg>
     </div>
+    <div class="stats">
+      <div class="stat"><div class="num">18</div><div class="label">Features</div></div>
+      <div class="stat"><div class="num">62</div><div class="label">Source Files</div></div>
+      <div class="stat"><div class="num">7</div><div class="label">Languages</div></div>
+      <div class="stat"><div class="num">0</div><div class="label">Dependencies</div></div>
+    </div>
   </div>
 </section>
 
 <section id="features" class="features">
   <div class="container">
     <h2>Everything you need. Nothing you don't.</h2>
-    <p class="subtitle">Built natively with SwiftUI. Powered by libimobiledevice.</p>
-
+    <p class="subtitle">Built natively with SwiftUI. Powered by libimobiledevice. Zero external dependencies.</p>
     <div class="feature-grid">
-      <div class="feature-card">
-        <div class="icon-wrap">&#128241;</div>
-        <h3>Device Dashboard</h3>
-        <p>Auto-detect connected devices. View model, iOS version, serial number, UDID, IMEI, battery health, and storage breakdown at a glance.</p>
-      </div>
-      <div class="feature-card">
-        <div class="icon-wrap">&#128190;</div>
-        <h3>Smart Backups</h3>
-        <p>Full and incremental local backups. Browse backup contents through Manifest.db. Extract individual files without restoring the entire device.</p>
-      </div>
-      <div class="feature-card">
-        <div class="icon-wrap">&#128172;</div>
-        <h3>Message Export</h3>
-        <p>Browse all iMessage and SMS conversations. Export to CSV, HTML, JSON, or plain text. HTML export styled with native chat bubbles.</p>
-      </div>
-      <div class="feature-card">
-        <div class="icon-wrap">&#127748;</div>
-        <h3>Photo Extraction</h3>
-        <p>Browse Camera Roll from any backup. Filter by photos, videos, or screenshots. Batch extract to any folder with original filenames.</p>
-      </div>
-      <div class="feature-card">
-        <div class="icon-wrap">&#128230;</div>
-        <h3>App Management</h3>
-        <p>Install and remove IPAs directly. Browse app data in backups. Extract individual app containers - Documents, Library, tmp directories.</p>
-      </div>
-      <div class="feature-card">
-        <div class="icon-wrap">&#128196;</div>
-        <h3>File Browser</h3>
-        <p>Mount the device filesystem via AFC. Navigate directories, copy files to and from your device, view file metadata and sizes.</p>
-      </div>
-      <div class="feature-card">
-        <div class="icon-wrap">&#9889;</div>
-        <h3>Diagnostics</h3>
-        <p>Battery health with mAh details. Storage breakdown by category. Real-time syslog streaming with filtering and export.</p>
-      </div>
-      <div class="feature-card">
-        <div class="icon-wrap">&#128274;</div>
-        <h3>No Lock-in</h3>
-        <p>Everything stays local. No iCloud dependency. No account required. No subscription. Your data never leaves your machine.</p>
-      </div>
-      <div class="feature-card">
-        <div class="icon-wrap">&#128736;</div>
-        <h3>Open Source</h3>
-        <p>MIT licensed. Read every line of code. Fork it, modify it, ship it. Zero external Swift dependencies - just system frameworks.</p>
-      </div>
+      <div class="feature-card"><div class="icon-wrap">&#128241;</div><h3>Device Dashboard</h3><p>Auto-detect connected devices. View model, iOS version, serial, UDID, IMEI, battery health, and storage breakdown. Supports iPhone, iPad, and iPod touch.</p></div>
+      <div class="feature-card"><div class="icon-wrap">&#128190;</div><h3>Smart Backups</h3><p>Full and incremental backups. Browse contents via Manifest.db. Extract individual files. Scheduled automatic backups via USB or Wi-Fi.</p></div>
+      <div class="feature-card"><div class="icon-wrap">&#9200;</div><h3>Time Machine Restore</h3><p>3D animated backup browser inspired by macOS Time Machine. Scroll through backup history and restore any snapshot with one click.</p></div>
+      <div class="feature-card"><div class="icon-wrap">&#128172;</div><h3>Message Export</h3><p>iMessage, SMS, and WhatsApp conversations. Export to CSV, HTML, JSON, or plain text. HTML styled with native chat bubbles.</p></div>
+      <div class="feature-card"><div class="icon-wrap">&#127748;</div><h3>Photo Extraction</h3><p>Browse Camera Roll from backup. Filter by type. Batch extract with original filenames and structure preserved.</p></div>
+      <div class="feature-card"><div class="icon-wrap">&#128230;</div><h3>App Management</h3><p>Install/remove IPAs. Browse app data in backups. Extract individual app containers. Fallback chain supports all ideviceinstaller versions.</p></div>
+      <div class="feature-card"><div class="icon-wrap">&#128196;</div><h3>File Browser + Drag-and-Drop</h3><p>Mount device filesystem via AFC. Navigate, copy, delete files. Drop files from Finder to transfer directly to device.</p></div>
+      <div class="feature-card"><div class="icon-wrap">&#128260;</div><h3>Device Clone</h3><p>Transfer all data between two devices. Backup source, restore to destination. Progress tracking through both phases.</p></div>
+      <div class="feature-card"><div class="icon-wrap">&#9889;</div><h3>Diagnostics</h3><p>Battery health with mAh details. Storage breakdown by category. Real-time syslog streaming with color-coded levels.</p></div>
+      <div class="feature-card"><div class="icon-wrap">&#9961;</div><h3>Health Data</h3><p>Browse all HealthKit data types. View samples, workouts, and activity summaries. Apple Watch Activity rings included.</p></div>
+      <div class="feature-card"><div class="icon-wrap">&#128221;</div><h3>Notes, Contacts, Calendar</h3><p>Apple Notes with folder browsing. Contacts with vCard export. Calendar events with ICS export. Call log and Safari history.</p></div>
+      <div class="feature-card"><div class="icon-wrap">&#127760;</div><h3>Localized</h3><p>Available in English, Arabic, Spanish, French, German, Japanese, and Chinese. .phosphor archive format for portable backups.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="new" class="new-features">
+  <div class="container">
+    <h2>New in v1.2.0</h2>
+    <div class="new-grid">
+      <div class="new-item"><div class="emoji">&#9200;</div><div><h4>Time Machine Restore</h4><p>3D animated backup browser with star field</p></div></div>
+      <div class="new-item"><div class="emoji">&#128197;</div><div><h4>Scheduled Backups</h4><p>Hourly, daily, weekly, monthly via USB or Wi-Fi</p></div></div>
+      <div class="new-item"><div class="emoji">&#128260;</div><div><h4>Device Clone</h4><p>Full device-to-device data transfer</p></div></div>
+      <div class="new-item"><div class="emoji">&#9961;</div><div><h4>Apple Watch</h4><p>Watch info, apps, Activity ring history</p></div></div>
+      <div class="new-item"><div class="emoji">&#128101;</div><div><h4>Contacts</h4><p>Browse and export as vCard or CSV</p></div></div>
+      <div class="new-item"><div class="emoji">&#128197;</div><div><h4>Calendar</h4><p>Events with ICS and CSV export</p></div></div>
+      <div class="new-item"><div class="emoji">&#128230;</div><div><h4>.phosphor Archives</h4><p>Portable backup export/import format</p></div></div>
+      <div class="new-item"><div class="emoji">&#127760;</div><div><h4>7 Languages</h4><p>EN, AR, ES, FR, DE, JA, ZH</p></div></div>
+      <div class="new-item"><div class="emoji">&#128295;</div><div><h4>12 Bug Fixes</h4><p>Triple-reviewed by Gemini, Codex, and manual trace</p></div></div>
     </div>
   </div>
 </section>
@@ -290,24 +248,24 @@
     <h2>How Phosphor compares</h2>
     <table>
       <thead>
-        <tr>
-          <th>Feature</th>
-          <th>Finder</th>
-          <th>iMazing ($50/yr)</th>
-          <th class="highlight-col">Phosphor (Free)</th>
-        </tr>
+        <tr><th>Feature</th><th>Finder</th><th>iMazing ($50/yr)</th><th class="highlight-col">Phosphor (Free)</th></tr>
       </thead>
       <tbody>
         <tr><td>Full device backup</td><td class="check">Yes</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
         <tr><td>Incremental backup</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
+        <tr><td>Scheduled Wi-Fi backup</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
+        <tr><td>Time Machine restore</td><td class="cross">No</td><td class="cross">No</td><td class="highlight-col check"><strong>Yes</strong></td></tr>
+        <tr><td>Device-to-device clone</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
         <tr><td>Browse backup files</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
-        <tr><td>Selective restore</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
         <tr><td>Export iMessages</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
-        <tr><td>Export WhatsApp</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col planned">Planned</td></tr>
+        <tr><td>Export WhatsApp</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
         <tr><td>Photo extraction</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
-        <tr><td>App management</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
+        <tr><td>Contacts/Calendar export</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
+        <tr><td>Apple Watch data</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
+        <tr><td>Drag-and-drop transfer</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
+        <tr><td>Backup archive format</td><td class="cross">No</td><td>.imazing</td><td class="highlight-col"><strong>.phosphor</strong></td></tr>
+        <tr><td>Localization</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">7 languages</td></tr>
         <tr><td>Battery diagnostics</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
-        <tr><td>Device console</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
         <tr><td>Open source</td><td class="cross">No</td><td class="cross">No</td><td class="highlight-col check"><strong>MIT</strong></td></tr>
         <tr><td>Price</td><td>Free</td><td>$49.99/yr</td><td class="highlight-col"><strong>Free forever</strong></td></tr>
       </tbody>
@@ -318,8 +276,8 @@
 <section class="cta-section">
   <div class="container">
     <h2>Take control of your device.</h2>
-    <p>No sign-up. No payment. Just download and go.</p>
-    <div style="display: flex; gap: 12px; justify-content: center;">
+    <p>No sign-up. No payment. No lock-in. Just download and go.</p>
+    <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
       <a href="https://github.com/momenbasel/Phosphor/releases/latest" class="btn btn-primary">Download Phosphor</a>
       <a href="https://github.com/momenbasel/Phosphor" class="btn btn-secondary">Star on GitHub</a>
     </div>
