@@ -2,24 +2,110 @@ import Foundation
 
 /// Central wrapper for pymobiledevice3 CLI. Primary backend for all iOS device operations.
 /// pymobiledevice3 supports iOS 17+ (including iOS 26), unlike libimobiledevice.
-/// All operations go through `python3 -m pymobiledevice3 <subcommand> [args]`.
+/// Searches for pymobiledevice3 binary at common install locations (pipx, pip, venv).
 enum PyMobileDevice {
 
-    /// Check if pymobiledevice3 is installed and importable.
+    /// Cached path to the pymobiledevice3 binary once found.
+    private static var cachedBinaryPath: String?
+
+    /// Extended PATH for GUI apps that don't inherit terminal PATH.
+    private static let extendedPath: String = {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let extra = [
+            "\(home)/.local/bin",
+            "\(home)/.local/pipx/venvs/pymobiledevice3/bin",
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "\(home)/Library/Python/3.13/bin",
+            "\(home)/Library/Python/3.12/bin",
+            "\(home)/Library/Python/3.11/bin",
+            "\(home)/Library/Python/3.10/bin",
+        ]
+        let existing = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
+        return extra.joined(separator: ":") + ":" + existing
+    }()
+
+    /// Find the pymobiledevice3 binary. Checks direct binary first (pipx),
+    /// then python3 -m pymobiledevice3 at various Python locations.
+    private static func findBinary() -> String? {
+        if let cached = cachedBinaryPath { return cached }
+
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let fm = FileManager.default
+
+        // Direct binary locations (pipx, pip --user)
+        let directPaths = [
+            "\(home)/.local/bin/pymobiledevice3",
+            "\(home)/.local/pipx/venvs/pymobiledevice3/bin/pymobiledevice3",
+            "/opt/homebrew/bin/pymobiledevice3",
+            "/usr/local/bin/pymobiledevice3",
+        ]
+
+        for path in directPaths {
+            if fm.isExecutableFile(atPath: path) {
+                cachedBinaryPath = path
+                return path
+            }
+        }
+
+        // Try python3 -m pymobiledevice3 with various pythons
+        let pythons = [
+            "\(home)/.local/pipx/venvs/pymobiledevice3/bin/python3",
+            "/opt/homebrew/bin/python3",
+            "/usr/local/bin/python3",
+            "/usr/bin/python3",
+        ]
+
+        for python in pythons {
+            guard fm.isExecutableFile(atPath: python) else { continue }
+            let result = Shell.run(python, arguments: ["-c", "import pymobiledevice3"])
+            if result.succeeded {
+                // Use "python3 -m pymobiledevice3" mode via this python
+                cachedBinaryPath = python
+                return python
+            }
+        }
+
+        return nil
+    }
+
+    /// Whether the found binary is a direct pymobiledevice3 binary (vs python3 path).
+    private static var usesDirectBinary: Bool {
+        cachedBinaryPath?.hasSuffix("pymobiledevice3") == true
+            && cachedBinaryPath?.contains("python") != true
+    }
+
+    /// Build command and arguments for running pymobiledevice3.
+    private static func buildCommand(subcommands: [String]) -> (cmd: String, args: [String])? {
+        guard let binary = findBinary() else { return nil }
+        if usesDirectBinary {
+            return (cmd: binary, args: subcommands)
+        } else {
+            // It's a python3 path - use -m
+            return (cmd: binary, args: ["-m", "pymobiledevice3"] + subcommands)
+        }
+    }
+
+    /// Check if pymobiledevice3 is installed and accessible.
     static func available() -> Bool {
-        let result = Shell.run("python3", arguments: ["-c", "import pymobiledevice3"])
-        return result.succeeded
+        findBinary() != nil
     }
 
     /// Run a pymobiledevice3 subcommand synchronously.
     @discardableResult
     static func run(_ subcommands: [String], timeout: TimeInterval = 60) -> Shell.Result {
-        Shell.run("python3", arguments: ["-m", "pymobiledevice3"] + subcommands, timeout: timeout)
+        guard let cmd = buildCommand(subcommands: subcommands) else {
+            return Shell.Result(exitCode: -1, stdout: "", stderr: "pymobiledevice3 not found")
+        }
+        return Shell.run(cmd.cmd, arguments: cmd.args, timeout: timeout)
     }
 
     /// Run a pymobiledevice3 subcommand asynchronously.
     static func runAsync(_ subcommands: [String], timeout: TimeInterval = 300) async -> Shell.Result {
-        await Shell.runAsync("python3", arguments: ["-m", "pymobiledevice3"] + subcommands, timeout: timeout)
+        guard let cmd = buildCommand(subcommands: subcommands) else {
+            return Shell.Result(exitCode: -1, stdout: "", stderr: "pymobiledevice3 not found")
+        }
+        return await Shell.runAsync(cmd.cmd, arguments: cmd.args, timeout: timeout)
     }
 
     /// Run a pymobiledevice3 command with real-time output streaming.
@@ -31,20 +117,22 @@ enum PyMobileDevice {
         onError: @escaping (String) -> Void = { _ in },
         completion: @escaping (Int32) -> Void
     ) -> Process? {
+        guard let cmd = buildCommand(subcommands: subcommands) else {
+            onError("pymobiledevice3 not found")
+            completion(-1)
+            return nil
+        }
+
         let process = Process()
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
 
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["python3", "-m", "pymobiledevice3"] + subcommands
+        process.executableURL = URL(fileURLWithPath: cmd.cmd)
+        process.arguments = cmd.args
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
         process.environment = ProcessInfo.processInfo.environment
-
-        if var path = process.environment?["PATH"] {
-            path = "/opt/homebrew/bin:/usr/local/bin:" + path
-            process.environment?["PATH"] = path
-        }
+        process.environment?["PATH"] = extendedPath
 
         stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData

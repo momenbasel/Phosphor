@@ -25,10 +25,14 @@ enum Shell {
         process.standardError = stderrPipe
         process.environment = ProcessInfo.processInfo.environment
 
-        // Add common Homebrew paths
+        // Add common tool paths (GUI apps don't inherit terminal PATH)
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let extra = "\(home)/.local/bin:\(home)/.local/pipx/venvs/pymobiledevice3/bin:/opt/homebrew/bin:/usr/local/bin"
         if var path = process.environment?["PATH"] {
-            path = "/opt/homebrew/bin:/usr/local/bin:" + path
+            path = extra + ":" + path
             process.environment?["PATH"] = path
+        } else {
+            process.environment?["PATH"] = extra + ":/usr/bin:/bin"
         }
 
         do {
