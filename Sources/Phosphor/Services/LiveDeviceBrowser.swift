@@ -114,14 +114,9 @@ final class LiveDeviceBrowser: ObservableObject {
         isLoading = false
     }
 
-    /// Scan photos via pymobiledevice3 AFC - selective pull per subfolder.
+    /// Scan photos via pymobiledevice3 AFC - list only, no download until export.
     private func scanPhotosViaAFC() async {
         guard let udid = deviceUDID else { return }
-
-        let tmpDir = NSTemporaryDirectory() + "phosphor-photos-\(udid.prefix(8))"
-        let fm = FileManager.default
-        try? fm.createDirectory(atPath: tmpDir, withIntermediateDirectories: true)
-        mountPath = tmpDir
 
         let photoExtensions = Set(["jpg", "jpeg", "heic", "heif", "png", "gif", "webp",
                                     "mov", "mp4", "m4v", "3gp"])
@@ -130,36 +125,41 @@ final class LiveDeviceBrowser: ObservableObject {
         var found: [LivePhoto] = []
 
         for subfolder in dcimContents.sorted() {
-            guard !subfolder.isEmpty, subfolder != ".", subfolder != ".." else { continue }
+            guard !subfolder.isEmpty else { continue }
 
-            // Pull this subfolder
-            let localSubDir = (tmpDir as NSString).appendingPathComponent("DCIM/\(subfolder)")
-            try? fm.createDirectory(atPath: localSubDir, withIntermediateDirectories: true)
+            // Just list files - don't download them yet
+            let files = await PyMobileDevice.afcList(path: "/DCIM/\(subfolder)", udid: udid)
 
-            let remotePath = "/DCIM/\(subfolder)"
-            let _ = await PyMobileDevice.afcPull(remotePath: remotePath, localPath: localSubDir, udid: udid)
+            for file in files {
+                let ext = (file as NSString).pathExtension.lowercased()
+                guard photoExtensions.contains(ext) else { continue }
 
-            // Scan downloaded files
-            if let files = try? fm.contentsOfDirectory(atPath: localSubDir) {
-                for file in files {
-                    let ext = (file as NSString).pathExtension.lowercased()
-                    guard photoExtensions.contains(ext) else { continue }
+                let remotePath = "/DCIM/\(subfolder)/\(file)"
+                let isVideo = ["mov", "mp4", "m4v", "3gp"].contains(ext)
 
-                    let fullPath = (localSubDir as NSString).appendingPathComponent(file)
-                    let attrs = try? fm.attributesOfItem(atPath: fullPath)
-                    let size = (attrs?[.size] as? UInt64) ?? 0
-                    let modified = attrs?[.modificationDate] as? Date
-                    let isVideo = ["mov", "mp4", "m4v", "3gp"].contains(ext)
-
-                    found.append(LivePhoto(
-                        id: fullPath, name: file, path: fullPath,
-                        size: size, modified: modified, isVideo: isVideo
-                    ))
-                }
+                found.append(LivePhoto(
+                    id: remotePath, name: file, path: remotePath,
+                    size: 0, modified: nil, isVideo: isVideo
+                ))
             }
         }
 
-        photos = found.sorted { ($0.modified ?? .distantPast) > ($1.modified ?? .distantPast) }
+        photos = found
+        photoCount = found.count
+    }
+
+    /// Pull a single photo from device to local temp for viewing/export.
+    func pullPhoto(_ photo: LivePhoto) async -> String? {
+        guard let udid = deviceUDID else { return nil }
+        let tmpDir = NSTemporaryDirectory() + "phosphor-photos-\(udid.prefix(8))"
+        let fm = FileManager.default
+        try? fm.createDirectory(atPath: tmpDir, withIntermediateDirectories: true)
+
+        let localPath = (tmpDir as NSString).appendingPathComponent(photo.name)
+        if fm.fileExists(atPath: localPath) { return localPath } // Already downloaded
+
+        let success = await PyMobileDevice.afcPull(remotePath: photo.path, localPath: localPath, udid: udid)
+        return success ? localPath : nil
     }
 
     /// Scan photos via ifuse mount (legacy).
@@ -209,21 +209,30 @@ final class LiveDeviceBrowser: ObservableObject {
 
     // MARK: - Export
 
-    func exportPhoto(_ photo: LivePhoto, to destination: String) throws {
+    func exportPhoto(_ photo: LivePhoto, to destination: String) async throws {
         let fm = FileManager.default
         let destDir = (destination as NSString).deletingLastPathComponent
         try fm.createDirectory(atPath: destDir, withIntermediateDirectories: true)
-        if fm.fileExists(atPath: destination) { try fm.removeItem(atPath: destination) }
-        try fm.copyItem(atPath: photo.path, toPath: destination)
+
+        if usesAFC {
+            // AFC mode: pull from device directly to destination
+            guard let udid = deviceUDID else { throw CocoaError(.fileNoSuchFile) }
+            let success = await PyMobileDevice.afcPull(remotePath: photo.path, localPath: destination, udid: udid)
+            if !success { throw CocoaError(.fileWriteUnknown) }
+        } else {
+            // Mount mode: local copy
+            if fm.fileExists(atPath: destination) { try fm.removeItem(atPath: destination) }
+            try fm.copyItem(atPath: photo.path, toPath: destination)
+        }
     }
 
-    func exportPhotos(_ photos: [LivePhoto], to directory: String) -> Int {
+    func exportPhotos(_ selectedPhotos: [LivePhoto], to directory: String) async -> Int {
         let fm = FileManager.default
         try? fm.createDirectory(atPath: directory, withIntermediateDirectories: true)
         var count = 0
-        for photo in photos {
+        for photo in selectedPhotos {
             let dest = (directory as NSString).appendingPathComponent(photo.name)
-            do { try exportPhoto(photo, to: dest); count += 1 } catch { continue }
+            do { try await exportPhoto(photo, to: dest); count += 1 } catch { continue }
         }
         return count
     }

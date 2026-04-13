@@ -63,11 +63,17 @@ final class DiagnosticsManager: ObservableObject {
         // Primary: pymobiledevice3
         let pyBattery = await PyMobileDevice.batteryInfo(udid: udid)
         if !pyBattery.isEmpty {
+            // pymobiledevice3 JSON booleans: Python True/False -> NSNumber 1/0 -> "1"/"0",
+            // or via our bool handler -> "true"/"false"
+            let isTruthy: (String?) -> Bool = { val in
+                guard let v = val?.lowercased() else { return false }
+                return v == "true" || v == "1" || v == "yes"
+            }
             return BatteryDiagnostics(
-                currentCapacity: Int(pyBattery["CurrentCapacity"] ?? pyBattery["BatteryCurrentCapacity"] ?? "0") ?? 0,
-                isCharging: pyBattery["IsCharging"] == "True" || pyBattery["IsCharging"] == "true",
-                isFullyCharged: pyBattery["IsFullyCharged"] == "True" || pyBattery["FullyCharged"] == "True",
-                externalConnected: pyBattery["ExternalConnected"] == "True" || pyBattery["ExternalConnected"] == "true",
+                currentCapacity: Int(pyBattery["CurrentCapacity"] ?? "0") ?? 0,
+                isCharging: isTruthy(pyBattery["IsCharging"]),
+                isFullyCharged: isTruthy(pyBattery["IsFullyCharged"] ?? pyBattery["FullyCharged"]),
+                externalConnected: isTruthy(pyBattery["ExternalConnected"]),
                 designCapacity: pyBattery["DesignCapacity"].flatMap(Int.init),
                 currentMaxCapacity: pyBattery["NominalChargeCapacity"].flatMap(Int.init) ?? pyBattery["MaxCapacity"].flatMap(Int.init),
                 cycleCount: pyBattery["CycleCount"].flatMap(Int.init),

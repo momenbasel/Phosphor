@@ -87,9 +87,8 @@ final class DeviceManager: ObservableObject {
 
             let batteryLevel = batteryInfo["CurrentCapacity"].flatMap(Int.init)
                 ?? batteryInfo["BatteryCurrentCapacity"].flatMap(Int.init)
-            let batteryCharging = batteryInfo["IsCharging"] == "True"
-                || batteryInfo["IsCharging"] == "true"
-                || batteryInfo["BatteryIsCharging"] == "true"
+            let chargingVal = (batteryInfo["IsCharging"] ?? batteryInfo["BatteryIsCharging"] ?? "").lowercased()
+            let batteryCharging = chargingVal == "true" || chargingVal == "1"
             let totalDisk = info["TotalDiskCapacity"].flatMap(UInt64.init)
             let freeDisk = info["AmountDataAvailable"].flatMap(UInt64.init)
 

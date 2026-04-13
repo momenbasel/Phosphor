@@ -396,8 +396,10 @@ struct PhotoBrowserView: View {
             photosToExtract = liveBrowser.photos.filter { selectedItems.contains($0.id) }
         }
 
-        let count = liveBrowser.exportPhotos(photosToExtract, to: url.path)
-        if count > 0 { NSWorkspace.shared.open(url) }
+        Task {
+            let count = await liveBrowser.exportPhotos(photosToExtract, to: url.path)
+            if count > 0 { NSWorkspace.shared.open(url) }
+        }
     }
 
     private func extractFromBackup() {

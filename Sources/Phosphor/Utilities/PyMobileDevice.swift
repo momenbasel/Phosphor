@@ -176,7 +176,11 @@ enum PyMobileDevice {
         // Try JSON parse first
         if let data = output.data(using: .utf8),
            let json = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
-            return json.compactMap { $0["UniqueDeviceID"] as? String ?? $0["SerialNumber"] as? String }
+            return json.compactMap {
+                $0["Identifier"] as? String
+                    ?? $0["UniqueDeviceID"] as? String
+                    ?? $0["SerialNumber"] as? String
+            }
         }
 
         // Fallback: line-based parsing
@@ -187,13 +191,29 @@ enum PyMobileDevice {
 
     // MARK: - Device Info
 
-    /// Get full device info as key-value pairs.
+    /// Get full device info as key-value pairs. Parses JSON output from pymobiledevice3.
     static func deviceInfo(udid: String? = nil) async -> [String: String] {
         var args = ["lockdown", "info"]
         if let udid { args += ["--udid", udid] }
 
         let result = await runAsync(args)
         guard result.succeeded else { return [:] }
+
+        // pymobiledevice3 outputs JSON
+        if let data = result.output.data(using: .utf8),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            var dict: [String: String] = [:]
+            for (key, value) in json {
+                if let str = value as? String {
+                    dict[key] = str
+                } else if let num = value as? NSNumber {
+                    dict[key] = "\(num)"
+                }
+            }
+            return dict
+        }
+
+        // Fallback: key-value text
         return result.output.parseKeyValuePairs()
     }
 
@@ -208,19 +228,27 @@ enum PyMobileDevice {
 
     // MARK: - Battery & Diagnostics
 
-    /// Get battery diagnostics.
+    /// Get battery diagnostics (JSON output from `diagnostics battery single`).
     static func batteryInfo(udid: String? = nil) async -> [String: String] {
-        var args = ["diagnostics", "battery"]
+        var args = ["diagnostics", "battery", "single"]
         if let udid { args += ["--udid", udid] }
 
         let result = await runAsync(args)
         guard result.succeeded else { return [:] }
 
-        // Try JSON
+        // JSON output
         if let data = result.output.data(using: .utf8),
            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             var dict: [String: String] = [:]
-            for (key, value) in json { dict[key] = "\(value)" }
+            for (key, value) in json {
+                if let str = value as? String {
+                    dict[key] = str
+                } else if let num = value as? NSNumber {
+                    dict[key] = "\(num)"
+                } else if let bool = value as? Bool {
+                    dict[key] = bool ? "true" : "false"
+                }
+            }
             return dict
         }
 
@@ -245,12 +273,12 @@ enum PyMobileDevice {
         return result.succeeded
     }
 
-    /// Validate pairing.
+    /// Validate pairing by querying device info (no validate subcommand in pymobiledevice3).
     static func validatePair(udid: String? = nil) async -> Bool {
-        var args = ["lockdown", "validate"]
+        var args = ["lockdown", "info"]
         if let udid { args += ["--udid", udid] }
         let result = await runAsync(args, timeout: 10)
-        return result.succeeded
+        return result.succeeded && !result.output.isEmpty
     }
 
     // MARK: - Screenshots
@@ -293,6 +321,7 @@ enum PyMobileDevice {
     // MARK: - AFC (Apple File Conduit)
 
     /// List files at a remote path on device.
+    /// pymobiledevice3 outputs full paths like "/DCIM/100APPLE" - we extract just the name.
     static func afcList(path: String, udid: String? = nil) async -> [String] {
         var args = ["afc", "ls", path]
         if let udid { args += ["--udid", udid] }
@@ -300,9 +329,22 @@ enum PyMobileDevice {
         let result = await runAsync(args)
         guard result.succeeded else { return [] }
 
+        let normalizedPath = path.hasSuffix("/") ? path : path + "/"
         return result.output.components(separatedBy: "\n")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+            .compactMap { line in
+                // Output is full paths: "/DCIM/100APPLE". First line is the dir itself.
+                // Strip the queried path prefix and return just the name.
+                if line == path || line == path + "/" { return nil }
+                if line.hasPrefix(normalizedPath) {
+                    let name = String(line.dropFirst(normalizedPath.count))
+                    return name.isEmpty ? nil : name
+                }
+                // If no prefix (some versions output just names), return as-is
+                let name = (line as NSString).lastPathComponent
+                return name.isEmpty || name == "." || name == ".." ? nil : name
+            }
     }
 
     /// Pull (download) file/directory from device to local path.
