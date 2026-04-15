@@ -109,71 +109,76 @@ struct SidebarView: View {
     @EnvironmentObject var backupVM: BackupViewModel
 
     var body: some View {
-        List(selection: $selection) {
-            // Connected devices at the top
+        List {
             Section("Device") {
                 if deviceVM.devices.isEmpty {
-                    Label {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("No device connected")
-                                .font(.system(size: 13))
-                            Text("Connect via USB or Wi-Fi")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.tertiary)
-                        }
-                    } icon: {
-                        Image(systemName: "iphone.slash")
-                            .foregroundStyle(.tertiary)
-                    }
-                    .tag(SidebarSection.devices)
-                } else {
-                    ForEach(deviceVM.devices) { device in
+                    sidebarButton(.devices) {
                         Label {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    HStack(spacing: 6) {
-                                        Text(device.name)
-                                            .font(.system(size: 13, weight: .medium))
-                                        Text(device.connectionType.rawValue)
-                                            .font(.system(size: 9, weight: .semibold))
-                                            .foregroundStyle(.white)
-                                            .padding(.horizontal, 5)
-                                            .padding(.vertical, 1)
-                                            .background(device.connectionType == .wifi ? Color.blue : Color.green)
-                                            .clipShape(Capsule())
-                                    }
-                                    Text("\(device.displayModelName) - iOS \(device.iosVersion)")
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(.secondary)
-                                }
-
-                                Spacer()
-
-                                if let level = device.batteryLevel {
-                                    HStack(spacing: 2) {
-                                        if device.batteryCharging == true {
-                                            Image(systemName: "bolt.fill")
-                                                .font(.system(size: 8))
-                                                .foregroundStyle(.green)
-                                        }
-                                        Text("\(level)%")
-                                            .font(.system(size: 10, weight: .semibold, design: .rounded))
-                                            .foregroundStyle(Color.batteryColor(level: level, charging: device.batteryCharging ?? false))
-                                    }
-                                }
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("No device connected")
+                                    .font(.system(size: 13))
+                                Text("Connect via USB or Wi-Fi")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.tertiary)
                             }
                         } icon: {
-                            ZStack(alignment: .bottomTrailing) {
-                                Image(systemName: device.sfSymbolName)
-                                    .foregroundStyle(.indigo)
-                                    .font(.system(size: 16))
-                                Circle()
-                                    .fill(device.connectionType == .wifi ? Color.blue : Color.green)
-                                    .frame(width: 6, height: 6)
-                                    .offset(x: 2, y: 2)
+                            Image(systemName: "iphone.slash")
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                } else {
+                    ForEach(deviceVM.devices) { device in
+                        sidebarButton(.devices) {
+                            Label {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        HStack(spacing: 6) {
+                                            Text(device.name)
+                                                .font(.system(size: 13, weight: .medium))
+                                            Text(device.connectionType.rawValue)
+                                                .font(.system(size: 9, weight: .semibold))
+                                                .foregroundStyle(.white)
+                                                .padding(.horizontal, 5)
+                                                .padding(.vertical, 1)
+                                                .background(device.connectionType == .wifi ? Color.blue : Color.green)
+                                                .clipShape(Capsule())
+                                        }
+                                        Text("\(device.displayModelName) - iOS \(device.iosVersion)")
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    if let level = device.batteryLevel {
+                                        HStack(spacing: 2) {
+                                            if device.batteryCharging == true {
+                                                Image(systemName: "bolt.fill")
+                                                    .font(.system(size: 8))
+                                                    .foregroundStyle(.green)
+                                            }
+                                            Text("\(level)%")
+                                                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                                .foregroundStyle(Color.batteryColor(level: level, charging: device.batteryCharging ?? false))
+                                        }
+                                    }
+                                }
+                            } icon: {
+                                ZStack(alignment: .bottomTrailing) {
+                                    Image(systemName: device.sfSymbolName)
+                                        .foregroundStyle(.indigo)
+                                        .font(.system(size: 16))
+                                    Circle()
+                                        .fill(device.connectionType == .wifi ? Color.blue : Color.green)
+                                        .frame(width: 6, height: 6)
+                                        .offset(x: 2, y: 2)
+                                }
                             }
                         }
-                        .tag(SidebarSection.devices)
+                        .onAppear {
+                            // Auto-select first device
+                            if deviceVM.selectedDevice == nil {
+                                deviceVM.selectDevice(device)
+                            }
+                        }
                     }
                 }
             }
@@ -195,7 +200,6 @@ struct SidebarView: View {
 
             Section("Backups") {
                 sidebarRow(.backups)
-                    .badge(backupVM.backups.count)
                 sidebarRow(.backupBrowser)
                 sidebarRow(.timeMachine)
             }
@@ -210,19 +214,34 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
-        .onChange(of: selection) {
-            // Auto-select first device when navigating to Devices tab
-            if selection == .devices, let first = deviceVM.devices.first {
-                if deviceVM.selectedDevice == nil {
-                    deviceVM.selectDevice(first)
-                }
-            }
+    }
+
+    /// Standard sidebar row - tappable, with highlight for selected state.
+    private func sidebarRow(_ section: SidebarSection) -> some View {
+        sidebarButton(section) {
+            Label(section.label, systemImage: section.icon)
         }
     }
 
-    private func sidebarRow(_ section: SidebarSection) -> some View {
-        Label(section.label, systemImage: section.icon)
-            .tag(section)
+    /// Base button for sidebar items. Uses Button instead of List selection for reliability.
+    private func sidebarButton<Content: View>(_ section: SidebarSection, @ViewBuilder content: () -> Content) -> some View {
+        Button {
+            selection = section
+            if section == .devices, let first = deviceVM.devices.first {
+                deviceVM.selectDevice(first)
+            }
+        } label: {
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.vertical, 2)
+        .padding(.horizontal, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(selection == section ? Color.accentColor.opacity(0.15) : Color.clear)
+        )
     }
 }
 

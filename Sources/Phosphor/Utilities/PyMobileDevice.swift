@@ -620,18 +620,34 @@ enum PyMobileDevice {
 
     // MARK: - Location Simulation
 
-    /// Set simulated GPS location on device.
-    static func simulateLocationSet(udid: String? = nil, latitude: Double, longitude: Double) async -> Bool {
-        var args = ["developer", "simulate-location", "set", "--", String(latitude), String(longitude)]
-        if let udid { args += ["--udid", udid] }
-        return (await runAsync(args, timeout: 15)).succeeded
+    /// Set simulated GPS location on device. Tries iOS 17+ DVT path first, then legacy.
+    static func simulateLocationSet(udid: String? = nil, latitude: Double, longitude: Double) async -> (success: Bool, stderr: String) {
+        // iOS 17+: developer dvt simulate-location set
+        var dvtArgs = ["developer", "dvt", "simulate-location", "set", "--", String(latitude), String(longitude)]
+        if let udid { dvtArgs += ["--udid", udid] }
+        let dvtResult = await runAsync(dvtArgs, timeout: 15)
+        if dvtResult.succeeded { return (true, "") }
+
+        // iOS < 17 fallback: developer simulate-location set
+        var legacyArgs = ["developer", "simulate-location", "set", "--", String(latitude), String(longitude)]
+        if let udid { legacyArgs += ["--udid", udid] }
+        let legacyResult = await runAsync(legacyArgs, timeout: 15)
+        if legacyResult.succeeded { return (true, "") }
+
+        return (false, dvtResult.stderr + "\n" + legacyResult.stderr)
     }
 
-    /// Clear simulated GPS location, returning to real GPS.
+    /// Clear simulated GPS location. Tries iOS 17+ DVT path first, then legacy.
     static func simulateLocationClear(udid: String? = nil) async -> Bool {
-        var args = ["developer", "simulate-location", "clear"]
-        if let udid { args += ["--udid", udid] }
-        return (await runAsync(args, timeout: 15)).succeeded
+        // iOS 17+
+        var dvtArgs = ["developer", "dvt", "simulate-location", "clear"]
+        if let udid { dvtArgs += ["--udid", udid] }
+        if (await runAsync(dvtArgs, timeout: 15)).succeeded { return true }
+
+        // Legacy
+        var legacyArgs = ["developer", "simulate-location", "clear"]
+        if let udid { legacyArgs += ["--udid", udid] }
+        return (await runAsync(legacyArgs, timeout: 15)).succeeded
     }
 
     // MARK: - Utility

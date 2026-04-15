@@ -147,6 +147,26 @@ extension Color {
     }
 }
 
+// MARK: - Tunnel Service
+
+enum TunnelService {
+    /// Check if tunneld process is running.
+    static var isRunning: Bool {
+        let result = Shell.run("pgrep", arguments: ["-f", "tunneld"])
+        return result.succeeded
+    }
+
+    /// Start tunneld with admin privileges via osascript. Shows password dialog.
+    static func start() {
+        let pyPath = PyMobileDevice.findBinaryPath() ?? "pymobiledevice3"
+        let script = "do shell script \"\(pyPath) remote tunneld &\" with administrator privileges"
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", script]
+        try? process.run()
+    }
+}
+
 // MARK: - App Version
 
 enum AppVersion {

@@ -16,23 +16,19 @@ final class LocationSimulator: ObservableObject {
     func setLocation(udid: String, latitude: Double, longitude: Double) async -> Bool {
         isApplying = true
         error = nil
-        let ok = await PyMobileDevice.simulateLocationSet(udid: udid, latitude: latitude, longitude: longitude)
-        if !ok {
-            let result = await PyMobileDevice.runAsync(
-                ["developer", "simulate-location", "set", "--", String(latitude), String(longitude), "--udid", udid],
-                timeout: 15
-            )
+        let result = await PyMobileDevice.simulateLocationSet(udid: udid, latitude: latitude, longitude: longitude)
+        if !result.success {
             let stderr = result.stderr.lowercased()
-            if stderr.contains("tunneld") || stderr.contains("start-tunnel") {
+            if stderr.contains("tunneld") || stderr.contains("start-tunnel") || stderr.contains("unable to connect") {
                 error = "iOS 17+ requires tunnel service.\nRun: sudo pymobiledevice3 remote tunneld"
             } else if stderr.contains("developer mode") || stderr.contains("developermode") {
                 error = "Enable Developer Mode on device:\nSettings > Privacy & Security > Developer Mode"
             } else {
-                error = "Failed to set location.\n\(result.stderr.prefix(150))"
+                error = "Failed to set location.\n\(result.stderr.prefix(200))"
             }
         }
         isApplying = false
-        return ok
+        return result.success
     }
 
     func clearLocation(udid: String) async -> Bool {
@@ -68,10 +64,10 @@ final class LocationSimulator: ObservableObject {
                 if Task.isCancelled { break }
                 routeProgress = (index + 1, waypoints.count)
 
-                let ok = await PyMobileDevice.simulateLocationSet(
+                let result = await PyMobileDevice.simulateLocationSet(
                     udid: udid, latitude: point.latitude, longitude: point.longitude
                 )
-                if !ok {
+                if !result.success {
                     error = "Route playback failed at waypoint \(index + 1)."
                     break
                 }
