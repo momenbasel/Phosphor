@@ -6,6 +6,7 @@ struct PhosphorApp: App {
     @StateObject private var deviceVM = DeviceViewModel()
     @StateObject private var backupVM = BackupViewModel()
     @StateObject private var scheduler = BackupScheduler()
+    @AppStorage("phosphor.hasCompletedOnboarding") private var hasCompletedOnboarding = false
 
     var body: some Scene {
         WindowGroup {
@@ -17,6 +18,9 @@ struct PhosphorApp: App {
                     deviceVM.deviceManager.startPolling(interval: 4.0)
                     backupVM.loadBackups()
                     scheduler.startMonitoring()
+                }
+                .sheet(isPresented: showOnboarding) {
+                    OnboardingView(isPresented: showOnboarding)
                 }
         }
         .windowStyle(.titleBar)
@@ -63,5 +67,12 @@ struct PhosphorApp: App {
         Settings {
             SettingsView()
         }
+    }
+
+    private var showOnboarding: Binding<Bool> {
+        Binding(
+            get: { !hasCompletedOnboarding },
+            set: { if !$0 { hasCompletedOnboarding = true } }
+        )
     }
 }
