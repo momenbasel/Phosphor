@@ -622,15 +622,17 @@ enum PyMobileDevice {
 
     /// Set simulated GPS location on device. Tries iOS 17+ DVT path first, then legacy.
     static func simulateLocationSet(udid: String? = nil, latitude: Double, longitude: Double) async -> (success: Bool, stderr: String) {
-        // iOS 17+: developer dvt simulate-location set
-        var dvtArgs = ["developer", "dvt", "simulate-location", "set", "--", String(latitude), String(longitude)]
+        // iOS 17+: developer dvt simulate-location set (--udid MUST come before --)
+        var dvtArgs = ["developer", "dvt", "simulate-location", "set"]
         if let udid { dvtArgs += ["--udid", udid] }
+        dvtArgs += ["--", String(latitude), String(longitude)]
         let dvtResult = await runAsync(dvtArgs, timeout: 15)
         if dvtResult.succeeded { return (true, "") }
 
-        // iOS < 17 fallback: developer simulate-location set
-        var legacyArgs = ["developer", "simulate-location", "set", "--", String(latitude), String(longitude)]
+        // iOS < 17 fallback
+        var legacyArgs = ["developer", "simulate-location", "set"]
         if let udid { legacyArgs += ["--udid", udid] }
+        legacyArgs += ["--", String(latitude), String(longitude)]
         let legacyResult = await runAsync(legacyArgs, timeout: 15)
         if legacyResult.succeeded { return (true, "") }
 
