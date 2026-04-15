@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Live screen capture from connected device via pymobiledevice3 developer dvt screenshot.
+/// Live screen capture from connected device via pymobiledevice3 developer screenshot.
 struct ScreenCaptureView: View {
 
     @EnvironmentObject var deviceVM: DeviceViewModel
@@ -19,6 +19,8 @@ struct ScreenCaptureView: View {
                     title: "No Device Connected",
                     subtitle: "Connect a device to capture its screen."
                 )
+            } else if capture.needsTunnel {
+                tunnelRequiredView
             } else if let error = capture.error {
                 errorView(error)
             } else if let frame = capture.currentFrame {
@@ -71,7 +73,6 @@ struct ScreenCaptureView: View {
 
     private func screenView(_ frame: NSImage) -> some View {
         VStack(spacing: 0) {
-            // Screen image
             GeometryReader { geo in
                 Image(nsImage: frame)
                     .resizable()
@@ -84,7 +85,6 @@ struct ScreenCaptureView: View {
 
             Divider()
 
-            // Toolbar
             HStack(spacing: 16) {
                 Button {
                     capture.stopCapture()
@@ -96,39 +96,105 @@ struct ScreenCaptureView: View {
 
                 Divider().frame(height: 20)
 
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) { rotationDegrees -= 90 }
-                } label: {
+                Button { withAnimation { rotationDegrees -= 90 } } label: {
                     Image(systemName: "arrow.counterclockwise")
                 }
-                .help("Rotate counter-clockwise")
+                .help("Rotate CCW")
 
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) { rotationDegrees += 90 }
-                } label: {
+                Button { withAnimation { rotationDegrees += 90 } } label: {
                     Image(systemName: "arrow.clockwise")
                 }
-                .help("Rotate clockwise")
+                .help("Rotate CW")
 
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) { isMirrored.toggle() }
-                } label: {
+                Button { withAnimation { isMirrored.toggle() } } label: {
                     Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
                 }
                 .help("Mirror")
 
                 Divider().frame(height: 20)
 
-                Button {
-                    saveScreenshot()
-                } label: {
+                Button { saveScreenshot() } label: {
                     Label("Save", systemImage: "square.and.arrow.down")
                 }
-                .help("Save screenshot")
             }
             .padding(12)
             .background(.bar)
         }
+    }
+
+    // MARK: - Tunnel Required (iOS 17+)
+
+    private var tunnelRequiredView: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "network.badge.shield.half.filled")
+                .font(.system(size: 48))
+                .foregroundStyle(.orange)
+
+            Text("Tunnel Service Required")
+                .font(.title3.weight(.semibold))
+
+            Text("iOS 17+ requires a tunnel service for developer tools like\nscreen capture and location spoofing.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 420)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Option 1: Click below (requires admin password)")
+                    .font(.system(size: 12, weight: .medium))
+                Button {
+                    ScreenCaptureService.startTunnelService()
+                    // Wait a bit for tunnel to start, then retry
+                    Task {
+                        try? await Task.sleep(for: .seconds(3))
+                        capture.needsTunnel = false
+                        capture.error = nil
+                        if let udid = deviceVM.selectedDevice?.id {
+                            capture.startCapture(udid: udid)
+                        }
+                    }
+                } label: {
+                    Label("Start Tunnel Service", systemImage: "play.circle.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.indigo)
+
+                Divider().padding(.vertical, 4)
+
+                Text("Option 2: Run manually in Terminal")
+                    .font(.system(size: 12, weight: .medium))
+                HStack {
+                    Text("sudo pymobiledevice3 remote tunneld")
+                        .font(.system(size: 12, design: .monospaced))
+                        .textSelection(.enabled)
+                    Button {
+                        "sudo pymobiledevice3 remote tunneld".copyToClipboard()
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.borderless)
+                }
+                .padding(8)
+                .background(Color(.textBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+            .padding()
+            .background(.quaternary.opacity(0.5))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+
+            Button {
+                capture.needsTunnel = false
+                capture.error = nil
+                if let udid = deviceVM.selectedDevice?.id {
+                    capture.startCapture(udid: udid)
+                }
+            } label: {
+                Label("Try Again", systemImage: "arrow.clockwise")
+            }
+            .buttonStyle(.bordered)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Idle
@@ -142,7 +208,7 @@ struct ScreenCaptureView: View {
             Text("Screen Capture")
                 .font(.title3.weight(.semibold))
 
-            Text("Capture your device screen in real-time.\nRequires Developer Mode enabled on device (iOS 17+).")
+            Text("Capture your device screen in real-time.\nRequires Developer Mode and tunnel service on iOS 17+.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -190,8 +256,6 @@ struct ScreenCaptureView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-
-    // MARK: - Save
 
     private func saveScreenshot() {
         let panel = NSSavePanel()

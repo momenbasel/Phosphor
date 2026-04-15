@@ -66,7 +66,7 @@ struct DiagnosticsView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 240)
+            .frame(width: 380)
 
             Button {
                 if let udid = deviceVM.selectedDevice?.id {
@@ -326,7 +326,7 @@ struct DiagnosticsView: View {
                 EmptyStateView(
                     icon: "cpu",
                     title: "No Processes",
-                    subtitle: "Requires pymobiledevice3 and DeveloperDiskImage on device."
+                    subtitle: "On iOS 17+, run in Terminal first:\nsudo pymobiledevice3 remote tunneld"
                 )
             } else {
                 List(diagVM.processes) { proc in

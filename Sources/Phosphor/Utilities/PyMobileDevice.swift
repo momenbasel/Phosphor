@@ -91,6 +91,11 @@ enum PyMobileDevice {
         findBinary() != nil
     }
 
+    /// Expose binary path for tunnel launching.
+    static func findBinaryPath() -> String? {
+        findBinary()
+    }
+
     /// Run a pymobiledevice3 subcommand synchronously.
     @discardableResult
     static func run(_ subcommands: [String], timeout: TimeInterval = 60) -> Shell.Result {
@@ -168,27 +173,50 @@ enum PyMobileDevice {
 
     /// List connected device UDIDs via usbmux.
     static func listDevices() async -> [String] {
+        await listDevicesWithType().map(\.udid)
+    }
+
+    struct DeviceEntry {
+        let udid: String
+        let connectionType: String // "USB" or "Network"
+    }
+
+    /// List connected devices with connection type (USB vs Network/Wi-Fi).
+    static func listDevicesWithType() async -> [DeviceEntry] {
         let result = await runAsync(["usbmux", "list"])
         guard result.succeeded else { return [] }
 
-        // Output is typically JSON array or one UDID per line
         let output = result.output
-        // Try JSON parse first
         if let data = output.data(using: .utf8),
            let json = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
-            // Deduplicate - same device appears via USB + Network
-            var seen = Set<String>()
-            return json.compactMap {
-                $0["Identifier"] as? String
-                    ?? $0["UniqueDeviceID"] as? String
-                    ?? $0["SerialNumber"] as? String
-            }.filter { seen.insert($0).inserted }
+            // Deduplicate: prefer USB over Network for same device
+            var byUdid: [String: DeviceEntry] = [:]
+            for entry in json {
+                guard let udid = entry["Identifier"] as? String
+                        ?? entry["UniqueDeviceID"] as? String
+                        ?? entry["SerialNumber"] as? String else { continue }
+                let connType = (entry["ConnectionType"] as? String)
+                    ?? (entry["Properties"] as? [String: Any])?["ConnectionType"] as? String
+                    ?? "USB"
+                let isUSB = connType.lowercased().contains("usb") || connType == "1"
+                let type = isUSB ? "USB" : "Network"
+                // USB takes priority over Network
+                if let existing = byUdid[udid] {
+                    if existing.connectionType != "USB" && type == "USB" {
+                        byUdid[udid] = DeviceEntry(udid: udid, connectionType: type)
+                    }
+                } else {
+                    byUdid[udid] = DeviceEntry(udid: udid, connectionType: type)
+                }
+            }
+            return Array(byUdid.values)
         }
 
-        // Fallback: line-based parsing
+        // Fallback: line-based, assume USB
         return output.components(separatedBy: "\n")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty && $0.count > 20 }
+            .map { DeviceEntry(udid: $0, connectionType: "USB") }
     }
 
     // MARK: - Device Info

@@ -45,18 +45,20 @@ final class DeviceManager: ObservableObject {
         isScanning = true
         lastError = nil
 
-        // Primary: pymobiledevice3
-        var udids = await PyMobileDevice.listDevices()
+        // Primary: pymobiledevice3 (with connection type)
+        var entries = await PyMobileDevice.listDevicesWithType()
 
-        // Fallback: libimobiledevice
-        if udids.isEmpty {
+        // Fallback: libimobiledevice (assume USB)
+        if entries.isEmpty {
             let result = await Shell.runAsync("idevice_id", arguments: ["-l"])
             if result.succeeded {
-                udids = result.output.components(separatedBy: "\n").filter { !$0.isEmpty }
+                entries = result.output.components(separatedBy: "\n")
+                    .filter { !$0.isEmpty }
+                    .map { PyMobileDevice.DeviceEntry(udid: $0, connectionType: "USB") }
             }
         }
 
-        if udids.isEmpty {
+        if entries.isEmpty {
             connectedDevices = []
             selectedDevice = nil
             isScanning = false
@@ -64,8 +66,10 @@ final class DeviceManager: ObservableObject {
         }
 
         var devices: [DeviceInfo] = []
-        for udid in udids {
-            if let device = await fetchDeviceInfo(udid: udid) {
+        for entry in entries {
+            let connType: DeviceInfo.ConnectionType = entry.connectionType == "USB" ? .usb : .wifi
+            if var device = await fetchDeviceInfo(udid: entry.udid) {
+                device.connectionType = connType
                 devices.append(device)
             }
         }

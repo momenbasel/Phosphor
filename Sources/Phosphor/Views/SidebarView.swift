@@ -134,7 +134,6 @@ struct SidebarView: View {
                                     HStack(spacing: 6) {
                                         Text(device.name)
                                             .font(.system(size: 13, weight: .medium))
-                                        // Connection type badge
                                         Text(device.connectionType.rawValue)
                                             .font(.system(size: 9, weight: .semibold))
                                             .foregroundStyle(.white)
@@ -150,7 +149,6 @@ struct SidebarView: View {
 
                                 Spacer()
 
-                                // Inline battery level
                                 if let level = device.batteryLevel {
                                     HStack(spacing: 2) {
                                         if device.batteryCharging == true {
@@ -169,7 +167,6 @@ struct SidebarView: View {
                                 Image(systemName: device.sfSymbolName)
                                     .foregroundStyle(.indigo)
                                     .font(.system(size: 16))
-                                // Connection status dot
                                 Circle()
                                     .fill(device.connectionType == .wifi ? Color.blue : Color.green)
                                     .frame(width: 6, height: 6)
@@ -177,10 +174,6 @@ struct SidebarView: View {
                             }
                         }
                         .tag(SidebarSection.devices)
-                        .onTapGesture {
-                            deviceVM.selectDevice(device)
-                            selection = .devices
-                        }
                     }
                 }
             }
@@ -217,6 +210,14 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        .onChange(of: selection) {
+            // Auto-select first device when navigating to Devices tab
+            if selection == .devices, let first = deviceVM.devices.first {
+                if deviceVM.selectedDevice == nil {
+                    deviceVM.selectDevice(first)
+                }
+            }
+        }
     }
 
     private func sidebarRow(_ section: SidebarSection) -> some View {

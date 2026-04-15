@@ -169,8 +169,20 @@ struct PhotoBrowserView: View {
                     .fill(Color(.controlBackgroundColor))
                     .frame(height: 100)
 
-                // Try to load actual thumbnail
-                if let nsImage = NSImage(contentsOfFile: photo.path) {
+                // In AFC mode, photo.path is a device path - show file type icon
+                // Local files (ifuse mount) can show actual thumbnail
+                if photo.path.hasPrefix("/DCIM") {
+                    // AFC mode: device path, can't load locally
+                    VStack(spacing: 4) {
+                        Image(systemName: photo.isVideo ? "video.fill" : "photo")
+                            .font(.system(size: 24))
+                            .foregroundStyle(.secondary)
+                        let ext = (photo.name as NSString).pathExtension.uppercased()
+                        Text(ext)
+                            .font(.system(size: 9, weight: .medium, design: .rounded))
+                            .foregroundStyle(.tertiary)
+                    }
+                } else if let nsImage = NSImage(contentsOfFile: photo.path) {
                     Image(nsImage: nsImage)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
@@ -223,8 +235,15 @@ struct PhotoBrowserView: View {
     private var liveListView: some View {
         List(liveBrowser.photos) { photo in
             HStack(spacing: 10) {
-                // Thumbnail
-                if let nsImage = NSImage(contentsOfFile: photo.path) {
+                // In AFC mode, show icon; ifuse mode can show thumbnail
+                if photo.path.hasPrefix("/DCIM"), true {
+                    Image(systemName: photo.sfSymbol)
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 40, height: 40)
+                        .background(Color(.controlBackgroundColor))
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                } else if let nsImage = NSImage(contentsOfFile: photo.path) {
                     Image(nsImage: nsImage)
                         .resizable()
                         .aspectRatio(contentMode: .fill)

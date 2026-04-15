@@ -22,10 +22,13 @@ final class LocationSimulator: ObservableObject {
                 ["developer", "simulate-location", "set", "--", String(latitude), String(longitude), "--udid", udid],
                 timeout: 15
             )
-            if result.stderr.lowercased().contains("developer") {
-                error = "Developer Mode required on device."
+            let stderr = result.stderr.lowercased()
+            if stderr.contains("tunneld") || stderr.contains("start-tunnel") {
+                error = "iOS 17+ requires tunnel service.\nRun: sudo pymobiledevice3 remote tunneld"
+            } else if stderr.contains("developer mode") || stderr.contains("developermode") {
+                error = "Enable Developer Mode on device:\nSettings > Privacy & Security > Developer Mode"
             } else {
-                error = "Failed to set location. Check device connection."
+                error = "Failed to set location.\n\(result.stderr.prefix(150))"
             }
         }
         isApplying = false
