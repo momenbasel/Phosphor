@@ -76,6 +76,50 @@ struct SettingsView: View {
                         .frame(width: 30)
                 }
             }
+
+            Section("iOS 17+ Developer Tools") {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Tunnel Service")
+                            .font(.system(size: 13, weight: .medium))
+                        Text("Required for screen capture, location, and process list")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if TunnelService.isRunning {
+                        HStack(spacing: 4) {
+                            Circle().fill(.green).frame(width: 8, height: 8)
+                            Text("Running").font(.system(size: 12)).foregroundStyle(.green)
+                        }
+                    } else {
+                        Button("Start") { TunnelService.start() }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.indigo)
+                            .controlSize(.small)
+                    }
+                }
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Auto-start on boot")
+                            .font(.system(size: 13))
+                        Text("Install LaunchDaemon so tunnel starts automatically")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if TunnelService.isAutoStartInstalled {
+                        Button("Remove") { TunnelService.removeAutoStart() }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                    } else {
+                        Button("Install") { TunnelService.installAutoStart() }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                    }
+                }
+            }
         }
         .formStyle(.grouped)
         .padding()

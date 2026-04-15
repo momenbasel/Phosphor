@@ -152,14 +152,70 @@ extension Color {
 enum TunnelService {
     /// Check if tunneld process is running.
     static var isRunning: Bool {
-        let result = Shell.run("pgrep", arguments: ["-f", "tunneld"])
+        let result = Shell.run("pgrep", arguments: ["-f", "pymobiledevice3.*tunneld"])
         return result.succeeded
     }
 
-    /// Start tunneld with admin privileges via osascript. Shows password dialog.
+    /// Start tunneld with admin privileges via osascript. Shows macOS password dialog.
+    /// Tunneld stays running until reboot - user only needs to do this once per boot.
     static func start() {
         let pyPath = PyMobileDevice.findBinaryPath() ?? "pymobiledevice3"
-        let script = "do shell script \"\(pyPath) remote tunneld &\" with administrator privileges"
+        let script = "do shell script \"\(pyPath) remote tunneld\" with administrator privileges"
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", script]
+        try? process.run()
+    }
+
+    private static let daemonLabel = "com.phosphor.tunneld"
+    private static let plistPath = "\(FileManager.default.homeDirectoryForCurrentUser.path)/Library/LaunchDaemons/\(daemonLabel).plist"
+
+    /// Install LaunchDaemon so tunneld starts automatically on boot.
+    static func installAutoStart() {
+        let pyPath = PyMobileDevice.findBinaryPath() ?? "/usr/local/bin/pymobiledevice3"
+        let plist = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>Label</key>
+            <string>\(daemonLabel)</string>
+            <key>ProgramArguments</key>
+            <array>
+                <string>\(pyPath)</string>
+                <string>remote</string>
+                <string>tunneld</string>
+            </array>
+            <key>RunAtLoad</key>
+            <true/>
+            <key>KeepAlive</key>
+            <true/>
+            <key>StandardOutPath</key>
+            <string>/tmp/phosphor-tunneld.log</string>
+            <key>StandardErrorPath</key>
+            <string>/tmp/phosphor-tunneld.err</string>
+        </dict>
+        </plist>
+        """
+        // LaunchDaemons need root - use osascript for admin
+        let escapedPlist = plist.replacingOccurrences(of: "\"", with: "\\\"").replacingOccurrences(of: "\n", with: "\\n")
+        let script = """
+        do shell script "echo '\(plist.replacingOccurrences(of: "'", with: "'\\''"))' > /Library/LaunchDaemons/\(daemonLabel).plist && launchctl load /Library/LaunchDaemons/\(daemonLabel).plist" with administrator privileges
+        """
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", script]
+        try? process.run()
+    }
+
+    /// Check if auto-start LaunchDaemon is installed.
+    static var isAutoStartInstalled: Bool {
+        FileManager.default.fileExists(atPath: "/Library/LaunchDaemons/\(daemonLabel).plist")
+    }
+
+    /// Remove auto-start LaunchDaemon.
+    static func removeAutoStart() {
+        let script = "do shell script \"launchctl unload /Library/LaunchDaemons/\(daemonLabel).plist 2>/dev/null; rm -f /Library/LaunchDaemons/\(daemonLabel).plist\" with administrator privileges"
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         process.arguments = ["-e", script]

@@ -8,19 +8,91 @@ struct ContentView: View {
 
     @State private var selectedSection: SidebarSection? = .devices
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @State private var tunnelRunning = true
+    @State private var tunnelStarting = false
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarView(selection: $selectedSection)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
         } detail: {
-            detailView
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            VStack(spacing: 0) {
+                // Tunnel banner - shows when tunnel not running and device connected
+                if !tunnelRunning && deviceVM.hasDevices {
+                    tunnelBanner
+                }
+                detailView
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
         .navigationTitle("Phosphor")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 toolbarItems
+            }
+        }
+        .task {
+            // Check tunnel status on launch and periodically
+            await checkTunnel()
+        }
+    }
+
+    private var tunnelBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "network.badge.shield.half.filled")
+                .foregroundStyle(.orange)
+                .font(.system(size: 14))
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Tunnel service not running")
+                    .font(.system(size: 12, weight: .medium))
+                Text("Required for screen capture, location spoofing, and process list on iOS 17+")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if tunnelStarting {
+                ProgressView()
+                    .scaleEffect(0.7)
+                Text("Starting...")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            } else {
+                Button("Start Tunnel") {
+                    tunnelStarting = true
+                    TunnelService.start()
+                    // Check after a few seconds
+                    Task {
+                        try? await Task.sleep(for: .seconds(4))
+                        await checkTunnel()
+                        tunnelStarting = false
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.indigo)
+                .controlSize(.small)
+
+                Button {
+                    tunnelRunning = true // dismiss banner
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(Color.orange.opacity(0.08))
+    }
+
+    private func checkTunnel() async {
+        tunnelRunning = await withCheckedContinuation { c in
+            DispatchQueue.global().async {
+                c.resume(returning: TunnelService.isRunning)
             }
         }
     }
