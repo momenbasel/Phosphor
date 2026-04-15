@@ -12,7 +12,7 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarView(selection: $selectedSection)
-                .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 300)
+                .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
         } detail: {
             detailView
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -66,6 +66,12 @@ struct ContentView: View {
             FileBrowserView()
         case .diagnostics:
             DiagnosticsView()
+        case .battery:
+            BatteryView()
+        case .screenCapture:
+            ScreenCaptureView()
+        case .location:
+            LocationView()
         case .none:
             WelcomeView()
         }
@@ -96,6 +102,15 @@ struct ContentView: View {
                 if let level = device.batteryLevel {
                     BatteryIndicator(level: level, charging: device.batteryCharging ?? false)
                 }
+
+                // Connection badge
+                Text(device.connectionType.rawValue)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(device.connectionType == .wifi ? Color.blue : Color.green)
+                    .clipShape(Capsule())
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
@@ -110,13 +125,6 @@ struct BatteryIndicator: View {
     let level: Int
     let charging: Bool
 
-    var color: Color {
-        if charging { return .green }
-        if level <= 20 { return .red }
-        if level <= 40 { return .orange }
-        return .green
-    }
-
     var body: some View {
         HStack(spacing: 3) {
             if charging {
@@ -126,25 +134,69 @@ struct BatteryIndicator: View {
             }
             Text("\(level)%")
                 .font(.system(size: 10, weight: .semibold, design: .rounded))
-                .foregroundStyle(color)
+                .foregroundStyle(Color.batteryColor(level: level, charging: charging))
         }
     }
 }
 
-/// Shown when no section is selected.
+/// Shown when no section is selected - improved with quick-start guidance.
 struct WelcomeView: View {
+
+    @State private var isPulsing = false
+    @State private var depStatus: [String: Bool] = [:]
+
     var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "iphone.and.arrow.forward")
+        VStack(spacing: 20) {
+            Image(systemName: "light.beacon.max")
                 .font(.system(size: 56))
-                .foregroundStyle(.tertiary)
-            Text("Welcome to Phosphor")
-                .font(.title2.weight(.semibold))
+                .foregroundStyle(.indigo)
+                .symbolRenderingMode(.hierarchical)
+                .scaleEffect(isPulsing ? 1.05 : 1.0)
+                .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: isPulsing)
+                .onAppear { isPulsing = true }
+
+            Text("Phosphor")
+                .font(.largeTitle.weight(.bold))
+
+            Text("Version \(AppVersion.current)")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
             Text("Connect an iOS device or select a section from the sidebar.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 8) {
+                depRow("pymobiledevice3", installed: depStatus["pymobiledevice3"] ?? false)
+                depRow("libimobiledevice", installed: depStatus["ideviceinfo"] ?? false)
+            }
+            .padding()
+            .background(.quaternary.opacity(0.5))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task {
+            depStatus = await withCheckedContinuation { continuation in
+                DispatchQueue.global().async {
+                    continuation.resume(returning: Shell.checkDependencies())
+                }
+            }
+        }
+    }
+
+    private func depRow(_ name: String, installed: Bool) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: installed ? "checkmark.circle.fill" : "xmark.circle.fill")
+                .foregroundStyle(installed ? .green : .orange)
+                .font(.system(size: 14))
+            Text(name)
+                .font(.system(size: 13, design: .monospaced))
+            Spacer()
+            Text(installed ? "Ready" : "Not found")
+                .font(.system(size: 11))
+                .foregroundColor(installed ? .secondary : .orange)
+        }
+        .frame(width: 280)
     }
 }
 

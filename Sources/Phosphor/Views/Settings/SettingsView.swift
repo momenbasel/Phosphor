@@ -189,11 +189,11 @@ struct SettingsView: View {
             Text("Phosphor")
                 .font(.title.weight(.bold))
 
-            Text("Version 1.0")
+            Text("Version \(AppVersion.current) (\(AppVersion.build))")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            Text("Free and open-source iOS device manager for macOS.\nA complete replacement for proprietary tools.")
+            Text("Free and open-source iOS device manager for macOS.\nBattery diagnostics, screen capture, location tools, and more.")
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -209,7 +209,7 @@ struct SettingsView: View {
             }
             .font(.system(size: 12))
 
-            Text("Built with libimobiledevice and SwiftUI")
+            Text("Built with pymobiledevice3 and SwiftUI")
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
 

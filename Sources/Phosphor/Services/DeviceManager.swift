@@ -89,8 +89,11 @@ final class DeviceManager: ObservableObject {
                 ?? batteryInfo["BatteryCurrentCapacity"].flatMap(Int.init)
             let chargingVal = (batteryInfo["IsCharging"] ?? batteryInfo["BatteryIsCharging"] ?? "").lowercased()
             let batteryCharging = chargingVal == "true" || chargingVal == "1"
-            let totalDisk = info["TotalDiskCapacity"].flatMap(UInt64.init)
-            let freeDisk = info["AmountDataAvailable"].flatMap(UInt64.init)
+
+            let isTruthy: (String?) -> Bool = { val in
+                guard let v = val?.lowercased() else { return false }
+                return v == "true" || v == "1" || v == "yes"
+            }
 
             return DeviceInfo(
                 id: udid,
@@ -107,10 +110,33 @@ final class DeviceManager: ObservableObject {
                 imei: info["InternationalMobileEquipmentIdentity"],
                 batteryLevel: batteryLevel,
                 batteryCharging: batteryCharging,
-                totalDiskCapacity: totalDisk,
-                availableDiskSpace: freeDisk,
+                totalDiskCapacity: info["TotalDiskCapacity"].flatMap(UInt64.init),
+                availableDiskSpace: info["AmountDataAvailable"].flatMap(UInt64.init),
+                totalDataCapacity: info["TotalDataCapacity"].flatMap(UInt64.init),
+                totalSystemCapacity: info["TotalSystemCapacity"].flatMap(UInt64.init),
                 isPaired: isPaired,
-                isActivated: info["ActivationState"] == "Activated"
+                isActivated: info["ActivationState"] == "Activated",
+                chipID: info["ChipID"],
+                boardId: info["BoardId"] ?? info["HardwareBoard"],
+                hardwarePlatform: info["HardwarePlatform"],
+                hardwareModel: info["HardwareModel"],
+                cpuArchitecture: info["CPUArchitecture"],
+                firmwareVersion: info["FirmwareVersion"],
+                dieID: info["DieID"] ?? info["UniqueChipID"],
+                basebandVersion: info["BasebandVersion"],
+                basebandChipID: info["BasebandChipId"],
+                basebandSerialNumber: info["BasebandSerialNumber"],
+                basebandStatus: info["BasebandStatus"],
+                activationState: info["ActivationState"],
+                isSupervised: isTruthy(info["IsSupervised"]),
+                productionSOC: isTruthy(info["ProductionSOC"]),
+                hasPasscode: isTruthy(info["PasswordProtected"]),
+                ethernetAddress: info["EthernetAddress"],
+                carrierName: info["CarrierBundleInfoArray"] ?? info["PhoneNumber"].flatMap({ _ in info["SIMCarrierNetwork"] }),
+                mobileCountryCode: info["MobileSubscriberCountryCode"],
+                mobileNetworkCode: info["MobileSubscriberNetworkCode"],
+                iccid: info["IntegratedCircuitCardIdentity"],
+                connectionType: .usb
             )
         }
 
@@ -142,8 +168,13 @@ final class DeviceManager: ObservableObject {
             batteryCharging: batteryInfo["BatteryIsCharging"].map { $0 == "true" },
             totalDiskCapacity: diskInfo["TotalDiskCapacity"].flatMap(UInt64.init),
             availableDiskSpace: diskInfo["AmountDataAvailable"].flatMap(UInt64.init),
+            totalDataCapacity: diskInfo["TotalDataCapacity"].flatMap(UInt64.init),
+            totalSystemCapacity: diskInfo["TotalSystemCapacity"].flatMap(UInt64.init),
             isPaired: pairResult.succeeded,
-            isActivated: liInfo["ActivationState"] == "Activated"
+            isActivated: liInfo["ActivationState"] == "Activated",
+            basebandVersion: liInfo["BasebandVersion"],
+            activationState: liInfo["ActivationState"],
+            connectionType: .usb
         )
     }
 

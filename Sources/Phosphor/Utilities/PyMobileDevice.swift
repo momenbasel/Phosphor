@@ -548,6 +548,64 @@ enum PyMobileDevice {
             .filter { !$0.isEmpty && $0.count > 20 }
     }
 
+    // MARK: - Diagnostics IORegistry
+
+    /// Query IORegistry for a named entry (battery, USB, etc). Returns parsed JSON dict.
+    static func diagnosticsIORegistry(udid: String? = nil, name: String) async -> [String: Any] {
+        var args = ["diagnostics", "ioregistry", "--plane", "IOService", "--name", name]
+        if let udid { args += ["--udid", udid] }
+
+        let result = await runAsync(args, timeout: 15)
+        guard result.succeeded,
+              let data = result.output.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return [:]
+        }
+        return json
+    }
+
+    // MARK: - Full Lockdown Info
+
+    /// Fetch complete lockdown info (100+ keys). Superset of deviceInfo().
+    static func lockdownInfoFull(udid: String? = nil) async -> [String: Any] {
+        var args = ["lockdown", "info"]
+        if let udid { args += ["--udid", udid] }
+
+        let result = await runAsync(args)
+        guard result.succeeded,
+              let data = result.output.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return [:]
+        }
+        return json
+    }
+
+    // MARK: - Developer Screenshot
+
+    /// Take a screenshot via developer tools. Returns true on success.
+    static func developerScreenshot(udid: String? = nil, outputPath: String) async -> Bool {
+        var args = ["developer", "dvt", "screenshot", outputPath]
+        if let udid { args += ["--udid", udid] }
+        let result = await runAsync(args, timeout: 30)
+        return result.succeeded
+    }
+
+    // MARK: - Location Simulation
+
+    /// Set simulated GPS location on device.
+    static func simulateLocationSet(udid: String? = nil, latitude: Double, longitude: Double) async -> Bool {
+        var args = ["developer", "simulate-location", "set", "--", String(latitude), String(longitude)]
+        if let udid { args += ["--udid", udid] }
+        return (await runAsync(args, timeout: 15)).succeeded
+    }
+
+    /// Clear simulated GPS location, returning to real GPS.
+    static func simulateLocationClear(udid: String? = nil) async -> Bool {
+        var args = ["developer", "simulate-location", "clear"]
+        if let udid { args += ["--udid", udid] }
+        return (await runAsync(args, timeout: 15)).succeeded
+    }
+
     // MARK: - Utility
 
     /// Parse backup progress from pymobiledevice3 tqdm output.

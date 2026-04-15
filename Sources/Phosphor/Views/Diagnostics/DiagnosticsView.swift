@@ -160,6 +160,7 @@ struct DiagnosticsView: View {
 
             StorageBar(
                 segments: [
+                    ("System", storage.systemUsage, .red.opacity(0.8)),
                     ("Apps", storage.appUsage, .blue),
                     ("Photos", storage.photoUsage, .orange),
                     ("Media", storage.mediaUsage, .purple),

@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Sidebar sections matching iMazing's navigation: Devices, Data, Backups, Tools.
+/// Sidebar sections - Devices, Data, Backups, Tools (including new iDescriptor-inspired features).
 enum SidebarSection: String, CaseIterable, Identifiable {
     case devices
     case backups
@@ -21,6 +21,9 @@ enum SidebarSection: String, CaseIterable, Identifiable {
     case clone
     case files
     case diagnostics
+    case battery
+    case screenCapture
+    case location
 
     var id: String { rawValue }
 
@@ -45,6 +48,9 @@ enum SidebarSection: String, CaseIterable, Identifiable {
         case .clone: return "Device Clone"
         case .files: return "File System"
         case .diagnostics: return "Diagnostics"
+        case .battery: return "Battery Health"
+        case .screenCapture: return "Screen Capture"
+        case .location: return "Location"
         }
     }
 
@@ -69,6 +75,9 @@ enum SidebarSection: String, CaseIterable, Identifiable {
         case .clone: return "arrow.right.arrow.left.circle"
         case .files: return "doc.on.doc.fill"
         case .diagnostics: return "waveform.path.ecg"
+        case .battery: return "battery.100percent"
+        case .screenCapture: return "camera.viewfinder"
+        case .location: return "location.fill"
         }
     }
 
@@ -77,7 +86,7 @@ enum SidebarSection: String, CaseIterable, Identifiable {
         case .devices: return .device
         case .backups, .backupBrowser, .timeMachine: return .backups
         case .messages, .whatsapp, .photos, .apps, .notes, .callLog, .safari, .health, .music, .watch, .contacts, .calendar: return .data
-        case .clone, .files, .diagnostics: return .tools
+        case .clone, .files, .diagnostics, .battery, .screenCapture, .location: return .tools
         }
     }
 }
@@ -120,17 +129,52 @@ struct SidebarView: View {
                 } else {
                     ForEach(deviceVM.devices) { device in
                         Label {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(device.name)
-                                    .font(.system(size: 13, weight: .medium))
-                                Text("\(device.displayModelName) - iOS \(device.iosVersion)")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.secondary)
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    HStack(spacing: 6) {
+                                        Text(device.name)
+                                            .font(.system(size: 13, weight: .medium))
+                                        // Connection type badge
+                                        Text(device.connectionType.rawValue)
+                                            .font(.system(size: 9, weight: .semibold))
+                                            .foregroundStyle(.white)
+                                            .padding(.horizontal, 5)
+                                            .padding(.vertical, 1)
+                                            .background(device.connectionType == .wifi ? Color.blue : Color.green)
+                                            .clipShape(Capsule())
+                                    }
+                                    Text("\(device.displayModelName) - iOS \(device.iosVersion)")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                Spacer()
+
+                                // Inline battery level
+                                if let level = device.batteryLevel {
+                                    HStack(spacing: 2) {
+                                        if device.batteryCharging == true {
+                                            Image(systemName: "bolt.fill")
+                                                .font(.system(size: 8))
+                                                .foregroundStyle(.green)
+                                        }
+                                        Text("\(level)%")
+                                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                            .foregroundStyle(Color.batteryColor(level: level, charging: device.batteryCharging ?? false))
+                                    }
+                                }
                             }
                         } icon: {
-                            Image(systemName: device.sfSymbolName)
-                                .foregroundStyle(.indigo)
-                                .font(.system(size: 16))
+                            ZStack(alignment: .bottomTrailing) {
+                                Image(systemName: device.sfSymbolName)
+                                    .foregroundStyle(.indigo)
+                                    .font(.system(size: 16))
+                                // Connection status dot
+                                Circle()
+                                    .fill(device.connectionType == .wifi ? Color.blue : Color.green)
+                                    .frame(width: 6, height: 6)
+                                    .offset(x: 2, y: 2)
+                            }
                         }
                         .tag(SidebarSection.devices)
                         .onTapGesture {
@@ -164,6 +208,9 @@ struct SidebarView: View {
             }
 
             Section("Tools") {
+                sidebarRow(.battery)
+                sidebarRow(.screenCapture)
+                sidebarRow(.location)
                 sidebarRow(.clone)
                 sidebarRow(.files)
                 sidebarRow(.diagnostics)
@@ -182,5 +229,5 @@ struct SidebarView: View {
     SidebarView(selection: .constant(.devices))
         .environmentObject(DeviceViewModel())
         .environmentObject(BackupViewModel())
-        .frame(width: 250)
+        .frame(width: 260)
 }

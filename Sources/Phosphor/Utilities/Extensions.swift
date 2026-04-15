@@ -130,4 +130,42 @@ extension Color {
     static let phosphorWarning = Color.orange
     static let phosphorDanger = Color.red
     static let phosphorMuted = Color.secondary
+
+    /// Shared battery level color. Green when charging, red <=20, orange <=40, green otherwise.
+    static func batteryColor(level: Int, charging: Bool) -> Color {
+        if charging { return .green }
+        if level <= 20 { return .red }
+        if level <= 40 { return .orange }
+        return .green
+    }
+
+    /// Temperature color: blue < 20C, green 20-35C, red > 35C.
+    static func temperatureColor(_ celsius: Double) -> Color {
+        if celsius < 20 { return .blue }
+        if celsius <= 35 { return .green }
+        return .red
+    }
+}
+
+// MARK: - App Version
+
+enum AppVersion {
+    static var current: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "2.1"
+    }
+
+    static var build: String {
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "2"
+    }
+}
+
+// MARK: - Clipboard
+
+extension String {
+    func copyToClipboard() {
+        #if canImport(AppKit)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(self, forType: .string)
+        #endif
+    }
 }

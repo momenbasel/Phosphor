@@ -1,13 +1,14 @@
 import SwiftUI
 
 /// Main device overview - shows device info card, storage, battery, quick actions.
-/// Inspired by iMazing's device dashboard but with a cleaner macOS-native aesthetic.
+/// Enhanced with connection badge, expanded info, copy-to-clipboard, activation state colors.
 struct DeviceOverviewView: View {
 
     @EnvironmentObject var deviceVM: DeviceViewModel
     @State private var diagnostics = DiagnosticsManager()
     @State private var battery: DiagnosticsManager.BatteryDiagnostics?
     @State private var storage: DiagnosticsManager.StorageBreakdown?
+    @State private var copiedField: String?
 
     var body: some View {
         Group {
@@ -42,7 +43,6 @@ struct DeviceOverviewView: View {
 
     private func deviceCard(_ device: DeviceInfo) -> some View {
         HStack(spacing: 20) {
-            // Device illustration
             VStack {
                 Image(systemName: device.sfSymbolName)
                     .font(.system(size: 64))
@@ -61,6 +61,16 @@ struct DeviceOverviewView: View {
 
                 HStack(spacing: 12) {
                     Label("iOS \(device.iosVersion)", systemImage: "gear")
+
+                    // Connection type badge
+                    HStack(spacing: 3) {
+                        Circle()
+                            .fill(device.connectionType == .wifi ? Color.blue : Color.green)
+                            .frame(width: 6, height: 6)
+                        Text(device.connectionType.rawValue)
+                            .font(.system(size: 11, weight: .medium))
+                    }
+
                     if device.isPaired {
                         Label("Paired", systemImage: "checkmark.shield.fill")
                             .foregroundStyle(.green)
@@ -75,7 +85,6 @@ struct DeviceOverviewView: View {
 
             Spacer()
 
-            // Battery gauge
             if let level = device.batteryLevel {
                 VStack(spacing: 4) {
                     ZStack {
@@ -84,7 +93,7 @@ struct DeviceOverviewView: View {
                         Circle()
                             .trim(from: 0, to: CGFloat(level) / 100)
                             .stroke(
-                                batteryColor(level: level, charging: device.batteryCharging ?? false),
+                                Color.batteryColor(level: level, charging: device.batteryCharging ?? false),
                                 style: StrokeStyle(lineWidth: 6, lineCap: .round)
                             )
                             .rotationEffect(.degrees(-90))
@@ -122,6 +131,7 @@ struct DeviceOverviewView: View {
 
                 StorageBar(
                     segments: [
+                        ("System", storage.systemUsage, .red.opacity(0.8)),
                         ("Apps", storage.appUsage, .blue),
                         ("Photos", storage.photoUsage, .orange),
                         ("Media", storage.mediaUsage, .purple),
@@ -140,9 +150,7 @@ struct DeviceOverviewView: View {
                         .foregroundStyle(.green)
                 }
             }
-            .padding(20)
-            .background(.regularMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .cardStyle()
         }
     }
 
@@ -161,6 +169,9 @@ struct DeviceOverviewView: View {
                                 valueColor: battery.isCharging ? .green : .secondary)
                         InfoRow(label: "External Power", value: battery.externalConnected ? "Connected" : "No",
                                 valueColor: battery.externalConnected ? .green : .secondary)
+                        if let cycles = battery.cycleCount {
+                            InfoRow(label: "Cycle Count", value: "\(cycles)", icon: "arrow.triangle.2.circlepath")
+                        }
                     }
 
                     VStack(alignment: .leading, spacing: 6) {
@@ -168,21 +179,28 @@ struct DeviceOverviewView: View {
                             InfoRow(
                                 label: "Battery Health",
                                 value: String(format: "%.0f%%", health),
+                                icon: "heart.fill",
                                 valueColor: health > 80 ? .green : health > 60 ? .orange : .red
                             )
                         }
                         if let design = battery.designCapacity {
-                            InfoRow(label: "Design Capacity", value: "\(design) mAh")
+                            InfoRow(label: "Design Capacity", value: "\(design) mAh", icon: "battery.100")
                         }
                         if let current = battery.currentMaxCapacity {
-                            InfoRow(label: "Current Max", value: "\(current) mAh")
+                            InfoRow(label: "Current Max", value: "\(current) mAh", icon: "battery.75")
+                        }
+                        if let temp = battery.temperature {
+                            InfoRow(
+                                label: "Temperature",
+                                value: String(format: "%.1f C", temp),
+                                icon: "thermometer.medium",
+                                valueColor: Color.temperatureColor(temp)
+                            )
                         }
                     }
                 }
             }
-            .padding(20)
-            .background(.regularMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .cardStyle()
         }
     }
 
@@ -190,26 +208,71 @@ struct DeviceOverviewView: View {
 
     private func infoSection(_ device: DeviceInfo) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(title: "Device Information")
+            SectionHeader(
+                title: "Device Information",
+                action: { copyAllInfo(device) },
+                actionIcon: "doc.on.doc",
+                actionLabel: "Copy All"
+            )
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                InfoRow(label: "UDID", value: device.id, icon: "number")
-                InfoRow(label: "Serial", value: device.serialNumber, icon: "barcode")
-                InfoRow(label: "Model", value: device.productType, icon: "cpu")
-                InfoRow(label: "Build", value: device.buildVersion, icon: "hammer")
-                InfoRow(label: "Wi-Fi MAC", value: device.wifiAddress, icon: "wifi")
-                InfoRow(label: "Bluetooth", value: device.bluetoothAddress, icon: "antenna.radiowaves.left.and.right")
+                copyableInfoRow(label: "UDID", value: device.id, icon: "number")
+                copyableInfoRow(label: "Serial", value: device.serialNumber, icon: "barcode")
+                copyableInfoRow(label: "Model", value: device.productType, icon: "cpu")
+                copyableInfoRow(label: "Build", value: device.buildVersion, icon: "hammer")
+                copyableInfoRow(label: "Wi-Fi MAC", value: device.wifiAddress, icon: "wifi")
+                copyableInfoRow(label: "Bluetooth", value: device.bluetoothAddress, icon: "antenna.radiowaves.left.and.right")
                 if let phone = device.phoneNumber {
-                    InfoRow(label: "Phone", value: phone, icon: "phone")
+                    copyableInfoRow(label: "Phone", value: phone, icon: "phone")
                 }
                 if let imei = device.imei {
-                    InfoRow(label: "IMEI", value: imei, icon: "simcard")
+                    copyableInfoRow(label: "IMEI", value: imei, icon: "simcard")
+                }
+                // Extended fields from iDescriptor
+                if let arch = device.cpuArchitecture, !arch.isEmpty {
+                    InfoRow(label: "CPU Architecture", value: arch, icon: "cpu")
+                }
+                if let baseband = device.basebandVersion, !baseband.isEmpty {
+                    InfoRow(label: "Baseband", value: baseband, icon: "antenna.radiowaves.left.and.right")
+                }
+                if let carrier = device.carrierName, !carrier.isEmpty {
+                    InfoRow(label: "Carrier", value: carrier, icon: "antenna.radiowaves.left.and.right.circle")
+                }
+                if let state = device.activationState {
+                    InfoRow(
+                        label: "Activation",
+                        value: state,
+                        icon: "checkmark.seal",
+                        valueColor: state == "Activated" ? .green : state == "Unactivated" ? .red : .orange
+                    )
+                }
+                if let supervised = device.isSupervised {
+                    InfoRow(
+                        label: "Supervised",
+                        value: supervised ? "Yes" : "No",
+                        icon: "lock.shield",
+                        valueColor: supervised ? .blue : .secondary
+                    )
+                }
+                if let passcode = device.hasPasscode {
+                    InfoRow(
+                        label: "Passcode",
+                        value: passcode ? "Enabled" : "None",
+                        icon: "lock",
+                        valueColor: passcode ? .green : .orange
+                    )
                 }
             }
+
+            // Copied feedback
+            if let field = copiedField {
+                Text("\(field) copied")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.green)
+                    .transition(.opacity)
+            }
         }
-        .padding(20)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .cardStyle()
     }
 
     // MARK: - Quick Actions
@@ -235,16 +298,47 @@ struct DeviceOverviewView: View {
                 }
             }
         }
-        .padding(20)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .cardStyle()
     }
 
-    private func batteryColor(level: Int, charging: Bool) -> Color {
-        if charging { return .green }
-        if level <= 20 { return .red }
-        if level <= 40 { return .orange }
-        return .green
+    // MARK: - Helpers
+
+    private func copyableInfoRow(label: String, value: String, icon: String) -> some View {
+        InfoRow(label: label, value: value, icon: icon)
+            .onTapGesture {
+                value.copyToClipboard()
+                withAnimation {
+                    copiedField = label
+                }
+                Task {
+                    try? await Task.sleep(for: .seconds(1.5))
+                    withAnimation { copiedField = nil }
+                }
+            }
+            .help("Click to copy \(label)")
+    }
+
+    private func copyAllInfo(_ device: DeviceInfo) {
+        var lines: [String] = []
+        lines.append("Device: \(device.name)")
+        lines.append("Model: \(device.displayModelName) (\(device.productType))")
+        lines.append("iOS: \(device.iosVersion) (\(device.buildVersion))")
+        lines.append("UDID: \(device.id)")
+        lines.append("Serial: \(device.serialNumber)")
+        lines.append("Wi-Fi MAC: \(device.wifiAddress)")
+        lines.append("Bluetooth: \(device.bluetoothAddress)")
+        if let imei = device.imei { lines.append("IMEI: \(imei)") }
+        if let phone = device.phoneNumber { lines.append("Phone: \(phone)") }
+        if let arch = device.cpuArchitecture { lines.append("CPU: \(arch)") }
+        if let bb = device.basebandVersion { lines.append("Baseband: \(bb)") }
+        if let carrier = device.carrierName { lines.append("Carrier: \(carrier)") }
+        if let state = device.activationState { lines.append("Activation: \(state)") }
+        lines.joined(separator: "\n").copyToClipboard()
+        withAnimation { copiedField = "All info" }
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            withAnimation { copiedField = nil }
+        }
     }
 }
 

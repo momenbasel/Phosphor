@@ -20,6 +20,11 @@ final class DiagnosticsManager: ObservableObject {
         let currentMaxCapacity: Int?
         let cycleCount: Int?
         let temperature: Double?
+        let voltage: Double?
+        let amperage: Int?
+        let watts: Int?
+        let connectionType: String?
+        let serialNumber: String?
 
         var healthPercent: Double? {
             guard let design = designCapacity, let current = currentMaxCapacity, design > 0 else { return nil }
@@ -30,6 +35,7 @@ final class DiagnosticsManager: ObservableObject {
     struct StorageBreakdown {
         let totalCapacity: UInt64
         let availableSpace: UInt64
+        let systemUsage: UInt64
         let photoUsage: UInt64
         let appUsage: UInt64
         let mediaUsage: UInt64
@@ -77,7 +83,12 @@ final class DiagnosticsManager: ObservableObject {
                 designCapacity: pyBattery["DesignCapacity"].flatMap(Int.init),
                 currentMaxCapacity: pyBattery["NominalChargeCapacity"].flatMap(Int.init) ?? pyBattery["MaxCapacity"].flatMap(Int.init),
                 cycleCount: pyBattery["CycleCount"].flatMap(Int.init),
-                temperature: pyBattery["Temperature"].flatMap(Double.init).map { $0 / 100.0 }
+                temperature: pyBattery["Temperature"].flatMap(Double.init).map { $0 / 100.0 },
+                voltage: pyBattery["Voltage"].flatMap(Double.init).map { $0 / 1000.0 },
+                amperage: pyBattery["InstantAmperage"].flatMap(Int.init),
+                watts: pyBattery["AdapterDetails.Watts"].flatMap(Int.init) ?? pyBattery["Watts"].flatMap(Int.init),
+                connectionType: pyBattery["AdapterDetails.Description"],
+                serialNumber: pyBattery["BatterySerialNumber"] ?? pyBattery["Serial"]
             )
         }
 
@@ -94,7 +105,12 @@ final class DiagnosticsManager: ObservableObject {
             designCapacity: info["DesignCapacity"].flatMap(Int.init),
             currentMaxCapacity: info["NominalChargeCapacity"].flatMap(Int.init),
             cycleCount: nil,
-            temperature: nil
+            temperature: nil,
+            voltage: nil,
+            amperage: nil,
+            watts: nil,
+            connectionType: nil,
+            serialNumber: nil
         )
     }
 
@@ -105,15 +121,17 @@ final class DiagnosticsManager: ObservableObject {
         let info = await PyMobileDevice.deviceInfo(udid: udid)
         if let totalStr = info["TotalDiskCapacity"], let total = UInt64(totalStr) {
             let available = UInt64(info["AmountDataAvailable"] ?? "0") ?? 0
+            let dataCapacity = UInt64(info["TotalDataCapacity"] ?? "0") ?? 0
+            let system = total > dataCapacity && dataCapacity > 0 ? total - dataCapacity : 0
             let photos = UInt64(info["PhotoUsage"] ?? "0") ?? 0
             let apps = UInt64(info["MobileApplicationUsage"] ?? "0") ?? 0
             let media = UInt64(info["AmountDataReserved"] ?? "0") ?? 0
-            let knownUsage = photos + apps + media
+            let knownUsage = system + photos + apps + media
             let used = total > available ? total - available : 0
             let other = used > knownUsage ? used - knownUsage : 0
 
             return StorageBreakdown(
-                totalCapacity: total, availableSpace: available,
+                totalCapacity: total, availableSpace: available, systemUsage: system,
                 photoUsage: photos, appUsage: apps, mediaUsage: media, otherUsage: other
             )
         }
@@ -125,15 +143,17 @@ final class DiagnosticsManager: ObservableObject {
         let diskInfo = result.output.parseKeyValuePairs()
         let total = UInt64(diskInfo["TotalDiskCapacity"] ?? "0") ?? 0
         let available = UInt64(diskInfo["AmountDataAvailable"] ?? "0") ?? 0
+        let dataCapacity = UInt64(diskInfo["TotalDataCapacity"] ?? "0") ?? 0
+        let system = total > dataCapacity && dataCapacity > 0 ? total - dataCapacity : 0
         let photos = UInt64(diskInfo["PhotoUsage"] ?? "0") ?? 0
         let apps = UInt64(diskInfo["MobileApplicationUsage"] ?? "0") ?? 0
         let media = UInt64(diskInfo["AmountDataReserved"] ?? "0") ?? 0
-        let knownUsage = photos + apps + media
+        let knownUsage = system + photos + apps + media
         let used = total > available ? total - available : 0
         let other = used > knownUsage ? used - knownUsage : 0
 
         return StorageBreakdown(
-            totalCapacity: total, availableSpace: available,
+            totalCapacity: total, availableSpace: available, systemUsage: system,
             photoUsage: photos, appUsage: apps, mediaUsage: media, otherUsage: other
         )
     }
