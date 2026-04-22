@@ -62,7 +62,7 @@ struct SettingsView: View {
                     }
                 }
 
-                Text("Default: ~/Library/Application Support/MobileSync/Backup")
+                Text("Default: ~/Documents/Phosphor Backups (no special permission required)")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }

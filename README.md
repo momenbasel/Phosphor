@@ -271,11 +271,17 @@ Phosphor parses this to provide file-system-like browsing without modifying the 
 
 ## Troubleshooting
 
+### Where Phosphor stores backups
+
+Starting with v1.0.4, Phosphor's default backup directory is `~/Documents/Phosphor Backups`. This is a user-owned location, so Phosphor needs no special permission grant; it also keeps Phosphor's backups separate from Finder's, which eliminates any risk of a Phosphor run corrupting Finder-managed backups.
+
+If you are upgrading from v1.0.3 or earlier and were using the system MobileSync directory, Phosphor will detect existing backups there on first launch and pin it as your override - nothing changes. You can switch to the new default any time from **Phosphor -> Settings -> Backup Directory -> Reset**.
+
 ### "Both backup methods failed"
 
 Phosphor now surfaces the underlying `pymobiledevice3` and `idevicebackup2` stderr in the failure message. Common causes:
 
-0. **Directory "is not readable" / permission denied** - macOS protects `~/Library/Application Support/MobileSync/Backup` with TCC. Grant Phosphor **Full Disk Access** in **System Settings -> Privacy & Security -> Full Disk Access**, then relaunch Phosphor. Alternatively pick a different backup directory in **Phosphor -> Settings** (for example `~/Documents/Phosphor Backups`).
+0. **Directory "is not readable" / permission denied** - you pointed Phosphor at `~/Library/Application Support/MobileSync/Backup` but did not grant Full Disk Access. Prefer switching the backup directory back to the default `~/Documents/Phosphor Backups` in **Settings**; only grant Full Disk Access if you specifically need Phosphor to read Apple's shared backups.
 1. **Trust prompt missed** - Unlock the device, tap **Trust This Computer**, enter your passcode, then retry the backup.
 2. **Stale pymobiledevice3** - iOS 17/18/26 require a recent release. Upgrade with:
    ```bash

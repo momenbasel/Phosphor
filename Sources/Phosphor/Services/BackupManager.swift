@@ -44,9 +44,9 @@ final class BackupManager: ObservableObject {
         }
         if lower.contains("is not readable") || lower.contains("permission denied") || lower.contains("operation not permitted") {
             return """
-            macOS is blocking access to the backup directory. Grant Phosphor 'Full Disk Access':
-            System Settings -> Privacy & Security -> Full Disk Access -> enable Phosphor.
-            Alternatively, pick a different backup directory in Phosphor > Settings (for example ~/Documents/Phosphor Backups).
+            macOS is blocking access to the backup directory. The easiest fix is to switch Phosphor's backup directory to a user-owned location:
+            Phosphor -> Settings -> Backup Directory -> ~/Documents/Phosphor Backups.
+            Only if you specifically want Phosphor to read Apple's shared MobileSync backups do you need to grant Full Disk Access (System Settings -> Privacy & Security -> Full Disk Access). Full Disk Access is not recommended - Phosphor does not need it for its own backups.
             """
         }
         return nil
@@ -103,19 +103,62 @@ final class BackupManager: ObservableObject {
         return lines.joined(separator: "\n\n")
     }
 
-    /// Default backup location used by Apple and libimobiledevice.
+    /// Phosphor's default backup location: inside ~/Documents so no special permission
+    /// grant is needed, and so Phosphor never shares a directory with Finder's backups
+    /// (a misbehaving run could otherwise corrupt the user's Finder backups).
     static let defaultBackupDir: String = {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return "\(home)/Documents/Phosphor Backups"
+    }()
+
+    /// Apple's MobileSync directory. Kept as a named constant so settings UI and
+    /// migration logic can offer it to users who explicitly opt in.
+    static let systemMobileSyncDir: String = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return "\(home)/Library/Application Support/MobileSync/Backup"
     }()
 
-    /// Active backup directory - reads from UserDefaults if customized, falls back to default.
+    /// UserDefaults key for the active backup directory.
+    static let backupDirectoryUserDefaultsKey = "phosphor.backupDirectory"
+
+    /// Active backup directory. Falls back to the default when no override is set.
     static var activeBackupDir: String {
-        let custom = UserDefaults.standard.string(forKey: "phosphor.backupDirectory")
-        if let custom, !custom.isEmpty, custom != defaultBackupDir {
+        let custom = UserDefaults.standard.string(forKey: backupDirectoryUserDefaultsKey)
+        if let custom, !custom.isEmpty {
             return custom
         }
         return defaultBackupDir
+    }
+
+    /// One-time migration for users upgrading from <= 1.0.3. Earlier versions defaulted to
+    /// the system MobileSync directory without recording the choice in UserDefaults. Rather
+    /// than silently orphan their backups when the default flipped to Documents, pin the
+    /// MobileSync path as an explicit override if it actually contains Phosphor-visible
+    /// backup directories. Safe to call on every launch - the `migrated` flag makes it idempotent.
+    static func migrateLegacyBackupDirectory(defaults: UserDefaults = .standard) {
+        let migrationKey = "phosphor.backupDirectory.migratedFromMobileSync"
+        if defaults.bool(forKey: migrationKey) { return }
+        defer { defaults.set(true, forKey: migrationKey) }
+
+        // User already has a chosen directory - nothing to migrate.
+        if let existing = defaults.string(forKey: backupDirectoryUserDefaultsKey),
+           !existing.isEmpty {
+            return
+        }
+
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: systemMobileSyncDir) else { return }
+
+        // Only pin MobileSync if we can actually read it AND it holds a UDID-shaped backup
+        // Info.plist. Otherwise the new Documents default is strictly better.
+        let contents = (try? fm.contentsOfDirectory(atPath: systemMobileSyncDir)) ?? []
+        let hasBackup = contents.contains { name in
+            let info = "\(systemMobileSyncDir)/\(name)/Info.plist"
+            return fm.isReadableFile(atPath: info)
+        }
+        if hasBackup {
+            defaults.set(systemMobileSyncDir, forKey: backupDirectoryUserDefaultsKey)
+        }
     }
 
     // MARK: - Discovery

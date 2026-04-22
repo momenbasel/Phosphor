@@ -8,6 +8,13 @@ struct PhosphorApp: App {
     @StateObject private var scheduler = BackupScheduler()
     @AppStorage("phosphor.hasCompletedOnboarding") private var hasCompletedOnboarding = false
 
+    init() {
+        // Pre-1.0.4 users defaulted to Apple's MobileSync directory implicitly.
+        // Pin that choice explicitly so they don't lose sight of existing backups
+        // when the default flips to ~/Documents/Phosphor Backups.
+        BackupManager.migrateLegacyBackupDirectory()
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
