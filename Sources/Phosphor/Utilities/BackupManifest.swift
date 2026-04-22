@@ -4,6 +4,36 @@ import Foundation
 /// The Manifest.db contains a "Files" table mapping domain/relativePath to SHA-1 hashed filenames.
 final class BackupManifest {
 
+    /// Errors surfaced when opening a backup.
+    enum ManifestError: Error, LocalizedError {
+        case manifestMissing(path: String)
+        case backupEncrypted(path: String)
+        case manifestUnreadable(path: String, underlying: String)
+
+        var errorDescription: String? {
+            switch self {
+            case .manifestMissing(let path):
+                return """
+                Backup is incomplete - Manifest.db not found at \(path).
+                The backup may have been cancelled or only partially written. Re-run the backup and try again.
+                """
+            case .backupEncrypted(let path):
+                return """
+                This backup is encrypted.
+                iOS remembers the encrypted-backup setting at the device level, so every backup for this device is encrypted until it is disabled in Finder (Finder -> the device -> uncheck 'Encrypt local backup').
+                Phosphor's encrypted-backup browser needs the backup password to decrypt Manifest.db at \(path).
+                """
+            case .manifestUnreadable(let path, let underlying):
+                return "Cannot read Manifest.db at \(path): \(underlying)"
+            }
+        }
+    }
+
+    /// Leading magic bytes of a SQLite 3 database file.
+    /// Encrypted iOS backups store Manifest.db as an opaque blob without this header,
+    /// which is what makes sqlite3_prepare fail with 'unable to open database file'.
+    private static let sqliteMagic = Data("SQLite format 3\0".utf8)
+
     let backupPath: String
     private let db: SQLiteReader
 
@@ -64,7 +94,32 @@ final class BackupManifest {
     init(backupPath: String) throws {
         self.backupPath = backupPath
         let manifestPath = (backupPath as NSString).appendingPathComponent("Manifest.db")
-        self.db = try SQLiteReader(path: manifestPath)
+
+        // Preflight: Manifest.db must exist, have the SQLite header, and the backup
+        // must not be flagged as encrypted. Detecting this up front turns the opaque
+        // 'SQLite prepare failed: unable to open database file' into a useful message.
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: manifestPath) else {
+            throw ManifestError.manifestMissing(path: manifestPath)
+        }
+        if let plist = PlistParser.parseManifest(backupPath), plist.isEncrypted {
+            throw ManifestError.backupEncrypted(path: manifestPath)
+        }
+        if let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: manifestPath)) {
+            defer { try? handle.close() }
+            let header = try? handle.read(upToCount: Self.sqliteMagic.count)
+            if header != Self.sqliteMagic {
+                // Missing the SQLite magic means encrypted data (most common),
+                // a truncated download, or a different file format entirely.
+                throw ManifestError.backupEncrypted(path: manifestPath)
+            }
+        }
+
+        do {
+            self.db = try SQLiteReader(path: manifestPath)
+        } catch {
+            throw ManifestError.manifestUnreadable(path: manifestPath, underlying: error.localizedDescription)
+        }
     }
 
     /// Get all unique domains in the backup.
