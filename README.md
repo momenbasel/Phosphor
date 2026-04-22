@@ -275,6 +275,7 @@ Phosphor parses this to provide file-system-like browsing without modifying the 
 
 Phosphor now surfaces the underlying `pymobiledevice3` and `idevicebackup2` stderr in the failure message. Common causes:
 
+0. **Directory "is not readable" / permission denied** - macOS protects `~/Library/Application Support/MobileSync/Backup` with TCC. Grant Phosphor **Full Disk Access** in **System Settings -> Privacy & Security -> Full Disk Access**, then relaunch Phosphor. Alternatively pick a different backup directory in **Phosphor -> Settings** (for example `~/Documents/Phosphor Backups`).
 1. **Trust prompt missed** - Unlock the device, tap **Trust This Computer**, enter your passcode, then retry the backup.
 2. **Stale pymobiledevice3** - iOS 17/18/26 require a recent release. Upgrade with:
    ```bash
