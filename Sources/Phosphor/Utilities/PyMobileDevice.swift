@@ -8,24 +8,24 @@ enum PyMobileDevice {
     /// Cached path to the pymobiledevice3 binary once found.
     private static var cachedBinaryPath: String?
 
+    /// Python minor versions to probe for pip3 --user installs and system Python.
+    private static let pythonMinorVersions = ["3.14", "3.13", "3.12", "3.11", "3.10"]
+
     /// Extended PATH for GUI apps that don't inherit terminal PATH.
     private static let extendedPath: String = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let extra = [
+        var extra = [
             "\(home)/.local/bin",
             "\(home)/.local/pipx/venvs/pymobiledevice3/bin",
             "/opt/homebrew/bin",
             "/usr/local/bin",
-            "\(home)/Library/Python/3.13/bin",
-            "\(home)/Library/Python/3.12/bin",
-            "\(home)/Library/Python/3.11/bin",
-            "\(home)/Library/Python/3.10/bin",
         ]
+        extra.append(contentsOf: pythonMinorVersions.map { "\(home)/Library/Python/\($0)/bin" })
         let existing = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
         return extra.joined(separator: ":") + ":" + existing
     }()
 
-    /// Find the pymobiledevice3 binary. Checks direct binary first (pipx),
+    /// Find the pymobiledevice3 binary. Checks direct binary first (pipx, pip --user),
     /// then python3 -m pymobiledevice3 at various Python locations.
     private static func findBinary() -> String? {
         if let cached = cachedBinaryPath { return cached }
@@ -33,13 +33,17 @@ enum PyMobileDevice {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let fm = FileManager.default
 
-        // Direct binary locations (pipx, pip --user)
-        let directPaths = [
+        // Direct binary locations (pipx, pip --user, Homebrew)
+        var directPaths = [
             "\(home)/.local/bin/pymobiledevice3",
             "\(home)/.local/pipx/venvs/pymobiledevice3/bin/pymobiledevice3",
             "/opt/homebrew/bin/pymobiledevice3",
             "/usr/local/bin/pymobiledevice3",
         ]
+        // `pip3 install --user pymobiledevice3` on macOS drops the script here.
+        directPaths.append(contentsOf: pythonMinorVersions.map {
+            "\(home)/Library/Python/\($0)/bin/pymobiledevice3"
+        })
 
         for path in directPaths {
             if fm.isExecutableFile(atPath: path) {
@@ -49,12 +53,14 @@ enum PyMobileDevice {
         }
 
         // Try python3 -m pymobiledevice3 with various pythons
-        let pythons = [
+        var pythons = [
             "\(home)/.local/pipx/venvs/pymobiledevice3/bin/python3",
             "/opt/homebrew/bin/python3",
             "/usr/local/bin/python3",
             "/usr/bin/python3",
         ]
+        pythons.append(contentsOf: pythonMinorVersions.map { "/opt/homebrew/bin/python\($0)" })
+        pythons.append(contentsOf: pythonMinorVersions.map { "/usr/local/bin/python\($0)" })
 
         for python in pythons {
             guard fm.isExecutableFile(atPath: python) else { continue }
@@ -67,6 +73,24 @@ enum PyMobileDevice {
         }
 
         return nil
+    }
+
+    /// Clear the cached binary path so the next call re-probes the filesystem.
+    /// Useful after the user installs or upgrades pymobiledevice3 mid-session.
+    static func resetBinaryCache() {
+        cachedBinaryPath = nil
+    }
+
+    /// Query installed pymobiledevice3 version, or nil if unavailable.
+    static func version() async -> String? {
+        guard findBinary() != nil else { return nil }
+        let result = await runAsync(["version"], timeout: 10)
+        let trimmed = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        if result.succeeded, !trimmed.isEmpty { return trimmed }
+        // Some versions respond to --version instead.
+        let alt = await runAsync(["--version"], timeout: 10)
+        let altTrimmed = alt.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return alt.succeeded && !altTrimmed.isEmpty ? altTrimmed : nil
     }
 
     /// Whether the found binary is a direct pymobiledevice3 binary (vs python3 path).
