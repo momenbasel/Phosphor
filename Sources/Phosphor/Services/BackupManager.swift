@@ -42,7 +42,49 @@ final class BackupManager: ObservableObject {
         if lower.contains("invalidservice") || lower.contains("remotexpc") || lower.contains("tunneld") {
             return "Backup requires an up-to-date pymobiledevice3. Upgrade with: pip3 install --upgrade pymobiledevice3"
         }
+        if lower.contains("is not readable") || lower.contains("permission denied") || lower.contains("operation not permitted") {
+            return """
+            macOS is blocking access to the backup directory. Grant Phosphor 'Full Disk Access':
+            System Settings -> Privacy & Security -> Full Disk Access -> enable Phosphor.
+            Alternatively, pick a different backup directory in Phosphor > Settings (for example ~/Documents/Phosphor Backups).
+            """
+        }
         return nil
+    }
+
+    /// Preflight check: verify the active backup directory exists and is readable/writable
+    /// by this process. ~/Library/Application Support/MobileSync/Backup is TCC-protected
+    /// on macOS 10.15+ and requires Full Disk Access for sandboxed or unsigned apps.
+    static func validateBackupDirectory(_ path: String) -> (ok: Bool, reason: String?) {
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        if !fm.fileExists(atPath: path, isDirectory: &isDir) {
+            do {
+                try fm.createDirectory(atPath: path, withIntermediateDirectories: true)
+            } catch {
+                return (false, "Cannot create backup directory at \(path): \(error.localizedDescription)")
+            }
+            return (true, nil)
+        }
+        if !isDir.boolValue {
+            return (false, "\(path) exists but is not a directory.")
+        }
+        if !fm.isReadableFile(atPath: path) || !fm.isWritableFile(atPath: path) {
+            let isDefault = (path == defaultBackupDir)
+            var msg = "Phosphor cannot read or write \(path)."
+            if isDefault {
+                msg += """
+
+
+                This is the system MobileSync directory which macOS protects with TCC.
+                Grant Phosphor 'Full Disk Access':
+                System Settings -> Privacy & Security -> Full Disk Access -> enable Phosphor, then restart the app.
+                Alternatively, pick a different backup directory in Phosphor > Settings (for example ~/Documents/Phosphor Backups).
+                """
+            }
+            return (false, msg)
+        }
+        return (true, nil)
     }
 
     /// Build a composite error string combining stderr tail and diagnostic hint.
@@ -119,8 +161,16 @@ final class BackupManager: ObservableObject {
         backupPercent = 0
         lastError = nil
 
-        // Ensure backup directory exists
-        try? FileManager.default.createDirectory(atPath: Self.activeBackupDir, withIntermediateDirectories: true)
+        // Preflight: bail early with a clear message when the directory is unreadable
+        // (most commonly a Full Disk Access grant missing on the default location).
+        let preflight = Self.validateBackupDirectory(Self.activeBackupDir)
+        if !preflight.ok {
+            isCreatingBackup = false
+            backupProgress = "Backup failed"
+            lastError = preflight.reason
+            onProgress(preflight.reason ?? "Backup directory is not accessible.")
+            return false
+        }
 
         // Primary: pymobiledevice3
         let pySuccess = await createBackupViaPymobiledevice(udid: udid, full: true, onProgress: onProgress)
@@ -250,7 +300,14 @@ final class BackupManager: ObservableObject {
         backupPercent = 0
         lastError = nil
 
-        try? FileManager.default.createDirectory(atPath: Self.activeBackupDir, withIntermediateDirectories: true)
+        let preflight = Self.validateBackupDirectory(Self.activeBackupDir)
+        if !preflight.ok {
+            isCreatingBackup = false
+            backupProgress = "Backup failed"
+            lastError = preflight.reason
+            onProgress(preflight.reason ?? "Backup directory is not accessible.")
+            return false
+        }
 
         // Primary: pymobiledevice3 (without --full flag)
         if PyMobileDevice.available() {
