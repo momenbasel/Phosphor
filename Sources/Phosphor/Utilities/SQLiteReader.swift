@@ -25,9 +25,23 @@ final class SQLiteReader {
 
     init(path: String) throws {
         self.path = path
+
+        // Fail fast if the file is missing: sqlite3_open_v2 with READONLY opens
+        // lazily, so a missing file would surface as a confusing prepare error later.
+        guard FileManager.default.fileExists(atPath: path) else {
+            throw SQLiteError.openFailed("file not found: \(path)")
+        }
+
+        // Open read-only + immutable via URI so SQLite never tries to create
+        // -wal / -shm sidecars next to the database. Backup directories can be
+        // TCC-protected or read-only and WAL creation would otherwise fail the
+        // first prepare with 'unable to open database file'.
         var dbPointer: OpaquePointer?
-        let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX
-        let rc = sqlite3_open_v2(path, &dbPointer, flags, nil)
+        let encoded = path
+            .addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path
+        let uri = "file:\(encoded)?mode=ro&immutable=1"
+        let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX | SQLITE_OPEN_URI
+        let rc = sqlite3_open_v2(uri, &dbPointer, flags, nil)
         guard rc == SQLITE_OK, let opened = dbPointer else {
             let msg = dbPointer.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "unknown error"
             sqlite3_close(dbPointer)

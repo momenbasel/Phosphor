@@ -54,13 +54,18 @@ final class BackupViewModel: ObservableObject {
         selectedBackup = backup
         currentManifest = backupManager.openManifest(for: backup)
 
-        if let manifest = currentManifest {
-            do {
-                browserDomains = try manifest.domains()
-            } catch {
-                alertMessage = "Failed to read backup: \(error.localizedDescription)"
-                showAlert = true
-            }
+        guard let manifest = currentManifest else {
+            // openManifest swallows the error into backupManager.lastError; surface it.
+            alertMessage = backupManager.lastError ?? "Failed to open backup."
+            showAlert = true
+            return
+        }
+
+        do {
+            browserDomains = try manifest.domains()
+        } catch {
+            alertMessage = "Failed to read backup: \(error.localizedDescription)"
+            showAlert = true
         }
     }
 
