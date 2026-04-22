@@ -15,6 +15,52 @@ final class BackupManager: ObservableObject {
     /// Active backup process for cancellation.
     private var activeProcess: Process?
 
+    /// Maximum number of trailing stderr lines to retain for diagnostics on failure.
+    private static let stderrTailLineLimit = 20
+
+    /// Lines retained from the most recent pymobiledevice3 stderr stream.
+    private var pymobiledeviceStderrTail: [String] = []
+
+    /// Translate a pymobiledevice3 or idevicebackup2 stderr blob into a short actionable hint.
+    private static func diagnosticHint(for stderr: String) -> String? {
+        let lower = stderr.lowercased()
+        if lower.contains("not paired") || lower.contains("pairingdialogresponsepending") || lower.contains("trust this computer") {
+            return "Device is not trusted. Unlock it and tap 'Trust' when prompted, then try again."
+        }
+        if lower.contains("passcodesetuprequired") || lower.contains("setpasscode") {
+            return "Set a passcode on the device before running an encrypted backup."
+        }
+        if lower.contains("no device found") || lower.contains("no devices connected") {
+            return "No device detected. Reconnect the cable and ensure the device is unlocked."
+        }
+        if lower.contains("backupdomainoverridden") || lower.contains("mobilebackup2error") {
+            return "iOS rejected the backup request. Disable/re-enable encryption or reboot the device."
+        }
+        if lower.contains("modulenotfounderror") || lower.contains("no module named") {
+            return "pymobiledevice3 is installed but missing dependencies. Reinstall with: pip3 install --upgrade pymobiledevice3"
+        }
+        if lower.contains("invalidservice") || lower.contains("remotexpc") || lower.contains("tunneld") {
+            return "Backup requires an up-to-date pymobiledevice3. Upgrade with: pip3 install --upgrade pymobiledevice3"
+        }
+        return nil
+    }
+
+    /// Build a composite error string combining stderr tail and diagnostic hint.
+    private static func composeFailureMessage(primary: String, stderr: String) -> String {
+        let trimmed = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hint = diagnosticHint(for: trimmed)
+        var lines: [String] = [primary]
+        if let hint { lines.append(hint) }
+        if !trimmed.isEmpty {
+            let tail = trimmed
+                .components(separatedBy: "\n")
+                .suffix(stderrTailLineLimit)
+                .joined(separator: "\n")
+            lines.append("Details:\n\(tail)")
+        }
+        return lines.joined(separator: "\n\n")
+    }
+
     /// Default backup location used by Apple and libimobiledevice.
     static let defaultBackupDir: String = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -86,11 +132,14 @@ final class BackupManager: ObservableObject {
             return true
         }
 
+        let pymobiledeviceStderr = pymobiledeviceStderrTail.joined(separator: "\n")
+
         // Fallback: idevicebackup2
         backupProgress = "Trying idevicebackup2..."
         onProgress("Falling back to idevicebackup2...")
 
         let args = ["backup", "--full", "-u", udid, Self.activeBackupDir]
+        var idevicebackupStderr = ""
 
         return await withCheckedContinuation { continuation in
             Shell.runStreaming(
@@ -104,19 +153,29 @@ final class BackupManager: ObservableObject {
                     }
                     onProgress(output)
                 },
-                onError: { [weak self] error in
-                    self?.lastError = error
+                onError: { error in
+                    idevicebackupStderr.append(error)
                 },
                 completion: { [weak self] exitCode in
                     Task { @MainActor in
-                        self?.isCreatingBackup = false
+                        guard let self else {
+                            continuation.resume(returning: exitCode == 0)
+                            return
+                        }
+                        self.isCreatingBackup = false
                         if exitCode == 0 {
-                            self?.backupProgress = "Backup complete"
-                            self?.backupPercent = 1.0
-                            self?.discoverBackups()
+                            self.backupProgress = "Backup complete"
+                            self.backupPercent = 1.0
+                            self.discoverBackups()
                         } else {
-                            self?.backupProgress = "Backup failed. Install pymobiledevice3: pip3 install pymobiledevice3"
-                            self?.lastError = "Both backup methods failed."
+                            let combinedStderr = [pymobiledeviceStderr, idevicebackupStderr]
+                                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                                .joined(separator: "\n---\n")
+                            self.backupProgress = "Backup failed"
+                            self.lastError = Self.composeFailureMessage(
+                                primary: "Both backup methods failed.",
+                                stderr: combinedStderr
+                            )
                         }
                         continuation.resume(returning: exitCode == 0)
                     }
@@ -128,12 +187,13 @@ final class BackupManager: ObservableObject {
     /// Backup using pymobiledevice3.
     private func createBackupViaPymobiledevice(udid: String, full: Bool, onProgress: @escaping (String) -> Void) async -> Bool {
         guard PyMobileDevice.available() else {
-            lastError = "pymobiledevice3 not installed"
+            lastError = "pymobiledevice3 not installed. Install with: pip3 install pymobiledevice3"
             return false
         }
 
         backupProgress = "Creating backup via pymobiledevice3..."
         onProgress("Creating backup via pymobiledevice3...")
+        pymobiledeviceStderrTail.removeAll()
 
         return await withCheckedContinuation { continuation in
             activeProcess = PyMobileDevice.backup(
@@ -152,11 +212,23 @@ final class BackupManager: ObservableObject {
                 },
                 onError: { [weak self] error in
                     let trimmed = error.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !trimmed.isEmpty {
-                        // pymobiledevice3 sends progress on stderr
-                        if let pct = PyMobileDevice.parseProgress(from: trimmed) {
-                            self?.backupPercent = pct
-                            self?.backupProgress = "Backup: \(Int(pct * 100))%"
+                    guard !trimmed.isEmpty else { return }
+                    // pymobiledevice3 sends progress on stderr.
+                    if let pct = PyMobileDevice.parseProgress(from: trimmed) {
+                        self?.backupPercent = pct
+                        self?.backupProgress = "Backup: \(Int(pct * 100))%"
+                        return
+                    }
+                    // Retain non-progress stderr lines so a failure surfaces the real reason.
+                    guard let self else { return }
+                    for line in trimmed.components(separatedBy: "\n") {
+                        let l = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if l.isEmpty { continue }
+                        self.pymobiledeviceStderrTail.append(l)
+                        if self.pymobiledeviceStderrTail.count > Self.stderrTailLineLimit {
+                            self.pymobiledeviceStderrTail.removeFirst(
+                                self.pymobiledeviceStderrTail.count - Self.stderrTailLineLimit
+                            )
                         }
                     }
                 },
@@ -192,6 +264,9 @@ final class BackupManager: ObservableObject {
             }
         }
 
+        let pymobiledeviceStderr = pymobiledeviceStderrTail.joined(separator: "\n")
+        var idevicebackupStderr = ""
+
         // Fallback: idevicebackup2
         return await withCheckedContinuation { continuation in
             Shell.runStreaming(
@@ -205,16 +280,29 @@ final class BackupManager: ObservableObject {
                     }
                     onProgress(output)
                 },
-                onError: { [weak self] error in
-                    self?.lastError = error
+                onError: { error in
+                    idevicebackupStderr.append(error)
                 },
                 completion: { [weak self] exitCode in
                     Task { @MainActor in
-                        self?.isCreatingBackup = false
-                        self?.backupProgress = exitCode == 0 ? "Backup complete" : "Backup failed"
+                        guard let self else {
+                            continuation.resume(returning: exitCode == 0)
+                            return
+                        }
+                        self.isCreatingBackup = false
                         if exitCode == 0 {
-                            self?.backupPercent = 1.0
-                            self?.discoverBackups()
+                            self.backupProgress = "Backup complete"
+                            self.backupPercent = 1.0
+                            self.discoverBackups()
+                        } else {
+                            let combinedStderr = [pymobiledeviceStderr, idevicebackupStderr]
+                                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                                .joined(separator: "\n---\n")
+                            self.backupProgress = "Backup failed"
+                            self.lastError = Self.composeFailureMessage(
+                                primary: "Incremental backup failed via both backends.",
+                                stderr: combinedStderr
+                            )
                         }
                         continuation.resume(returning: exitCode == 0)
                     }

@@ -269,6 +269,23 @@ Phosphor parses this to provide file-system-like browsing without modifying the 
 - [x] Backup encryption management (enable/disable/change password)
 - [ ] Voicemail browsing
 
+## Troubleshooting
+
+### "Both backup methods failed"
+
+Phosphor now surfaces the underlying `pymobiledevice3` and `idevicebackup2` stderr in the failure message. Common causes:
+
+1. **Trust prompt missed** - Unlock the device, tap **Trust This Computer**, enter your passcode, then retry the backup.
+2. **Stale pymobiledevice3** - iOS 17/18/26 require a recent release. Upgrade with:
+   ```bash
+   pip3 install --upgrade pymobiledevice3
+   ```
+3. **Binary not on PATH** - GUI apps do not inherit your shell PATH. Phosphor probes `pipx`, Homebrew, and `~/Library/Python/3.{10..14}/bin` automatically; if you installed pymobiledevice3 elsewhere, symlink it into one of those directories.
+4. **Missing Python dependencies** - `ModuleNotFoundError` in the failure details means a partial install. Reinstall with `pip3 install --upgrade --force-reinstall pymobiledevice3`.
+5. **Pairing record mismatch** - From Terminal, run `pymobiledevice3 lockdown pair` once, accept the Trust prompt, then retry.
+
+For encrypted backup issues, verify the device has a passcode set and that `pymobiledevice3 backup2 encryption` reports the expected state.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
