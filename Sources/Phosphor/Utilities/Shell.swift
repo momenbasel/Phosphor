@@ -123,7 +123,7 @@ enum Shell {
         return result.succeeded ? result.output : nil
     }
 
-    /// Check if libimobiledevice tools are installed.
+    /// Check if required device-management tools are installed.
     static func checkDependencies() -> [String: Bool] {
         let tools = [
             "idevice_id",
@@ -134,7 +134,6 @@ enum Shell {
             "idevicesyslog",
             "idevicename",
             "idevicescreenshot",
-            "ifuse",
             "ideviceinstaller"
         ]
         var status: [String: Bool] = [:]
@@ -142,9 +141,11 @@ enum Shell {
             status[tool] = which(tool) != nil
         }
 
-        // Check pymobiledevice3 (Python, required for latest iOS backup)
-        let pyCheck = run("python3", arguments: ["-c", "import pymobiledevice3"])
-        status["pymobiledevice3"] = pyCheck.succeeded
+        // Check pymobiledevice3 using the same resolver used by the app's device
+        // operations. GUI apps often do not inherit the terminal's Python/PATH,
+        // and pipx installs expose a runnable binary rather than an importable
+        // module from Homebrew's `python3`.
+        status["pymobiledevice3"] = PyMobileDevice.available()
 
         return status
     }

@@ -122,7 +122,7 @@ struct PhotoBrowserView: View {
                 EmptyStateView(
                     icon: "photo.on.rectangle.angled",
                     title: deviceVM.selectedDevice == nil ? "No Device Connected" : "Device Not Mounted",
-                    subtitle: "Connect your device via USB to browse photos directly without a backup. Requires ifuse (brew install ifuse).",
+                    subtitle: "Connect your device via USB to browse photos directly without a backup. Uses pymobiledevice3 AFC on macOS.",
                     action: {
                         guard let udid = deviceVM.selectedDevice?.id else { return }
                         Task {

@@ -212,16 +212,20 @@ struct SettingsView: View {
             .listStyle(.inset(alternatesRowBackgrounds: true))
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("Install all required tools with Homebrew:")
+                Text("Install required tools:")
                     .font(.system(size: 13))
 
-                Text("brew install libimobiledevice ideviceinstaller ifuse")
+                Text("brew install libimobiledevice ideviceinstaller pipx\npipx install pymobiledevice3")
                     .font(.system(size: 12, design: .monospaced))
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color(.textBackgroundColor))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                     .textSelection(.enabled)
+
+                Text("ifuse is not installed by Homebrew on macOS; Phosphor uses pymobiledevice3 AFC for filesystem access instead.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
 
                 Button("Check Again") {
                     let deps = Shell.checkDependencies()

@@ -111,8 +111,7 @@ final class FileTransferManager: ObservableObject {
         Install pymobiledevice3:
           pip3 install --upgrade pymobiledevice3
 
-        Or install the ifuse fallback:
-          brew install libimobiledevice ifuse
+        On macOS, ifuse is not installed by Homebrew; install/repair pymobiledevice3 instead.
         \(stderr.isEmpty ? "" : "\nifuse: \(stderr)")
         """
         return false
