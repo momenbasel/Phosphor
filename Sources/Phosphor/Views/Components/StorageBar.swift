@@ -106,6 +106,7 @@ struct FlowLayout: Layout {
     }
 }
 
+#if canImport(PreviewsMacros)
 #Preview {
     StorageBar(
         segments: [
@@ -119,3 +120,4 @@ struct FlowLayout: Layout {
     .padding()
     .frame(width: 500)
 }
+#endif

@@ -37,10 +37,13 @@ final class BackupManager: ObservableObject {
             return "iOS rejected the backup request. Disable/re-enable encryption or reboot the device."
         }
         if lower.contains("modulenotfounderror") || lower.contains("no module named") {
-            return "pymobiledevice3 is installed but missing dependencies. Reinstall with: pip3 install --upgrade pymobiledevice3"
+            return "pymobiledevice3 is installed but missing dependencies. Reinstall with: pipx reinstall pymobiledevice3"
         }
         if lower.contains("invalidservice") || lower.contains("remotexpc") || lower.contains("tunneld") {
-            return "Backup requires an up-to-date pymobiledevice3. Upgrade with: pip3 install --upgrade pymobiledevice3"
+            return "Backup requires an up-to-date pymobiledevice3. Upgrade with: pipx upgrade pymobiledevice3"
+        }
+        if lower.contains("zero-length") || lower.contains("cannot parse a null") || lower.contains("mberrordomain/205") || lower.contains("error reading backup properties") {
+            return "The existing backup metadata appears incomplete or corrupt. Choose a fresh local backup folder and avoid cloud-synced folders for live backups, then retry with the device unlocked."
         }
         if lower.contains("is not readable") || lower.contains("permission denied") || lower.contains("operation not permitted") {
             return """
@@ -70,9 +73,9 @@ final class BackupManager: ObservableObject {
             return (false, "\(path) exists but is not a directory.")
         }
         if !fm.isReadableFile(atPath: path) || !fm.isWritableFile(atPath: path) {
-            let isDefault = (path == defaultBackupDir)
+            let isMobileSync = (path == systemMobileSyncDir)
             var msg = "Phosphor cannot read or write \(path)."
-            if isDefault {
+            if isMobileSync {
                 msg += """
 
 
@@ -85,6 +88,25 @@ final class BackupManager: ObservableObject {
             return (false, msg)
         }
         return (true, nil)
+    }
+
+    /// Cloud file-provider folders can hydrate files lazily and expose partial
+    /// metadata while syncing. They are risky as the live target for iOS backups.
+    static func backupDirectoryWarning(for path: String) -> String? {
+        let expanded = (path as NSString).expandingTildeInPath
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let cloudRoots = [
+            "\(home)/Library/CloudStorage",
+            "\(home)/Library/Mobile Documents",
+            "\(home)/Dropbox",
+            "\(home)/Google Drive",
+            "\(home)/OneDrive",
+            "\(home)/SynologyDrive"
+        ]
+        if cloudRoots.contains(where: { expanded == $0 || expanded.hasPrefix($0 + "/") }) {
+            return "Cloud-synced folders are not recommended for live iOS backups. Use a local folder, then sync or export completed backups afterward."
+        }
+        return nil
     }
 
     /// Build a composite error string combining stderr tail and diagnostic hint.
@@ -329,7 +351,7 @@ final class BackupManager: ObservableObject {
     /// Backup using pymobiledevice3.
     private func createBackupViaPymobiledevice(udid: String, full: Bool, onProgress: @escaping (String) -> Void) async -> Bool {
         guard PyMobileDevice.available() else {
-            lastError = "pymobiledevice3 not installed. Install with: pip3 install pymobiledevice3"
+            lastError = "pymobiledevice3 not installed. Install with: pipx install pymobiledevice3"
             return false
         }
 

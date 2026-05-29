@@ -111,6 +111,7 @@ struct SectionHeader: View {
     }
 }
 
+#if canImport(PreviewsMacros)
 #Preview("Empty State") {
     EmptyStateView(
         icon: "iphone.slash",
@@ -120,3 +121,4 @@ struct SectionHeader: View {
         actionLabel: "Refresh"
     )
 }
+#endif

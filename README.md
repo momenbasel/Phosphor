@@ -160,14 +160,16 @@ brew install --cask phosphor
 
 1. Download the latest `.dmg` from [Releases](https://github.com/momenbasel/Phosphor/releases)
 2. Drag `Phosphor.app` to Applications
-3. Install pymobiledevice3: `pip3 install pymobiledevice3`
-4. Optional fallback: `brew install libimobiledevice ideviceinstaller`
+3. Install pipx if needed: `brew install pipx`
+4. Install pymobiledevice3: `pipx install pymobiledevice3`
+5. Optional fallback: `brew install libimobiledevice ideviceinstaller`
 
 ### Build from Source
 
 ```bash
-# Install pymobiledevice3 (primary)
-pip3 install pymobiledevice3
+# Install pipx and pymobiledevice3 (primary)
+brew install pipx
+pipx install pymobiledevice3
 
 # Optional fallback tools
 brew install libimobiledevice ideviceinstaller
@@ -187,7 +189,7 @@ open .build/Phosphor.app
 ## Requirements
 
 - **macOS 14.0** (Sonoma) or later
-- **pymobiledevice3** (primary backend, supports iOS 17-26+): `pip3 install pymobiledevice3`
+- **pymobiledevice3** (primary backend, supports iOS 17-26+): `brew install pipx && pipx install pymobiledevice3`
 - **libimobiledevice** (optional fallback): `brew install libimobiledevice`
 - **ideviceinstaller** (optional fallback for app management)
 - **ifuse** (legacy file mounting, not needed with pymobiledevice3)
@@ -285,10 +287,10 @@ Phosphor now surfaces the underlying `pymobiledevice3` and `idevicebackup2` stde
 1. **Trust prompt missed** - Unlock the device, tap **Trust This Computer**, enter your passcode, then retry the backup.
 2. **Stale pymobiledevice3** - iOS 17/18/26 require a recent release. Upgrade with:
    ```bash
-   pip3 install --upgrade pymobiledevice3
+   pipx upgrade pymobiledevice3
    ```
 3. **Binary not on PATH** - GUI apps do not inherit your shell PATH. Phosphor probes `pipx`, Homebrew, and `~/Library/Python/3.{10..14}/bin` automatically; if you installed pymobiledevice3 elsewhere, symlink it into one of those directories.
-4. **Missing Python dependencies** - `ModuleNotFoundError` in the failure details means a partial install. Reinstall with `pip3 install --upgrade --force-reinstall pymobiledevice3`.
+4. **Missing Python dependencies** - `ModuleNotFoundError` in the failure details means a partial install. Reinstall with `pipx reinstall pymobiledevice3`.
 5. **Pairing record mismatch** - From Terminal, run `pymobiledevice3 lockdown pair` once, accept the Trust prompt, then retry.
 
 For encrypted backup issues, verify the device has a passcode set and that `pymobiledevice3 backup2 encryption` reports the expected state.

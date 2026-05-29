@@ -82,14 +82,19 @@ final class MusicTransferManager: ObservableObject {
             return copied
         }
 
-        // Fallback: ifuse mount
+        guard Shell.which("ifuse") != nil else {
+            lastError = "Failed to access device music storage. Install or repair pymobiledevice3 with: pipx install pymobiledevice3"
+            return 0
+        }
+
+        // Optional legacy fallback: ifuse mount
         let tmpMount = NSTemporaryDirectory() + "phosphor-music-\(udid.prefix(8))"
         let fm = FileManager.default
         try? fm.createDirectory(atPath: tmpMount, withIntermediateDirectories: true)
 
         let mountResult = await Shell.runAsync("ifuse", arguments: ["-u", udid, tmpMount])
         guard mountResult.succeeded else {
-            lastError = "Failed to mount device. Install pymobiledevice3: pip3 install pymobiledevice3"
+            lastError = "Failed to mount device. Install pymobiledevice3: pipx install pymobiledevice3"
             return 0
         }
 
@@ -168,7 +173,12 @@ final class MusicTransferManager: ObservableObject {
             )
         }
 
-        // Fallback: ifuse mount
+        guard Shell.which("ifuse") != nil else {
+            lastError = "Failed to access device ringtone storage. Install or repair pymobiledevice3 with: pipx install pymobiledevice3"
+            return false
+        }
+
+        // Optional legacy fallback: ifuse mount
         let tmpMount = NSTemporaryDirectory() + "phosphor-ringtone-\(udid.prefix(8))"
         let fm = FileManager.default
         try? fm.createDirectory(atPath: tmpMount, withIntermediateDirectories: true)

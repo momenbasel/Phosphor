@@ -272,8 +272,10 @@ struct WelcomeView: View {
     }
 }
 
+#if canImport(PreviewsMacros)
 #Preview {
     ContentView()
         .environmentObject(DeviceViewModel())
         .environmentObject(BackupViewModel())
 }
+#endif

@@ -165,7 +165,7 @@ struct OnboardingView: View {
                 setupRow(
                     "pymobiledevice3",
                     installed: depStatus["pymobiledevice3"] ?? false,
-                    command: "pip3 install pymobiledevice3"
+                    command: "brew install pipx && pipx install pymobiledevice3"
                 )
                 setupRow(
                     "libimobiledevice (optional fallback)",

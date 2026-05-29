@@ -101,7 +101,7 @@ extension BackupInfo {
     }
 
     /// User-friendly message when backup is incomplete.
-    static let incompleteBackupMessage = "Backup is incomplete (no Manifest.db). Create a full backup first. If using iOS 17+, run: pip3 install pymobiledevice3"
+    static let incompleteBackupMessage = "Backup is incomplete (no Manifest.db). Create a full backup first. If using iOS 17+, run: pipx install pymobiledevice3"
 }
 
 // MARK: - View Modifiers

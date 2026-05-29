@@ -68,7 +68,12 @@ final class LiveDeviceBrowser: ObservableObject {
             }
         }
 
-        // Fallback: ifuse mount
+        guard Shell.which("ifuse") != nil else {
+            lastError = "Could not access device photos. Install or repair pymobiledevice3 with: pipx install pymobiledevice3"
+            return false
+        }
+
+        // Optional legacy fallback: ifuse mount
         let tmpDir = NSTemporaryDirectory() + "phosphor-live-\(udid.prefix(8))"
         let fm = FileManager.default
         try? fm.createDirectory(atPath: tmpDir, withIntermediateDirectories: true)
@@ -81,7 +86,7 @@ final class LiveDeviceBrowser: ObservableObject {
             return true
         }
 
-        lastError = "Could not access device. Install pymobiledevice3: pip3 install pymobiledevice3"
+        lastError = "Could not access device. Install pymobiledevice3: pipx install pymobiledevice3"
         return false
     }
 

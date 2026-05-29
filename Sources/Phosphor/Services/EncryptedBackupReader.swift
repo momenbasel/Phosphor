@@ -53,7 +53,7 @@ final class EncryptedBackupReader {
         guard isEncrypted else { throw DecryptError.notEncrypted }
 
         // Strategy 1: Use iphone-backup-decrypt Python tool if available
-        // pip3 install iphone-backup-decrypt
+        // python3 -m pip install iphone-backup-decrypt
         let pythonResult = await tryPythonDecrypt(password: password)
         if let manifest = pythonResult {
             isUnlocked = true

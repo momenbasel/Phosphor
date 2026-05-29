@@ -8,7 +8,7 @@ enum PyMobileDevice {
     /// Cached path to the pymobiledevice3 binary once found.
     private static var cachedBinaryPath: String?
 
-    /// Python minor versions to probe for pip3 --user installs and system Python.
+    /// Python minor versions to probe for pipx or pip --user installs and system Python.
     private static let pythonMinorVersions = ["3.14", "3.13", "3.12", "3.11", "3.10"]
 
     /// Extended PATH for GUI apps that don't inherit terminal PATH.
@@ -40,7 +40,7 @@ enum PyMobileDevice {
             "/opt/homebrew/bin/pymobiledevice3",
             "/usr/local/bin/pymobiledevice3",
         ]
-        // `pip3 install --user pymobiledevice3` on macOS drops the script here.
+        // `pipx install pymobiledevice3` or older pip --user installs may drop the script here.
         directPaths.append(contentsOf: pythonMinorVersions.map {
             "\(home)/Library/Python/\($0)/bin/pymobiledevice3"
         })

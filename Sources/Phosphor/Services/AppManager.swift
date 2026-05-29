@@ -53,7 +53,7 @@ final class AppManager: ObservableObject {
             result = await Shell.runAsync("ideviceinstaller", arguments: ["-u", udid, "-l", "-o", "list_all"])
         }
         guard result.succeeded else {
-            lastError = result.stderr.nilIfEmpty ?? "Failed to list apps. Install pymobiledevice3: pip3 install pymobiledevice3"
+            lastError = result.stderr.nilIfEmpty ?? "Failed to list apps. Install pymobiledevice3: pipx install pymobiledevice3"
             isLoading = false
             return
         }

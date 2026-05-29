@@ -245,9 +245,11 @@ struct SidebarView: View {
     }
 }
 
+#if canImport(PreviewsMacros)
 #Preview {
     SidebarView(selection: .constant(.devices))
         .environmentObject(DeviceViewModel())
         .environmentObject(BackupViewModel())
         .frame(width: 260)
 }
+#endif

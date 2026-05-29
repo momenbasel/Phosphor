@@ -82,7 +82,12 @@ final class FileTransferManager: ObservableObject {
             return true
         }
 
-        // Fallback: ifuse mount
+        guard Shell.which("ifuse") != nil else {
+            lastError = "Could not access device filesystem. Install or repair pymobiledevice3 with: pipx install pymobiledevice3"
+            return false
+        }
+
+        // Optional legacy fallback: ifuse mount
         let tmpDir = NSTemporaryDirectory() + "phosphor-mount-\(udid.prefix(8))"
         let fm = FileManager.default
 
@@ -109,7 +114,7 @@ final class FileTransferManager: ObservableObject {
         Could not access device filesystem.
 
         Install pymobiledevice3:
-          pip3 install --upgrade pymobiledevice3
+          pipx upgrade pymobiledevice3
 
         On macOS, ifuse is not installed by Homebrew; install/repair pymobiledevice3 instead.
         \(stderr.isEmpty ? "" : "\nifuse: \(stderr)")
@@ -130,7 +135,12 @@ final class FileTransferManager: ObservableObject {
             return true
         }
 
-        // Fallback: ifuse --container
+        guard Shell.which("ifuse") != nil else {
+            lastError = "Failed to access app container. Install or repair pymobiledevice3 with: pipx install pymobiledevice3"
+            return false
+        }
+
+        // Optional legacy fallback: ifuse --container
         let tmpDir = NSTemporaryDirectory() + "phosphor-app-\(bundleId.replacingOccurrences(of: ".", with: "-"))"
         let fm = FileManager.default
         try? fm.createDirectory(atPath: tmpDir, withIntermediateDirectories: true)

@@ -12,6 +12,18 @@ enum Shell {
         var output: String { stdout.trimmingCharacters(in: .whitespacesAndNewlines) }
     }
 
+    private static func environmentWithToolPaths() -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let extra = "\(home)/.local/bin:\(home)/.local/pipx/venvs/pymobiledevice3/bin:/opt/homebrew/bin:/usr/local/bin"
+        if let path = environment["PATH"], !path.isEmpty {
+            environment["PATH"] = extra + ":" + path
+        } else {
+            environment["PATH"] = extra + ":/usr/bin:/bin"
+        }
+        return environment
+    }
+
     /// Run a command synchronously and return the result.
     @discardableResult
     static func run(_ command: String, arguments: [String] = [], timeout: TimeInterval = 60) -> Result {
@@ -23,17 +35,7 @@ enum Shell {
         process.arguments = [command] + arguments
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
-        process.environment = ProcessInfo.processInfo.environment
-
-        // Add common tool paths (GUI apps don't inherit terminal PATH)
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let extra = "\(home)/.local/bin:\(home)/.local/pipx/venvs/pymobiledevice3/bin:/opt/homebrew/bin:/usr/local/bin"
-        if var path = process.environment?["PATH"] {
-            path = extra + ":" + path
-            process.environment?["PATH"] = path
-        } else {
-            process.environment?["PATH"] = extra + ":/usr/bin:/bin"
-        }
+        process.environment = environmentWithToolPaths()
 
         do {
             try process.run()
@@ -41,15 +43,51 @@ enum Shell {
             return Result(exitCode: -1, stdout: "", stderr: "Failed to launch: \(error.localizedDescription)")
         }
 
-        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        let stdoutQueue = DispatchQueue(label: "com.phosphor.shell.stdout")
+        let stderrQueue = DispatchQueue(label: "com.phosphor.shell.stderr")
+        var stdoutData = Data()
+        var stderrData = Data()
+        let readGroup = DispatchGroup()
 
-        process.waitUntilExit()
+        readGroup.enter()
+        stdoutQueue.async {
+            stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+            readGroup.leave()
+        }
+
+        readGroup.enter()
+        stderrQueue.async {
+            stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+            readGroup.leave()
+        }
+
+        let waitSemaphore = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .utility).async {
+            process.waitUntilExit()
+            waitSemaphore.signal()
+        }
+
+        var timedOut = false
+        if waitSemaphore.wait(timeout: .now() + timeout) == .timedOut {
+            timedOut = true
+            process.terminate()
+            if waitSemaphore.wait(timeout: .now() + 2) == .timedOut {
+                process.interrupt()
+            }
+        }
+
+        _ = readGroup.wait(timeout: .now() + 2)
+
+        var stderr = String(data: stderrData, encoding: .utf8) ?? ""
+        if timedOut {
+            let timeoutMessage = "Command timed out after \(Int(timeout))s"
+            stderr = stderr.isEmpty ? timeoutMessage : stderr + "\n" + timeoutMessage
+        }
 
         return Result(
-            exitCode: process.terminationStatus,
+            exitCode: timedOut ? -2 : process.terminationStatus,
             stdout: String(data: stdoutData, encoding: .utf8) ?? "",
-            stderr: String(data: stderrData, encoding: .utf8) ?? ""
+            stderr: stderr
         )
     }
 
@@ -80,12 +118,7 @@ enum Shell {
         process.arguments = [command] + arguments
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
-        process.environment = ProcessInfo.processInfo.environment
-
-        if var path = process.environment?["PATH"] {
-            path = "/opt/homebrew/bin:/usr/local/bin:" + path
-            process.environment?["PATH"] = path
-        }
+        process.environment = environmentWithToolPaths()
 
         stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData

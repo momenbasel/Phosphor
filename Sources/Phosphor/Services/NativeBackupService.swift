@@ -53,7 +53,7 @@ final class NativeBackupService: ObservableObject {
             progress = "Backup complete"
         } else {
             progress = "Backup failed"
-            lastError = lastError ?? "All backup methods failed. Try: pip3 install pymobiledevice3"
+            lastError = lastError ?? "All backup methods failed. Try: pipx install pymobiledevice3"
         }
         return pyResult
     }
@@ -137,45 +137,25 @@ final class NativeBackupService: ObservableObject {
     private func pymobiledeviceBackup(udid: String, onProgress: @escaping (String) -> Void) async -> Bool {
         onProgress("Checking for pymobiledevice3...")
 
-        // Check if pymobiledevice3 is installed
-        let checkResult = await Shell.runAsync("python3", arguments: ["-c", "import pymobiledevice3; print('ok')"], timeout: 10)
-        if !checkResult.succeeded {
-            // Try pip install
-            onProgress("Installing pymobiledevice3...")
-            let installResult = await Shell.runAsync("pip3", arguments: ["install", "pymobiledevice3"], timeout: 120)
-            if !installResult.succeeded {
-                lastError = "pymobiledevice3 not available. Install with: pip3 install pymobiledevice3"
-                return false
-            }
+        guard PyMobileDevice.available() else {
+            lastError = """
+            pymobiledevice3 is not available. Install it with:
+            brew install pipx
+            pipx install pymobiledevice3
+            """
+            return false
         }
 
         onProgress("Creating backup via pymobiledevice3...")
 
         let backupDir = BackupManager.activeBackupDir
-
-        // pymobiledevice3 backup command
-        let result = await Shell.runAsync(
-            "python3",
-            arguments: ["-m", "pymobiledevice3", "backup2", "backup", "--udid", udid, "--full", backupDir],
-            timeout: 3600
-        )
+        let result = await PyMobileDevice.runAsync(["backup2", "backup", "--udid", udid, "--full", backupDir], timeout: 3600)
 
         if result.succeeded {
             return true
         }
 
-        // Alternative pymobiledevice3 syntax
-        let altResult = await Shell.runAsync(
-            "pymobiledevice3",
-            arguments: ["backup2", "backup", "--udid", udid, "--full", backupDir],
-            timeout: 3600
-        )
-
-        if altResult.succeeded {
-            return true
-        }
-
-        lastError = result.stderr.nilIfEmpty ?? altResult.stderr.nilIfEmpty ?? "pymobiledevice3 backup failed"
+        lastError = result.stderr.nilIfEmpty ?? "pymobiledevice3 backup failed"
         return false
     }
 
@@ -186,11 +166,7 @@ final class NativeBackupService: ObservableObject {
         progress = "Restoring backup..."
 
         // Try pymobiledevice3 first (most likely to work with latest iOS)
-        let result = await Shell.runAsync(
-            "python3",
-            arguments: ["-m", "pymobiledevice3", "backup2", "restore", "--udid", udid, "--system", backupPath],
-            timeout: 3600
-        )
+        let result = await PyMobileDevice.runAsync(["backup2", "restore", "--udid", udid, "--system", backupPath], timeout: 3600)
 
         isRunning = false
         return result.succeeded

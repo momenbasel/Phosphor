@@ -78,6 +78,12 @@ struct SettingsView: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.orange)
                 }
+
+                if let warning = BackupManager.backupDirectoryWarning(for: backupDirectory) {
+                    Text(warning)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                }
             }
 
             Section("Device Polling") {
