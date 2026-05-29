@@ -46,7 +46,7 @@ enum PyMobileDevice {
         })
 
         for path in directPaths {
-            if fm.isExecutableFile(atPath: path) {
+            if fm.isExecutableFile(atPath: path), directBinaryWorks(at: path) {
                 cachedBinaryPath = path
                 return path
             }
@@ -73,6 +73,17 @@ enum PyMobileDevice {
         }
 
         return nil
+    }
+
+    /// Validate direct console-script shims before caching them. A stale pip/pipx
+    /// shim can remain executable even when its Python environment was removed
+    /// or upgraded, which would otherwise make Phosphor report pymobiledevice3 as
+    /// installed and then fail every operation at runtime.
+    private static func directBinaryWorks(at path: String) -> Bool {
+        let version = Shell.run(path, arguments: ["version"], timeout: 10)
+        if version.succeeded { return true }
+        let alt = Shell.run(path, arguments: ["--version"], timeout: 10)
+        return alt.succeeded
     }
 
     /// Clear the cached binary path so the next call re-probes the filesystem.

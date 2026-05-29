@@ -14,6 +14,7 @@ final class LiveDeviceBrowser: ObservableObject {
 
     private var deviceUDID: String?
     private var usesAFC = false
+    private var cachedDCIMFolders: [String] = []
 
     struct LivePhoto: Identifiable, Hashable {
         let id: String
@@ -53,17 +54,10 @@ final class LiveDeviceBrowser: ObservableObject {
                 usesAFC = true
                 isMounted = true
 
-                // Count photos across DCIM subfolders
-                var count = 0
-                for subfolder in dcimContents {
-                    guard !subfolder.isEmpty, subfolder != ".", subfolder != ".." else { continue }
-                    let subFiles = await PyMobileDevice.afcList(path: "/DCIM/\(subfolder)", udid: udid)
-                    count += subFiles.filter { name in
-                        let ext = (name as NSString).pathExtension.lowercased()
-                        return ["jpg", "jpeg", "heic", "heif", "png", "gif", "mov", "mp4", "m4v"].contains(ext)
-                    }.count
-                }
-                photoCount = count
+                cachedDCIMFolders = dcimContents
+                    .filter { !$0.isEmpty && $0 != "." && $0 != ".." }
+                    .sorted()
+                photoCount = 0
                 return true
             }
         }
@@ -99,6 +93,7 @@ final class LiveDeviceBrowser: ObservableObject {
         deviceUDID = nil
         isMounted = false
         usesAFC = false
+        cachedDCIMFolders = []
         photos = []
         photoCount = 0
     }
@@ -126,10 +121,12 @@ final class LiveDeviceBrowser: ObservableObject {
         let photoExtensions = Set(["jpg", "jpeg", "heic", "heif", "png", "gif", "webp",
                                     "mov", "mp4", "m4v", "3gp"])
 
-        let dcimContents = await PyMobileDevice.afcList(path: "/DCIM", udid: udid)
+        let dcimContents = cachedDCIMFolders.isEmpty
+            ? await PyMobileDevice.afcList(path: "/DCIM", udid: udid).sorted()
+            : cachedDCIMFolders
         var found: [LivePhoto] = []
 
-        for subfolder in dcimContents.sorted() {
+        for subfolder in dcimContents {
             guard !subfolder.isEmpty else { continue }
 
             // Just list files - don't download them yet
