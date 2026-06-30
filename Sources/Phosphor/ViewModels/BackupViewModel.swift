@@ -20,9 +20,13 @@ final class BackupViewModel: ObservableObject {
     @Published var searchQuery = ""
     @Published var searchResults: [BackupManifest.FileEntry] = []
 
+    @Published var showPasswordPrompt = false
+
     let backupManager = BackupManager()
     private var currentManifest: BackupManifest?
     private var sizeResolutionTask: Task<Void, Never>?
+    private var pendingEncryptedBackup: BackupInfo?
+    private var activeEncryptedReader: EncryptedBackupReader?
 
     func loadBackups() {
         sizeResolutionTask?.cancel()
@@ -104,6 +108,15 @@ final class BackupViewModel: ObservableObject {
     // MARK: - Browsing
 
     func openBackupBrowser(_ backup: BackupInfo) {
+        activeEncryptedReader?.cleanup()
+        activeEncryptedReader = nil
+
+        if backup.isEncrypted {
+            pendingEncryptedBackup = backup
+            showPasswordPrompt = true
+            return
+        }
+
         selectedBackup = backup
         currentManifest = backupManager.openManifest(for: backup)
 
@@ -119,6 +132,25 @@ final class BackupViewModel: ObservableObject {
         } catch {
             alertMessage = "Failed to read backup: \(error.localizedDescription)"
             showAlert = true
+        }
+    }
+
+    func unlockBackup(password: String) async {
+        guard let backup = pendingEncryptedBackup else { return }
+        let reader = EncryptedBackupReader(backupPath: backup.path)
+        do {
+            let manifest = try await reader.unlock(password: password)
+            activeEncryptedReader = reader
+            selectedBackup = backup
+            currentManifest = manifest
+            browserDomains = (try? manifest.domains()) ?? []
+            showPasswordPrompt = false
+            pendingEncryptedBackup = nil
+        } catch {
+            reader.cleanup()
+            alertMessage = error.localizedDescription
+            showAlert = true
+            showPasswordPrompt = false
         }
     }
 

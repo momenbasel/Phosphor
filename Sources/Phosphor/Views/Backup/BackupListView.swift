@@ -7,6 +7,7 @@ struct BackupListView: View {
     @EnvironmentObject var backupVM: BackupViewModel
     @State private var showDeleteConfirm = false
     @State private var backupToDelete: BackupInfo?
+    @State private var backupPassword = ""
     @State private var showImportArchive = false
     @State private var archiveProgress: String?
     @State private var isArchiving = false
@@ -113,6 +114,16 @@ struct BackupListView: View {
         .sheet(isPresented: $showScheduleSheet) {
             BackupScheduleSheet()
                 .frame(width: 440, height: 400)
+        }
+        .sheet(isPresented: $backupVM.showPasswordPrompt) {
+            EncryptedBackupUnlockSheet(password: $backupPassword) {
+                let pwd = backupPassword
+                backupPassword = ""
+                Task { await backupVM.unlockBackup(password: pwd) }
+            } onCancel: {
+                backupPassword = ""
+                backupVM.showPasswordPrompt = false
+            }
         }
         .onAppear { backupVM.loadBackups() }
     }
@@ -261,6 +272,44 @@ struct BackupListView: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
         .background(Color.orange.opacity(0.08))
+    }
+}
+
+struct EncryptedBackupUnlockSheet: View {
+    @Binding var password: String
+    let onUnlock: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "lock.fill")
+                .font(.system(size: 36))
+                .foregroundStyle(.orange)
+
+            VStack(spacing: 6) {
+                Text("Encrypted Backup")
+                    .font(.headline)
+                Text("Enter the password you set when enabling backup encryption.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            SecureField("Backup password", text: $password)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit(onUnlock)
+
+            HStack(spacing: 12) {
+                Button("Cancel", action: onCancel)
+                    .keyboardShortcut(.cancelAction)
+                Button("Unlock") { onUnlock() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(password.isEmpty)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(28)
+        .frame(width: 340)
     }
 }
 
