@@ -71,28 +71,38 @@ final class EncryptedBackupReader {
     }
 
     /// Decrypt using the iphone_backup_decrypt Python package.
+    // Resolve the python3 binary at startup so GUI apps (which don't inherit the
+    // Homebrew PATH) still find the right interpreter.
+    private static let python3Path: String = {
+        for candidate in ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/usr/bin/python3"] {
+            if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
+        }
+        return "python3"
+    }()
+
     private func tryPythonDecrypt(password: String) async -> BackupManifest? {
         let tmpDir = NSTemporaryDirectory() + "phosphor-decrypt-\(UUID().uuidString.prefix(8))"
 
         // Check if the Python tool is available
-        let checkResult = await Shell.runAsync("python3", arguments: ["-c", "import iphone_backup_decrypt"])
+        let checkResult = await Shell.runAsync(Self.python3Path, arguments: ["-c", "import iphone_backup_decrypt"])
         guard checkResult.succeeded else { return nil }
 
         // Create temp directory for decrypted output
         try? FileManager.default.createDirectory(atPath: tmpDir, withIntermediateDirectories: true)
 
-        // Run the decryption script
+        // Pass backup_directory, passphrase, and output path as argv to avoid
+        // escaping issues with special characters in the password.
         let script = """
-        import iphone_backup_decrypt
-        backup = iphone_backup_decrypt.EncryptedBackup(backup_directory="\(backupPath)", passphrase="\(password)")
-        backup.save_manifest_file("\(tmpDir)/Manifest.db")
+        import sys, iphone_backup_decrypt
+        backup = iphone_backup_decrypt.EncryptedBackup(backup_directory=sys.argv[1], passphrase=sys.argv[2])
+        backup.save_manifest_file(sys.argv[3])
         print("OK")
         """
 
         let scriptPath = tmpDir + "/decrypt.py"
         try? script.write(toFile: scriptPath, atomically: true, encoding: .utf8)
 
-        let result = await Shell.runAsync("python3", arguments: [scriptPath], timeout: 120)
+        let result = await Shell.runAsync(Self.python3Path, arguments: [scriptPath, backupPath, password, tmpDir + "/Manifest.db"], timeout: 120)
 
         // Clean up script
         try? FileManager.default.removeItem(atPath: scriptPath)
@@ -101,15 +111,18 @@ final class EncryptedBackupReader {
 
         // Check if Manifest.db was created
         let manifestDbPath = tmpDir + "/Manifest.db"
-        guard FileManager.default.fileExists(atPath: manifestDbPath) else { return nil }
+        guard FileManager.default.fileExists(atPath: manifestDbPath) else {
+            NSLog("[Phosphor] Manifest.db not found at %@", manifestDbPath)
+            return nil
+        }
 
         decryptedManifestPath = tmpDir
 
-        // Create a temporary backup structure that points to decrypted manifest
-        // but original backup files
         do {
-            return try BackupManifest(backupPath: tmpDir)
+            // Use original backupPath for file resolution, but read the decrypted Manifest.db from tmpDir
+            return try BackupManifest(backupPath: backupPath, manifestDbPath: manifestDbPath)
         } catch {
+            NSLog("[Phosphor] BackupManifest init failed: %@", error.localizedDescription)
             return nil
         }
     }

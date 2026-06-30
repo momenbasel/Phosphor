@@ -92,9 +92,19 @@ final class BackupManifest {
         }
     }
 
-    init(backupPath: String) throws {
+    convenience init(backupPath: String) throws {
+        try self.init(backupPath: backupPath, manifestOverride: nil)
+    }
+
+    /// For encrypted backups: manifestDbPath is the decrypted Manifest.db in a temp dir;
+    /// backupPath is the original backup dir used for resolving actual file paths.
+    convenience init(backupPath: String, manifestDbPath: String) throws {
+        try self.init(backupPath: backupPath, manifestOverride: manifestDbPath)
+    }
+
+    private init(backupPath: String, manifestOverride: String? = nil) throws {
         self.backupPath = backupPath
-        let manifestPath = (backupPath as NSString).appendingPathComponent("Manifest.db")
+        let manifestPath = manifestOverride ?? (backupPath as NSString).appendingPathComponent("Manifest.db")
 
         // Preflight: Manifest.db must exist, have the SQLite header, and the backup
         // must not be flagged as encrypted. Detecting this up front turns the opaque
@@ -103,7 +113,8 @@ final class BackupManifest {
         guard fm.fileExists(atPath: manifestPath) else {
             throw ManifestError.manifestMissing(path: manifestPath)
         }
-        if let plist = PlistParser.parseManifest(backupPath), plist.isEncrypted {
+        // Skip encryption check when manifestOverride is set — the caller already decrypted it.
+        if manifestOverride == nil, let plist = PlistParser.parseManifest(backupPath), plist.isEncrypted {
             throw ManifestError.backupEncrypted(path: manifestPath)
         }
         if let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: manifestPath)) {
