@@ -367,14 +367,32 @@ struct BackupListView: View {
     }
 
     private var backupProgressView: some View {
-        HStack(spacing: 12) {
-            ProgressView()
-                .scaleEffect(0.8)
-            Text(backupVM.progressText)
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            Spacer()
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                if backupVM.progressFraction == nil {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                }
+                Text(backupVM.progressText)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer()
+                if let fraction = backupVM.progressFraction {
+                    Text("\(Int((fraction * 100).rounded()))%")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.indigo)
+                        .monospacedDigit()
+                }
+            }
+
+            if let fraction = backupVM.progressFraction {
+                ProgressView(value: fraction, total: 1.0)
+                    .progressViewStyle(.linear)
+                    .tint(.indigo)
+                    .accessibilityLabel("Backup progress")
+                    .accessibilityValue("\(Int((fraction * 100).rounded())) percent")
+            }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)

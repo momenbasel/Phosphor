@@ -93,6 +93,25 @@ def test_minimal_sms_schema_fixture_supports_limited_attachment_query(root: Path
         assert len(rows) == 1 and rows[0][0] == 100, "limited attachment query should only load requested message IDs"
 
 
+def test_csv_and_mbox_exports_sanitize_all_untrusted_fields(root: Path) -> None:
+    src = read(root, "Sources/Phosphor/Services/MessageExporter.swift")
+    assert_contains(src, "private func csvField", "CSV export should centralize field escaping and formula neutralization")
+    assert_contains(src, "[\"=\", \"+\", \"-\", \"@\", \"\\t\", \"\\r\", \"\\n\"].contains", "CSV export should neutralize formula-leading cells")
+    assert_contains(src, "].map(csvField)", "CSV export should apply escaping to every field, not only message text")
+    assert_contains(src, "messageIDLocalPart", "MBOX Message-ID should sanitize database-derived GUIDs")
+    assert_contains(src, "mimeBoundary(for: msg.guid)", "MBOX MIME boundaries should not include raw database strings")
+    assert_contains(src, "safeHeaderToken", "MBOX MIME type headers should reject CR/LF and unsafe characters")
+    assert_contains(src, "replacingOccurrences(of: \"\\r\", with: \" \")", "MBOX header encoding should remove carriage returns")
+    assert_contains(src, "replacingOccurrences(of: \"\\n\", with: \" \")", "MBOX header encoding should remove newlines")
+
+
+def test_mbox_export_includes_all_available_attachments(root: Path) -> None:
+    src = read(root, "Sources/Phosphor/Services/MessageExporter.swift")
+    assert_contains(src, "payloadAttachments", "MBOX export should collect all readable non-payload attachments")
+    assert_contains(src, "for payload in payloadAttachments", "MBOX export should emit one MIME part per readable attachment")
+    assert "attachments.first(where" not in src[src.index("private func exportMbox"):src.index("/// Mbox bodies")], "MBOX export must not silently pick only the first attachment"
+
+
 def test_message_exporter_caches_schema_and_preserves_tapback_context(root: Path) -> None:
     src = read(root, "Sources/Phosphor/Services/MessageExporter.swift")
     assert_contains(src, "private let messageColumns", "message table columns should be cached per exporter")

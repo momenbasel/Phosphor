@@ -523,6 +523,16 @@ final class MessageExporter {
         return "\(safeName)-chat-\(chat.id).\(format.fileExtension)"
     }
 
+    private func csvField(_ raw: String) -> String {
+        var safe = raw
+        if let first = safe.unicodeScalars.first,
+           ["=", "+", "-", "@", "\t", "\r", "\n"].contains(String(first)) {
+            safe = "'" + safe
+        }
+        safe = safe.replacingOccurrences(of: "\"", with: "\"\"")
+        return "\"\(safe)\""
+    }
+
     private func exportCSV(messages: [Message], chatTitle: String, to path: String) throws {
         let outputURL = URL(fileURLWithPath: path)
         try? FileManager.default.removeItem(at: outputURL)
@@ -538,13 +548,17 @@ final class MessageExporter {
 
         try append("Date,Sender,Text,Reactions,Service\n")
         for msg in messages {
-            let text = (msg.text ?? "")
-                .replacingOccurrences(of: "\"", with: "\"\"")
-                .replacingOccurrences(of: "\n", with: " ")
             let reactions = msg.reactions
                 .map { "\($0.sender): \($0.type.label)" }
                 .joined(separator: "; ")
-            try append("\"\(msg.formattedDate)\",\"\(msg.senderLabel)\",\"\(text)\",\"\(reactions)\",\"\(msg.service)\"\n")
+            let fields = [
+                msg.formattedDate,
+                msg.senderLabel,
+                msg.text ?? "",
+                reactions,
+                msg.service
+            ].map(csvField)
+            try append(fields.joined(separator: ",") + "\n")
         }
     }
 
@@ -809,8 +823,8 @@ final class MessageExporter {
             append("To: \(toHeader)\(crlf)")
             append("Date: \(rfc5322Formatter.string(from: msg.date))\(crlf)")
             append("Subject: \(headerEncode(chatTitle))\(crlf)")
-            append("Message-ID: <\(msg.guid)@\(userDomain)>\(crlf)")
-            append("X-Phosphor-Service: \(msg.service)\(crlf)")
+            append("Message-ID: <\(messageIDLocalPart(msg.guid))@\(userDomain)>\(crlf)")
+            append("X-Phosphor-Service: \(headerEncode(msg.service))\(crlf)")
             if !msg.reactions.isEmpty {
                 let summary = msg.reactions.map { "\($0.sender):\($0.type.label)" }.joined(separator: ", ")
                 append("X-Phosphor-Reactions: \(headerEncode(summary))\(crlf)")
@@ -818,15 +832,20 @@ final class MessageExporter {
             append("MIME-Version: 1.0\(crlf)")
 
             let body = msg.text ?? ""
-            // Pick the first non-payload attachment as the MIME body when present.
-            let payloadAttachment = msg.attachments.first(where: { !$0.isPluginPayload })
-            let attachmentDiskPath = payloadAttachment?.filename.flatMap { resolveAttachmentDiskPath(filename: $0) }
+            let payloadAttachments: [(attachment: MessageAttachment, diskPath: String, data: Data)] = includeAttachments
+                ? msg.attachments.compactMap { attachment in
+                    guard !attachment.isPluginPayload,
+                          let filename = attachment.filename,
+                          let diskPath = resolveAttachmentDiskPath(filename: filename),
+                          let data = try? Data(contentsOf: URL(fileURLWithPath: diskPath)) else {
+                        return nil
+                    }
+                    return (attachment, diskPath, data)
+                }
+                : []
 
-            if includeAttachments,
-               let payloadAttachment,
-               let attachmentDiskPath,
-               let data = try? Data(contentsOf: URL(fileURLWithPath: attachmentDiskPath)) {
-                let boundary = "----=_Phosphor_\(msg.guid)"
+            if !payloadAttachments.isEmpty {
+                let boundary = mimeBoundary(for: msg.guid)
                 append("Content-Type: multipart/mixed; boundary=\"\(boundary)\"\(crlf)\(crlf)")
 
                 append("--\(boundary)\(crlf)")
@@ -834,14 +853,17 @@ final class MessageExporter {
                 append("Content-Transfer-Encoding: 8bit\(crlf)\(crlf)")
                 append(mboxEscape(body.isEmpty ? "[Attachment]" : body) + crlf + crlf)
 
-                let name = payloadAttachment.filename.map { ($0 as NSString).lastPathComponent } ?? payloadAttachment.displayName
-                let mime = payloadAttachment.mimeType ?? "application/octet-stream"
-                append("--\(boundary)\(crlf)")
-                append("Content-Type: \(mime); name=\"\(headerEncode(name))\"\(crlf)")
-                append("Content-Disposition: attachment; filename=\"\(headerEncode(name))\"\(crlf)")
-                append("Content-Transfer-Encoding: base64\(crlf)\(crlf)")
-                append(data.base64EncodedString(options: [.lineLength76Characters, .endLineWithCarriageReturn, .endLineWithLineFeed]))
-                append(crlf + "--\(boundary)--\(crlf)\(crlf)")
+                for payload in payloadAttachments {
+                    let name = payload.attachment.filename.map { ($0 as NSString).lastPathComponent } ?? payload.attachment.displayName
+                    let mime = safeHeaderToken(payload.attachment.mimeType ?? "application/octet-stream", fallback: "application/octet-stream")
+                    append("--\(boundary)\(crlf)")
+                    append("Content-Type: \(mime); name=\"\(headerEncode(name))\"\(crlf)")
+                    append("Content-Disposition: attachment; filename=\"\(headerEncode(name))\"\(crlf)")
+                    append("Content-Transfer-Encoding: base64\(crlf)\(crlf)")
+                    append(payload.data.base64EncodedString(options: [.lineLength76Characters, .endLineWithCarriageReturn, .endLineWithLineFeed]))
+                    append(crlf)
+                }
+                append("--\(boundary)--\(crlf)\(crlf)")
             } else {
                 append("Content-Type: text/plain; charset=UTF-8\(crlf)")
                 append("Content-Transfer-Encoding: 8bit\(crlf)\(crlf)")
@@ -881,10 +903,30 @@ final class MessageExporter {
         return "\(local)@\(domain)"
     }
 
+    private func messageIDLocalPart(_ raw: String) -> String {
+        let cleaned = raw
+            .lowercased()
+            .filter { $0.isLetter || $0.isNumber || "._-+".contains($0) }
+        return cleaned.isEmpty ? UUID().uuidString.lowercased() : cleaned
+    }
+
+    private func mimeBoundary(for raw: String) -> String {
+        let cleaned = raw.filter { $0.isLetter || $0.isNumber || "._-".contains($0) }
+        return "----=_Phosphor_\(cleaned.isEmpty ? UUID().uuidString : cleaned)"
+    }
+
+    private func safeHeaderToken(_ raw: String, fallback: String) -> String {
+        let cleaned = raw.filter { $0.isLetter || $0.isNumber || "/.+_-".contains($0) }
+        return cleaned.isEmpty ? fallback : cleaned
+    }
+
     /// RFC 2047 encoded-word for header values containing non-ASCII.
     private func headerEncode(_ raw: String) -> String {
-        if raw.allSatisfy({ $0.isASCII }) { return raw }
-        let base64 = Data(raw.utf8).base64EncodedString()
+        let sanitized = raw
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+        if sanitized.allSatisfy({ $0.isASCII }) { return sanitized }
+        let base64 = Data(sanitized.utf8).base64EncodedString()
         return "=?UTF-8?B?\(base64)?="
     }
 

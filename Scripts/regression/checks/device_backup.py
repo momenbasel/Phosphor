@@ -160,6 +160,40 @@ def test_backup_failures_have_recovery_actions_and_collapsed_details(root: Path)
     assert_contains(app, "device.connectionType == .wifi && !BackupManager.hasExistingBackup", "Wi-Fi menu backups without metadata should be confirmed before starting")
 
 
+def test_backup_creation_surfaces_determinate_progress_bar(root: Path) -> None:
+    vm = read(root, "Sources/Phosphor/ViewModels/BackupViewModel.swift")
+    assert_contains(vm, "@Published var progressFraction: Double?", "BackupViewModel should publish a determinate backup progress fraction")
+    assert_contains(vm, "progressFraction = nil", "BackupViewModel should reset to indeterminate progress for each new backup")
+    assert_contains(vm, "updateBackupProgress(text)", "BackupViewModel should parse backend progress updates instead of only storing raw text")
+    assert_contains(vm, "PyMobileDevice.parseProgress(from: trimmed)", "BackupViewModel should reuse the shared backup progress parser")
+    assert_contains(vm, "min(max(pct, 0), 1)", "Backup progress should be clamped to SwiftUI's 0...1 progress range")
+
+    view = read(root, "Sources/Phosphor/Views/Backup/BackupListView.swift")
+    assert_contains(view, "ProgressView(value: fraction, total: 1.0)", "Backup UI should render a determinate progress bar when the backend reports a percentage")
+    assert_contains(view, "backupVM.progressFraction == nil", "Backup UI should keep an indeterminate spinner before percentage output is available")
+    assert_contains(view, "accessibilityLabel(\"Backup progress\")", "Backup progress bar should have an accessibility label")
+    assert_contains(view, "monospacedDigit()", "The visible percent label should not jitter while progress changes")
+
+    manager = read(root, "Sources/Phosphor/Services/BackupManager.swift")
+    assert_contains(manager, "onProgress(progressText)", "pymobiledevice3 stderr progress should be forwarded to the view model, not only stored internally")
+    assert_contains(manager, "idevicebackupStderr.append(error)", "Fallback stderr should still be retained for failures after progress parsing")
+
+
+def test_backup_completion_is_verified_and_fallback_process_is_tracked(root: Path) -> None:
+    manager = read(root, "Sources/Phosphor/Services/BackupManager.swift")
+    assert_contains(manager, "finalizeSuccessfulBackup", "Successful backup commands should verify complete metadata before reporting success")
+    assert_contains(manager, "Backup Metadata Incomplete", "Incomplete post-backup metadata should surface a structured failure")
+    assert_contains(manager, "activeProcess = Shell.runStreaming", "Fallback idevicebackup2 backup/restore processes should be tracked for cancellation")
+    assert_contains(manager, "self.activeProcess = nil", "Streaming fallback completion should clear activeProcess")
+
+
+def test_message_readiness_not_masked_by_manifest_selection_failure(root: Path) -> None:
+    view = read(root, "Sources/Phosphor/Views/Messages/MessageListView.swift")
+    readiness_branch = view.index("messageVM.chats.isEmpty && messageVM.backupReadiness != .unknown")
+    no_selection_branch = view.index("title: \"No Backup Selected\"")
+    assert readiness_branch < no_selection_branch, "Messages view should show specific readiness errors before generic no-selection copy"
+
+
 def test_idevicebackup2_network_argument_order_is_before_backup_subcommand(root: Path) -> None:
     manager = read(root, "Sources/Phosphor/Services/BackupManager.swift")
     match = re.search(r"private func idevicebackupArguments\(.*?\) -> \[String\] \{(?P<body>.*?)\n    \}", manager, re.S)

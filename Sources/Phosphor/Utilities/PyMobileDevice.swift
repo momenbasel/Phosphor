@@ -930,13 +930,13 @@ enum PyMobileDevice {
     // MARK: - Utility
 
     /// Parse backup progress from pymobiledevice3 tqdm output.
-    /// Matches patterns like "42%|..." or "Progress: 42%"
+    /// Matches patterns like "42%|...", "12.5%|...", or "Progress: 42%".
     static func parseProgress(from text: String) -> Double? {
-        let pattern = #"(\d+)%"#
+        let pattern = #"(\d+(?:\.\d+)?)%"#
         guard let regex = try? NSRegularExpression(pattern: pattern),
               let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
               let range = Range(match.range(at: 1), in: text),
               let value = Double(text[range]) else { return nil }
-        return value / 100.0
+        return min(max(value / 100.0, 0), 1)
     }
 }

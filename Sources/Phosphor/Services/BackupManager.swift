@@ -388,6 +388,45 @@ final class BackupManager: ObservableObject {
 
     // MARK: - Backup Creation
 
+    private func finalizeSuccessfulBackup(udid: String, onProgress: @escaping (String) -> Void) -> Bool {
+        isCreatingBackup = false
+        switch Self.backupMetadataHealth(for: udid) {
+        case .complete:
+            backupProgress = "Backup complete"
+            backupPercent = 1.0
+            discoverBackups()
+            onProgress("Backup complete")
+            return true
+        case .missing:
+            let path = Self.backupPath(for: udid)
+            backupProgress = "Backup metadata incomplete"
+            lastBackupFailure = BackupFailure(
+                title: "Backup Metadata Incomplete",
+                message: "The backup command finished, but Phosphor could not find complete backup metadata. Run a fresh full backup with the device unlocked and connected over USB when possible.",
+                technicalDetails: path,
+                recoveryAction: .runFullBackup,
+                udid: udid,
+                recoveryPath: path
+            )
+            lastError = lastBackupFailure?.message
+            onProgress(lastError ?? "Backup metadata incomplete.")
+            return false
+        case .incomplete(let path):
+            backupProgress = "Backup metadata incomplete"
+            lastBackupFailure = BackupFailure(
+                title: "Backup Metadata Incomplete",
+                message: "The backup command finished, but the resulting backup metadata is incomplete. Move the incomplete folder to Trash, then run a fresh full backup with the device unlocked and connected over USB when possible.",
+                technicalDetails: path,
+                recoveryAction: .deleteIncompleteAndRunFull,
+                udid: udid,
+                recoveryPath: path
+            )
+            lastError = lastBackupFailure?.message
+            onProgress(lastError ?? "Backup metadata incomplete.")
+            return false
+        }
+    }
+
     /// Create a new backup. pymobiledevice3 primary, idevicebackup2 fallback.
     func createBackup(
         udid: String,
@@ -444,11 +483,7 @@ final class BackupManager: ObservableObject {
             onProgress: onProgress
         )
         if pySuccess {
-            isCreatingBackup = false
-            backupProgress = "Backup complete"
-            backupPercent = 1.0
-            discoverBackups()
-            return true
+            return finalizeSuccessfulBackup(udid: udid, onProgress: onProgress)
         }
 
         let pymobiledeviceStderr = pymobiledeviceStderrTail.joined(separator: "\n")
@@ -461,7 +496,7 @@ final class BackupManager: ObservableObject {
         var idevicebackupStderr = ""
 
         return await withCheckedContinuation { continuation in
-            Shell.runStreaming(
+            activeProcess = Shell.runStreaming(
                 "idevicebackup2",
                 arguments: args,
                 onOutput: { [weak self] output in
@@ -472,24 +507,34 @@ final class BackupManager: ObservableObject {
                     }
                     onProgress(output)
                 },
-                onError: { error in
-                    idevicebackupStderr.append(error)
+                onError: { [weak self] error in
+                    let trimmed = error.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if let pct = PyMobileDevice.parseProgress(from: trimmed) {
+                        let clamped = min(max(pct, 0), 1)
+                        let progressText = "Backup: \(Int(clamped * 100))%"
+                        self?.backupPercent = clamped
+                        self?.backupProgress = progressText
+                        onProgress(progressText)
+                    } else {
+                        idevicebackupStderr.append(error)
+                    }
                 },
                 completion: { [weak self] exitCode in
                     Task { @MainActor in
                         guard let self else {
-                            continuation.resume(returning: exitCode == 0)
+                            continuation.resume(returning: false)
                             return
                         }
-                        self.isCreatingBackup = false
+                        self.activeProcess = nil
                         if exitCode == 0 {
-                            self.backupProgress = "Backup complete"
-                            self.backupPercent = 1.0
-                            self.discoverBackups()
+                            let verified = self.finalizeSuccessfulBackup(udid: udid, onProgress: onProgress)
+                            continuation.resume(returning: verified)
+                            return
                         } else {
                             let combinedStderr = [pymobiledeviceStderr, idevicebackupStderr]
                                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                                 .joined(separator: "\n---\n")
+                            self.isCreatingBackup = false
                             self.backupProgress = "Backup failed"
                             let failure = Self.backupFailure(
                                 primary: "Both backup methods failed.",
@@ -503,7 +548,7 @@ final class BackupManager: ObservableObject {
                                 stderr: combinedStderr
                             )
                         }
-                        continuation.resume(returning: exitCode == 0)
+                        continuation.resume(returning: false)
                     }
                 }
             )
@@ -556,8 +601,11 @@ final class BackupManager: ObservableObject {
                     guard !trimmed.isEmpty else { return }
                     // pymobiledevice3 sends progress on stderr.
                     if let pct = PyMobileDevice.parseProgress(from: trimmed) {
-                        self?.backupPercent = pct
-                        self?.backupProgress = "Backup: \(Int(pct * 100))%"
+                        let clamped = min(max(pct, 0), 1)
+                        let progressText = "Backup: \(Int(clamped * 100))%"
+                        self?.backupPercent = clamped
+                        self?.backupProgress = progressText
+                        onProgress(progressText)
                         return
                     }
                     // Retain non-progress stderr lines so a failure surfaces the real reason.
@@ -652,11 +700,7 @@ final class BackupManager: ObservableObject {
                 onProgress: onProgress
             )
             if success {
-                isCreatingBackup = false
-                backupProgress = "Backup complete"
-                backupPercent = 1.0
-                discoverBackups()
-                return true
+                return finalizeSuccessfulBackup(udid: udid, onProgress: onProgress)
             }
         }
 
@@ -665,7 +709,7 @@ final class BackupManager: ObservableObject {
 
         // Fallback: idevicebackup2
         return await withCheckedContinuation { continuation in
-            Shell.runStreaming(
+            activeProcess = Shell.runStreaming(
                 "idevicebackup2",
                 arguments: idevicebackupArguments(udid: udid, full: false, preferNetwork: preferNetwork),
                 onOutput: { [weak self] output in
@@ -676,24 +720,34 @@ final class BackupManager: ObservableObject {
                     }
                     onProgress(output)
                 },
-                onError: { error in
-                    idevicebackupStderr.append(error)
+                onError: { [weak self] error in
+                    let trimmed = error.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if let pct = PyMobileDevice.parseProgress(from: trimmed) {
+                        let clamped = min(max(pct, 0), 1)
+                        let progressText = "Backup: \(Int(clamped * 100))%"
+                        self?.backupPercent = clamped
+                        self?.backupProgress = progressText
+                        onProgress(progressText)
+                    } else {
+                        idevicebackupStderr.append(error)
+                    }
                 },
                 completion: { [weak self] exitCode in
                     Task { @MainActor in
                         guard let self else {
-                            continuation.resume(returning: exitCode == 0)
+                            continuation.resume(returning: false)
                             return
                         }
-                        self.isCreatingBackup = false
+                        self.activeProcess = nil
                         if exitCode == 0 {
-                            self.backupProgress = "Backup complete"
-                            self.backupPercent = 1.0
-                            self.discoverBackups()
+                            let verified = self.finalizeSuccessfulBackup(udid: udid, onProgress: onProgress)
+                            continuation.resume(returning: verified)
+                            return
                         } else {
                             let combinedStderr = [pymobiledeviceStderr, idevicebackupStderr]
                                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                                 .joined(separator: "\n---\n")
+                            self.isCreatingBackup = false
                             self.backupProgress = "Backup failed"
                             let failure = Self.backupFailure(
                                 primary: "Incremental backup failed via both backends.",
@@ -707,7 +761,7 @@ final class BackupManager: ObservableObject {
                                 stderr: combinedStderr
                             )
                         }
-                        continuation.resume(returning: exitCode == 0)
+                        continuation.resume(returning: false)
                     }
                 }
             )
@@ -739,12 +793,13 @@ final class BackupManager: ObservableObject {
 
         // Fallback: idevicebackup2
         return await withCheckedContinuation { continuation in
-            Shell.runStreaming(
+            activeProcess = Shell.runStreaming(
                 "idevicebackup2",
                 arguments: ["restore", "--system", "--reboot", "-u", udid, backupPath],
                 onOutput: { output in onProgress(output) },
                 onError: { _ in },
-                completion: { exitCode in
+                completion: { [weak self] exitCode in
+                    self?.activeProcess = nil
                     continuation.resume(returning: exitCode == 0)
                 }
             )

@@ -98,6 +98,14 @@ struct MessageListView: View {
                     action: chooseBackupFolder,
                     actionLabel: "Choose Backup Folder"
                 )
+            } else if messageVM.chats.isEmpty && messageVM.backupReadiness != .unknown {
+                EmptyStateView(
+                    icon: messageVM.backupReadiness.icon,
+                    title: messageVM.backupReadiness.title,
+                    subtitle: messageVM.backupReadiness.subtitle,
+                    action: chooseBackupFolder,
+                    actionLabel: "Choose Different Backup"
+                )
             } else if backupVM.selectedBackup == nil {
                 EmptyStateView(
                     icon: "message",
@@ -113,14 +121,6 @@ struct MessageListView: View {
                         }
                     },
                     actionLabel: backupVM.backups.isEmpty ? "Choose Backup Folder" : "Use Latest Backup"
-                )
-            } else if messageVM.chats.isEmpty {
-                EmptyStateView(
-                    icon: messageVM.backupReadiness.icon,
-                    title: messageVM.backupReadiness.title,
-                    subtitle: messageVM.backupReadiness.subtitle,
-                    action: chooseBackupFolder,
-                    actionLabel: "Choose Different Backup"
                 )
             } else {
                 List(filteredChats, selection: Binding<MessageChat?>(

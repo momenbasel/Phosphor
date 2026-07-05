@@ -9,6 +9,7 @@ final class BackupViewModel: ObservableObject {
     @Published var selectedBackup: BackupInfo?
     @Published var isCreating = false
     @Published var progressText = ""
+    @Published var progressFraction: Double?
     @Published var showAlert = false
     @Published var alertMessage = ""
     @Published var backupIssue: BackupManager.BackupFailure?
@@ -101,19 +102,21 @@ final class BackupViewModel: ObservableObject {
         lastBackupRequest = BackupRequest(udid: udid, incremental: incremental, preferNetwork: preferNetwork)
         isCreating = true
         progressText = "Preparing..."
+        progressFraction = nil
 
         let success: Bool
         if incremental {
             success = await backupManager.createIncrementalBackup(udid: udid, preferNetwork: preferNetwork) { [weak self] text in
-                self?.progressText = text
+                self?.updateBackupProgress(text)
             }
         } else {
             success = await backupManager.createBackup(udid: udid, preferNetwork: preferNetwork) { [weak self] text in
-                self?.progressText = text
+                self?.updateBackupProgress(text)
             }
         }
 
         isCreating = false
+        progressFraction = success ? 1.0 : progressFraction
         if success {
             alertMessage = "Backup completed"
             showAlert = true
@@ -123,6 +126,15 @@ final class BackupViewModel: ObservableObject {
         } else {
             alertMessage = backupManager.lastError ?? "Backup failed"
             showAlert = true
+        }
+    }
+
+    private func updateBackupProgress(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        progressText = trimmed
+        if let pct = PyMobileDevice.parseProgress(from: trimmed) {
+            progressFraction = min(max(pct, 0), 1)
         }
     }
 
