@@ -19,6 +19,11 @@ let package = Package(
             linkerSettings: [
                 .linkedLibrary("sqlite3")
             ]
+        ),
+        .testTarget(
+            name: "PhosphorTests",
+            dependencies: ["Phosphor"],
+            path: "Tests/PhosphorTests"
         )
     ]
 )

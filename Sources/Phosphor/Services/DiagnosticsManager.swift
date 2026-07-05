@@ -11,6 +11,10 @@ final class DiagnosticsManager: ObservableObject {
     /// Active syslog process for proper termination.
     private var syslogProcess: Process?
 
+    /// Splits coalesced syslog text into clean, bounded lines (fixes multi-line chunks
+    /// counting as a single entry and reassembles UTF-8 scalars split across reads).
+    private var syslogBuffer = StreamingLineBuffer(capacity: 5000)
+
     struct BatteryDiagnostics {
         let currentCapacity: Int
         let isCharging: Bool
@@ -175,42 +179,42 @@ final class DiagnosticsManager: ObservableObject {
         guard !isStreamingSyslog else { return }
         isStreamingSyslog = true
         syslogLines = []
+        syslogBuffer = StreamingLineBuffer(capacity: 5000)
+
+        // Split coalesced syslog text into whole lines; keep only the most recent 5000.
+        let handleText: (String) -> Void = { [weak self] text in
+            guard let self else { return }
+            self.syslogBuffer.append(Data(text.utf8))
+            let newLines = self.syslogBuffer.drain()
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            guard !newLines.isEmpty else { return }
+            self.syslogLines.append(contentsOf: newLines)
+            if self.syslogLines.count > 5000 {
+                self.syslogLines.removeFirst(self.syslogLines.count - 5000)
+            }
+        }
 
         // Primary: pymobiledevice3 syslog
         syslogProcess = PyMobileDevice.startSyslog(
             udid: udid,
-            onOutput: { [weak self] line in
-                guard let self else { return }
-                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmed.isEmpty else { return }
-
-                if self.syslogLines.count > 5000 {
-                    self.syslogLines.removeFirst(500)
-                }
-                self.syslogLines.append(trimmed)
-            },
+            onOutput: handleText,
             completion: { [weak self] _ in
                 self?.isStreamingSyslog = false
                 self?.syslogProcess = nil
             }
         )
 
-        // Fallback if pymobiledevice3 failed
+        // Fallback if pymobiledevice3 failed. Retain the returned Process so stopSyslog()
+        // can actually terminate it (previously the fallback stream was unstoppable).
         if syslogProcess == nil {
-            Shell.runStreaming(
+            syslogProcess = Shell.runStreaming(
                 "idevicesyslog",
                 arguments: ["-u", udid],
-                onOutput: { [weak self] line in
-                    guard let self else { return }
-                    let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !trimmed.isEmpty else { return }
-                    if self.syslogLines.count > 5000 {
-                        self.syslogLines.removeFirst(500)
-                    }
-                    self.syslogLines.append(trimmed)
-                },
+                onOutput: handleText,
                 completion: { [weak self] _ in
                     self?.isStreamingSyslog = false
+                    self?.syslogProcess = nil
                 }
             )
         }

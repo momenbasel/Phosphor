@@ -268,30 +268,71 @@ enum Shell {
         process.standardError = stderrPipe
         process.environment = environmentWithToolPaths()
 
+        // Coalesce high-rate output into a single in-flight main-queue flush. A chatty
+        // stream (e.g. verbose device syslog) previously enqueued one DispatchQueue.main.async
+        // block per chunk; when the producer outpaced the main thread that backlog grew without
+        // bound (each block retaining a String) and exhausted memory — the diagnostics freeze.
+        let outBuffer = CoalescingOutputBuffer()
+        let errBuffer = CoalescingOutputBuffer()
+        let flushLock = NSLock()
+        var outScheduled = false
+        var errScheduled = false
+
+        func scheduleOut() {
+            flushLock.lock()
+            if outScheduled { flushLock.unlock(); return }
+            outScheduled = true
+            flushLock.unlock()
+            DispatchQueue.main.async {
+                flushLock.lock(); outScheduled = false; flushLock.unlock()
+                let text = outBuffer.drainText()
+                if !text.isEmpty { onOutput(text) }
+            }
+        }
+        func scheduleErr() {
+            flushLock.lock()
+            if errScheduled { flushLock.unlock(); return }
+            errScheduled = true
+            flushLock.unlock()
+            DispatchQueue.main.async {
+                flushLock.lock(); errScheduled = false; flushLock.unlock()
+                let text = errBuffer.drainText()
+                if !text.isEmpty { onError(text) }
+            }
+        }
+
         stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
-            if !data.isEmpty, let str = String(data: data, encoding: .utf8) {
-                DispatchQueue.main.async { onOutput(str) }
-            }
+            guard !data.isEmpty else { return }
+            outBuffer.append(data)
+            scheduleOut()
         }
 
         stderrPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
-            if !data.isEmpty, let str = String(data: data, encoding: .utf8) {
-                DispatchQueue.main.async { onError(str) }
-            }
+            guard !data.isEmpty else { return }
+            errBuffer.append(data)
+            scheduleErr()
         }
 
         process.terminationHandler = { proc in
             stdoutPipe.fileHandleForReading.readabilityHandler = nil
             stderrPipe.fileHandleForReading.readabilityHandler = nil
-            DispatchQueue.main.async { completion(proc.terminationStatus) }
+            DispatchQueue.main.async {
+                let outText = outBuffer.finishText()
+                if !outText.isEmpty { onOutput(outText) }
+                let errText = errBuffer.finishText()
+                if !errText.isEmpty { onError(errText) }
+                completion(proc.terminationStatus)
+            }
         }
 
         do {
             try process.run()
             return process
         } catch {
+            stdoutPipe.fileHandleForReading.readabilityHandler = nil
+            stderrPipe.fileHandleForReading.readabilityHandler = nil
             onError("Failed to launch: \(error.localizedDescription)")
             completion(-1)
             return nil
