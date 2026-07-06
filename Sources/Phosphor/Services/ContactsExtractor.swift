@@ -153,7 +153,7 @@ final class ContactsExtractor {
         for contact in contacts {
             let phones = contact.phoneNumbers.joined(separator: "; ")
             let emails = contact.emails.joined(separator: "; ")
-            csv += "\"\(contact.firstName)\",\"\(contact.lastName)\",\"\(contact.organization)\",\"\(phones)\",\"\(emails)\"\n"
+            csv += CSVExport.row([contact.firstName, contact.lastName, contact.organization, phones, emails])
         }
         try csv.write(toFile: path, atomically: true, encoding: .utf8)
     }

@@ -261,11 +261,8 @@ final class WhatsAppExporter {
     private func exportCSV(messages: [WAMessage], title: String, to path: String) throws {
         var csv = "Date,Sender,Text,Media Type\n"
         for msg in messages {
-            let text = (msg.displayText)
-                .replacingOccurrences(of: "\"", with: "\"\"")
-                .replacingOccurrences(of: "\n", with: " ")
             let sender = msg.isFromMe ? "Me" : (msg.senderJid ?? "Unknown")
-            csv += "\"\(msg.formattedDate)\",\"\(sender)\",\"\(text)\",\"\(msg.mediaTypeLabel)\"\n"
+            csv += CSVExport.row([msg.formattedDate, sender, msg.displayText, msg.mediaTypeLabel])
         }
         try csv.write(toFile: path, atomically: true, encoding: .utf8)
     }

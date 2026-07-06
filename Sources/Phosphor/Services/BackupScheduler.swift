@@ -193,15 +193,23 @@ final class BackupScheduler: ObservableObject {
             return nil
         }
 
-        // No specific target: use the first eligible pymobiledevice3 result, preferring
-        // the single `usbmux list` snapshot over separate USB and network probes.
-        if let first = eligiblePyEntries.first {
+        // No specific target: only auto-select when exactly one eligible device is
+        // visible. Multiple devices require an explicit saved target to avoid
+        // backing up the wrong phone.
+        if eligiblePyEntries.count == 1, let first = eligiblePyEntries.first {
             return TargetDevice(udid: first.udid, preferNetwork: first.connectionType != "USB")
+        } else if eligiblePyEntries.count > 1 {
+            addLog("Multiple devices available; choose a scheduled backup target", success: false)
+            return nil
         }
 
         if schedule.wifiOnly {
             let networkDevices = await PyMobileDevice.listNetworkDevices()
-            if let first = networkDevices.first { return TargetDevice(udid: first, preferNetwork: true) }
+            if networkDevices.count == 1, let first = networkDevices.first { return TargetDevice(udid: first, preferNetwork: true) }
+            if networkDevices.count > 1 {
+                addLog("Multiple Wi-Fi devices available; choose a scheduled backup target", success: false)
+                return nil
+            }
         }
 
         // Fallback: libimobiledevice.
@@ -209,7 +217,11 @@ final class BackupScheduler: ObservableObject {
         let result = await Shell.runAsync("idevice_id", arguments: fallbackArgs)
         if result.succeeded {
             let devices = result.output.components(separatedBy: "\n").filter { !$0.isEmpty }
-            if let first = devices.first { return TargetDevice(udid: first, preferNetwork: schedule.wifiOnly) }
+            if devices.count == 1, let first = devices.first { return TargetDevice(udid: first, preferNetwork: schedule.wifiOnly) }
+            if devices.count > 1 {
+                addLog("Multiple devices available; choose a scheduled backup target", success: false)
+                return nil
+            }
         }
 
         return nil

@@ -27,6 +27,12 @@ struct MessageListView: View {
             messageDetailPane
         }
         .onAppear(perform: loadIfNeeded)
+        .onChange(of: backupVM.selectedBackup?.path) { _, _ in
+            reconcileSelectedBackupChange()
+        }
+        .onChange(of: backupVM.backups.map(\.path)) { _, _ in
+            reconcileBackupListChange()
+        }
         .overlay(alignment: .bottom) {
             if messageVM.isExporting { exportProgressBar }
         }
@@ -403,6 +409,30 @@ struct MessageListView: View {
     private func selectBackup(_ backup: BackupInfo) {
         backupVM.openBackupBrowser(backup)
         loadMessages(from: backup)
+    }
+
+    private func reconcileSelectedBackupChange() {
+        guard let backup = backupVM.selectedBackup else {
+            messageVM.clearLoadedBackup()
+            return
+        }
+        if !messageVM.isLoaded(backupPath: backup.path) {
+            loadMessages(from: backup)
+        }
+    }
+
+    private func reconcileBackupListChange() {
+        guard let selected = backupVM.selectedBackup else {
+            messageVM.clearLoadedBackup()
+            return
+        }
+        if backupVM.backups.contains(where: { $0.path == selected.path }) {
+            if !messageVM.isLoaded(backupPath: selected.path) {
+                loadMessages(from: selected)
+            }
+        } else {
+            messageVM.clearLoadedBackup()
+        }
     }
 
     private func chooseBackupFolder() {

@@ -95,9 +95,19 @@ def test_minimal_sms_schema_fixture_supports_limited_attachment_query(root: Path
 
 def test_csv_and_mbox_exports_sanitize_all_untrusted_fields(root: Path) -> None:
     src = read(root, "Sources/Phosphor/Services/MessageExporter.swift")
-    assert_contains(src, "private func csvField", "CSV export should centralize field escaping and formula neutralization")
-    assert_contains(src, "[\"=\", \"+\", \"-\", \"@\", \"\\t\", \"\\r\", \"\\n\"].contains", "CSV export should neutralize formula-leading cells")
-    assert_contains(src, "].map(csvField)", "CSV export should apply escaping to every field, not only message text")
+    csv_helper = read(root, "Sources/Phosphor/Utilities/CSVExport.swift")
+    assert_contains(csv_helper, "enum CSVExport", "CSV export should centralize field escaping and formula neutralization")
+    assert_contains(csv_helper, "[\"=\", \"+\", \"-\", \"@\", \"\\t\", \"\\r\", \"\\n\"].contains", "CSV export should neutralize formula-leading cells")
+    assert_contains(src, "].map(CSVExport.field)", "Messages CSV export should apply escaping to every field, not only message text")
+    for rel in [
+        "Sources/Phosphor/Services/ContactsExtractor.swift",
+        "Sources/Phosphor/Services/HealthExtractor.swift",
+        "Sources/Phosphor/Services/SafariExtractor.swift",
+        "Sources/Phosphor/Services/CalendarExtractor.swift",
+        "Sources/Phosphor/Services/CallLogExtractor.swift",
+        "Sources/Phosphor/Services/WhatsAppExporter.swift",
+    ]:
+        assert_contains(read(root, rel), "CSVExport.", f"{rel} should use centralized CSV escaping")
     assert_contains(src, "messageIDLocalPart", "MBOX Message-ID should sanitize database-derived GUIDs")
     assert_contains(src, "mimeBoundary(for: msg.guid)", "MBOX MIME boundaries should not include raw database strings")
     assert_contains(src, "safeHeaderToken", "MBOX MIME type headers should reject CR/LF and unsafe characters")
@@ -110,6 +120,24 @@ def test_mbox_export_includes_all_available_attachments(root: Path) -> None:
     assert_contains(src, "payloadAttachments", "MBOX export should collect all readable non-payload attachments")
     assert_contains(src, "for payload in payloadAttachments", "MBOX export should emit one MIME part per readable attachment")
     assert "attachments.first(where" not in src[src.index("private func exportMbox"):src.index("/// Mbox bodies")], "MBOX export must not silently pick only the first attachment"
+
+
+def test_message_exports_cancel_and_invalidate_on_backup_switch(root: Path) -> None:
+    vm = read(root, "Sources/Phosphor/ViewModels/MessageViewModel.swift")
+    view = read(root, "Sources/Phosphor/Views/Messages/MessageListView.swift")
+    exporter = read(root, "Sources/Phosphor/Services/MessageExporter.swift")
+    assert_contains(vm, "activeExportID", "Message exports should use operation IDs to ignore stale completions")
+    assert_contains(vm, "self.backupPath == backupPath", "Export completions should be scoped to the captured backup path")
+    assert_contains(vm, "cancelExport(presentAlert: false)", "Loading a different backup should cancel in-flight exports without stale UI")
+    assert_contains(view, ".onChange(of: backupVM.selectedBackup?.path)", "Messages view should reload when external selected backup changes")
+    assert_contains(view, ".onChange(of: backupVM.backups.map(\\.path))", "Messages view should clear/reload when the backup list changes")
+    assert_contains(exporter, "cancellationCheck", "Export writers should accept a cancellation hook")
+    assert_contains(exporter, "try cancellationCheck?()", "Export writer loops should check cancellation during long exports")
+
+
+def test_notes_bulk_export_uses_collision_safe_filenames(root: Path) -> None:
+    notes = read(root, "Sources/Phosphor/Services/NotesExtractor.swift")
+    assert_contains(notes, "-note-\\(note.id)", "Bulk note export filenames should include stable note id to avoid duplicate-title overwrites")
 
 
 def test_message_exporter_caches_schema_and_preserves_tapback_context(root: Path) -> None:

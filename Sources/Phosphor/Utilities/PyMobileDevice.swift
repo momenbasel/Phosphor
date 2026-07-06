@@ -929,12 +929,16 @@ enum PyMobileDevice {
 
     // MARK: - Utility
 
-    /// Parse backup progress from pymobiledevice3 tqdm output.
+    /// Parse backup progress from pymobiledevice3/idevicebackup2 output.
     /// Matches patterns like "42%|...", "12.5%|...", or "Progress: 42%".
+    /// Streaming tools often redraw progress with carriage returns, so a single
+    /// pipe chunk can contain several percentages. Use the latest percentage in
+    /// the chunk, not the first stale one.
     static func parseProgress(from text: String) -> Double? {
-        let pattern = #"(\d+(?:\.\d+)?)%"#
-        guard let regex = try? NSRegularExpression(pattern: pattern),
-              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+        let pattern = #"(\d+(?:\.\d+)?)\s*%"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
+        guard let match = matches.last,
               let range = Range(match.range(at: 1), in: text),
               let value = Double(text[range]) else { return nil }
         return min(max(value / 100.0, 0), 1)

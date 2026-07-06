@@ -3,6 +3,7 @@ import SwiftUI
 /// App settings: backup location, dependencies check, about.
 struct SettingsView: View {
 
+    @EnvironmentObject var deviceVM: DeviceViewModel
     @AppStorage("phosphor.backupDirectory") private var backupDirectory = BackupManager.defaultBackupDir
     @State private var dependencyList: [DependencyItem] = []
     @AppStorage("phosphor.autoRefreshInterval") private var autoRefreshInterval: Double = 4.0
@@ -169,6 +170,21 @@ struct SettingsView: View {
                         .frame(width: 100)
                     }
 
+                    Picker("Device", selection: Binding<String>(
+                        get: { scheduler.schedule.targetUDID ?? "" },
+                        set: { scheduler.schedule.targetUDID = $0.isEmpty ? nil : $0 }
+                    )) {
+                        Text("Choose a device").tag("")
+                        ForEach(deviceVM.devices) { device in
+                            Text("\(device.name) • \(device.connectionType.rawValue) • \(device.id.prefix(8))…").tag(device.id)
+                        }
+                    }
+                    if scheduler.schedule.targetUDID == nil {
+                        Text("Choose the phone this schedule should back up. If multiple devices are visible and no target is saved, scheduled backups will not run.")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+
                     Toggle("Wi-Fi only (skip if Wi-Fi is not available)", isOn: $scheduler.schedule.wifiOnly)
                     Toggle("Incremental when possible (faster)", isOn: $scheduler.schedule.incrementalOnly)
                     if scheduler.schedule.incrementalOnly {
@@ -207,6 +223,11 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
+        .onAppear {
+            if scheduler.schedule.targetUDID == nil, deviceVM.devices.count == 1 {
+                scheduler.schedule.targetUDID = deviceVM.devices.first?.id
+            }
+        }
         .onChange(of: scheduler.schedule.enabled) { _, _ in scheduler.updateNextRunDate() }
         .onChange(of: scheduler.schedule.frequency) { _, _ in scheduler.updateNextRunDate() }
         .onChange(of: scheduler.schedule.preferredHour) { _, _ in scheduler.updateNextRunDate() }

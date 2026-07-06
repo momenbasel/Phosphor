@@ -54,6 +54,20 @@ final class BackupManager: ObservableObject {
 
     /// Active backup process for cancellation.
     private var activeProcess: Process?
+    private var currentBackupOperationID: UUID?
+    private var backupCancelRequested = false
+
+    private func beginBackupOperation() -> UUID {
+        let id = UUID()
+        currentBackupOperationID = id
+        backupCancelRequested = false
+        activeProcess = nil
+        return id
+    }
+
+    private func isCurrentBackupOperation(_ id: UUID) -> Bool {
+        currentBackupOperationID == id && !backupCancelRequested
+    }
 
     /// Maximum number of trailing stderr lines to retain for diagnostics on failure.
     private static let stderrTailLineLimit = 20
@@ -390,11 +404,28 @@ final class BackupManager: ObservableObject {
 
     private func finalizeSuccessfulBackup(udid: String, onProgress: @escaping (String) -> Void) -> Bool {
         isCreatingBackup = false
+        activeProcess = nil
+        currentBackupOperationID = nil
         switch Self.backupMetadataHealth(for: udid) {
         case .complete:
+            discoverBackups()
+            guard backups.contains(where: { $0.udid == udid || $0.id == udid }) else {
+                let path = Self.backupPath(for: udid)
+                backupProgress = "Backup metadata incomplete"
+                lastBackupFailure = BackupFailure(
+                    title: "Backup Metadata Incomplete",
+                    message: "The backup command finished, but Phosphor could not rediscover a complete backup for the requested device. Run a fresh full backup with the device unlocked and connected over USB when possible.",
+                    technicalDetails: path,
+                    recoveryAction: .runFullBackup,
+                    udid: udid,
+                    recoveryPath: path
+                )
+                lastError = lastBackupFailure?.message
+                onProgress(lastError ?? "Backup metadata incomplete.")
+                return false
+            }
             backupProgress = "Backup complete"
             backupPercent = 1.0
-            discoverBackups()
             onProgress("Backup complete")
             return true
         case .missing:
@@ -435,6 +466,7 @@ final class BackupManager: ObservableObject {
         onProgress: @escaping (String) -> Void
     ) async -> Bool {
         isCreatingBackup = true
+        let operationID = beginBackupOperation()
         backupProgress = "Starting backup..."
         backupPercent = 0
         lastError = nil
@@ -482,9 +514,10 @@ final class BackupManager: ObservableObject {
             preferNetwork: preferNetwork,
             onProgress: onProgress
         )
-        if pySuccess {
+        if pySuccess, isCurrentBackupOperation(operationID) {
             return finalizeSuccessfulBackup(udid: udid, onProgress: onProgress)
         }
+        guard isCurrentBackupOperation(operationID) else { return false }
 
         let pymobiledeviceStderr = pymobiledeviceStderrTail.joined(separator: "\n")
 
@@ -526,6 +559,10 @@ final class BackupManager: ObservableObject {
                             return
                         }
                         self.activeProcess = nil
+                        guard self.isCurrentBackupOperation(operationID) else {
+                            continuation.resume(returning: false)
+                            return
+                        }
                         if exitCode == 0 {
                             let verified = self.finalizeSuccessfulBackup(udid: udid, onProgress: onProgress)
                             continuation.resume(returning: verified)
@@ -534,6 +571,7 @@ final class BackupManager: ObservableObject {
                             let combinedStderr = [pymobiledeviceStderr, idevicebackupStderr]
                                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                                 .joined(separator: "\n---\n")
+                            self.currentBackupOperationID = nil
                             self.isCreatingBackup = false
                             self.backupProgress = "Backup failed"
                             let failure = Self.backupFailure(
@@ -571,6 +609,10 @@ final class BackupManager: ObservableObject {
         preferNetwork: Bool,
         onProgress: @escaping (String) -> Void
     ) async -> Bool {
+        guard !preferNetwork else {
+            onProgress("Using network-only idevicebackup2 path...")
+            return false
+        }
         guard PyMobileDevice.available() else {
             lastError = "pymobiledevice3 not installed. Install with: pipx install pymobiledevice3"
             return false
@@ -636,6 +678,7 @@ final class BackupManager: ObservableObject {
         onProgress: @escaping (String) -> Void
     ) async -> Bool {
         isCreatingBackup = true
+        let operationID = beginBackupOperation()
         backupProgress = "Starting incremental backup..."
         backupPercent = 0
         lastError = nil
@@ -699,10 +742,11 @@ final class BackupManager: ObservableObject {
                 preferNetwork: preferNetwork,
                 onProgress: onProgress
             )
-            if success {
+            if success, isCurrentBackupOperation(operationID) {
                 return finalizeSuccessfulBackup(udid: udid, onProgress: onProgress)
             }
         }
+        guard isCurrentBackupOperation(operationID) else { return false }
 
         let pymobiledeviceStderr = pymobiledeviceStderrTail.joined(separator: "\n")
         var idevicebackupStderr = ""
@@ -739,6 +783,10 @@ final class BackupManager: ObservableObject {
                             return
                         }
                         self.activeProcess = nil
+                        guard self.isCurrentBackupOperation(operationID) else {
+                            continuation.resume(returning: false)
+                            return
+                        }
                         if exitCode == 0 {
                             let verified = self.finalizeSuccessfulBackup(udid: udid, onProgress: onProgress)
                             continuation.resume(returning: verified)
@@ -747,6 +795,7 @@ final class BackupManager: ObservableObject {
                             let combinedStderr = [pymobiledeviceStderr, idevicebackupStderr]
                                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                                 .joined(separator: "\n---\n")
+                            self.currentBackupOperationID = nil
                             self.isCreatingBackup = false
                             self.backupProgress = "Backup failed"
                             let failure = Self.backupFailure(
@@ -808,6 +857,8 @@ final class BackupManager: ObservableObject {
 
     /// Cancel an active backup/restore.
     func cancelBackup() {
+        backupCancelRequested = true
+        currentBackupOperationID = nil
         activeProcess?.terminate()
         activeProcess = nil
         isCreatingBackup = false

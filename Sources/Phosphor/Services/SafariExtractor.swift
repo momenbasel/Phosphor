@@ -176,8 +176,7 @@ final class SafariExtractor {
         case .csv:
             var csv = "Title,URL,Visit Count,Last Visit\n"
             for item in history {
-                let title = item.title.replacingOccurrences(of: "\"", with: "\"\"")
-                csv += "\"\(title)\",\"\(item.url)\",\(item.visitCount),\"\(item.formattedDate)\"\n"
+                csv += CSVExport.row([item.title, item.url, String(item.visitCount), item.formattedDate])
             }
             try csv.write(toFile: path, atomically: true, encoding: .utf8)
         case .json:

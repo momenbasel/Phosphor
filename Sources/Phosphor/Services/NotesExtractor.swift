@@ -312,7 +312,7 @@ final class NotesExtractor {
                 .replacingOccurrences(of: ":", with: "-")
                 .prefix(50)
             let ext = note.htmlBody != nil ? "html" : "txt"
-            let path = (directory as NSString).appendingPathComponent("\(safeName).\(ext)")
+            let path = (directory as NSString).appendingPathComponent("\(safeName)-note-\(note.id).\(ext)")
             try exportNote(note, to: path)
             count += 1
         }

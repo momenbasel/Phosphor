@@ -467,12 +467,19 @@ final class MessageExporter {
     // MARK: - Export
 
     /// Export messages to a file in the specified format.
-    func exportChat(chatId: Int, format: MessageExportFormat, to path: String, options: MessageExportOptions = MessageExportOptions()) throws {
+    func exportChat(
+        chatId: Int,
+        format: MessageExportFormat,
+        to path: String,
+        options: MessageExportOptions = MessageExportOptions(),
+        cancellationCheck: (() throws -> Void)? = nil
+    ) throws {
+        try cancellationCheck?()
         let messages = options.apply(to: try getMessages(chatId: chatId))
         let chats = try getChats(includeEmpty: true, includeHidden: true)
         let chat = chats.first { $0.id == chatId }
         let chatTitle = chat?.title ?? "Unknown"
-        try exportMessages(messages, chatTitle: chatTitle, format: format, to: path, options: options)
+        try exportMessages(messages, chatTitle: chatTitle, format: format, to: path, options: options, cancellationCheck: cancellationCheck)
     }
 
     /// Export all conversations.
@@ -480,7 +487,8 @@ final class MessageExporter {
         format: MessageExportFormat,
         to directory: String,
         options: MessageExportOptions = MessageExportOptions(),
-        onProgress: ((Int, Int, String) throws -> Void)? = nil
+        onProgress: ((Int, Int, String) throws -> Void)? = nil,
+        cancellationCheck: (() throws -> Void)? = nil
     ) throws -> Int {
         let chats = try getChats()
         let fm = FileManager.default
@@ -488,28 +496,36 @@ final class MessageExporter {
 
         var count = 0
         for chat in chats {
+            try cancellationCheck?()
             try onProgress?(count, chats.count, chat.title)
             let filename = exportFilename(for: chat, format: format)
             let path = (directory as NSString).appendingPathComponent(filename)
-            try exportChat(chatId: chat.id, format: format, to: path, options: options)
+            try exportChat(chatId: chat.id, format: format, to: path, options: options, cancellationCheck: cancellationCheck)
             count += 1
         }
         try onProgress?(count, chats.count, "Complete")
         return count
     }
 
-    func exportMessages(_ messages: [Message], chatTitle: String, format: MessageExportFormat, to path: String, options: MessageExportOptions = MessageExportOptions()) throws {
+    func exportMessages(
+        _ messages: [Message],
+        chatTitle: String,
+        format: MessageExportFormat,
+        to path: String,
+        options: MessageExportOptions = MessageExportOptions(),
+        cancellationCheck: (() throws -> Void)? = nil
+    ) throws {
         switch format {
         case .csv:
-            try exportCSV(messages: messages, chatTitle: chatTitle, to: path)
+            try exportCSV(messages: messages, chatTitle: chatTitle, to: path, cancellationCheck: cancellationCheck)
         case .txt:
-            try exportPlainText(messages: messages, chatTitle: chatTitle, to: path)
+            try exportPlainText(messages: messages, chatTitle: chatTitle, to: path, cancellationCheck: cancellationCheck)
         case .html:
-            try exportHTML(messages: messages, chatTitle: chatTitle, to: path, includeAttachments: options.includeAttachments)
+            try exportHTML(messages: messages, chatTitle: chatTitle, to: path, includeAttachments: options.includeAttachments, cancellationCheck: cancellationCheck)
         case .json:
-            try exportJSON(messages: messages, chatTitle: chatTitle, to: path)
+            try exportJSON(messages: messages, chatTitle: chatTitle, to: path, cancellationCheck: cancellationCheck)
         case .mbox:
-            try exportMbox(messages: messages, chatTitle: chatTitle, to: path, includeAttachments: options.includeAttachments)
+            try exportMbox(messages: messages, chatTitle: chatTitle, to: path, includeAttachments: options.includeAttachments, cancellationCheck: cancellationCheck)
         }
     }
 
@@ -523,17 +539,7 @@ final class MessageExporter {
         return "\(safeName)-chat-\(chat.id).\(format.fileExtension)"
     }
 
-    private func csvField(_ raw: String) -> String {
-        var safe = raw
-        if let first = safe.unicodeScalars.first,
-           ["=", "+", "-", "@", "\t", "\r", "\n"].contains(String(first)) {
-            safe = "'" + safe
-        }
-        safe = safe.replacingOccurrences(of: "\"", with: "\"\"")
-        return "\"\(safe)\""
-    }
-
-    private func exportCSV(messages: [Message], chatTitle: String, to path: String) throws {
+    private func exportCSV(messages: [Message], chatTitle: String, to path: String, cancellationCheck: (() throws -> Void)? = nil) throws {
         let outputURL = URL(fileURLWithPath: path)
         try? FileManager.default.removeItem(at: outputURL)
         FileManager.default.createFile(atPath: path, contents: nil)
@@ -548,6 +554,7 @@ final class MessageExporter {
 
         try append("Date,Sender,Text,Reactions,Service\n")
         for msg in messages {
+            try cancellationCheck?()
             let reactions = msg.reactions
                 .map { "\($0.sender): \($0.type.label)" }
                 .joined(separator: "; ")
@@ -557,12 +564,12 @@ final class MessageExporter {
                 msg.text ?? "",
                 reactions,
                 msg.service
-            ].map(csvField)
+            ].map(CSVExport.field)
             try append(fields.joined(separator: ",") + "\n")
         }
     }
 
-    private func exportPlainText(messages: [Message], chatTitle: String, to path: String) throws {
+    private func exportPlainText(messages: [Message], chatTitle: String, to path: String, cancellationCheck: (() throws -> Void)? = nil) throws {
         let outputURL = URL(fileURLWithPath: path)
         try? FileManager.default.removeItem(at: outputURL)
         FileManager.default.createFile(atPath: path, contents: nil)
@@ -580,6 +587,7 @@ final class MessageExporter {
         try append(String(repeating: "-", count: 60) + "\n\n")
 
         for msg in messages {
+            try cancellationCheck?()
             try append("[\(msg.formattedDate)] \(msg.senderLabel):\n")
             try append("\(msg.displayText)\n")
             for reaction in msg.reactions {
@@ -597,7 +605,7 @@ final class MessageExporter {
     /// Plugin payload blobs (rich-link metadata) are skipped because they are
     /// binary plists that macOS has no handler for and would clutter the export
     /// folder with `*.pluginPayloadAttachment` files (issue #17).
-    private func stageAttachments(messages: [Message], htmlPath: String) -> [String: String] {
+    private func stageAttachments(messages: [Message], htmlPath: String, cancellationCheck: (() throws -> Void)? = nil) throws -> [String: String] {
         let baseName = (htmlPath as NSString).deletingPathExtension
         let dir = "\(baseName)_attachments"
         let fm = FileManager.default
@@ -605,6 +613,7 @@ final class MessageExporter {
         var folderCreated = false
 
         for msg in messages {
+            try cancellationCheck?()
             for attachment in msg.attachments {
                 guard !attachment.isPluginPayload else { continue }
                 guard let filename = attachment.filename, !filename.isEmpty else { continue }
@@ -645,9 +654,9 @@ final class MessageExporter {
         try? FileManager.default.removeItem(atPath: dir)
     }
 
-    private func exportHTML(messages: [Message], chatTitle: String, to path: String, includeAttachments: Bool = true) throws {
+    private func exportHTML(messages: [Message], chatTitle: String, to path: String, includeAttachments: Bool = true, cancellationCheck: (() throws -> Void)? = nil) throws {
         removeAttachmentFolder(forHTMLPath: path)
-        let attachmentMap = includeAttachments ? stageAttachments(messages: messages, htmlPath: path) : [:]
+        let attachmentMap = includeAttachments ? try stageAttachments(messages: messages, htmlPath: path, cancellationCheck: cancellationCheck) : [:]
         let outputURL = URL(fileURLWithPath: path)
         try? FileManager.default.removeItem(at: outputURL)
         FileManager.default.createFile(atPath: path, contents: nil)
@@ -707,6 +716,7 @@ final class MessageExporter {
         var lastSender = ""
 
         for msg in messages {
+            try cancellationCheck?()
             let dateStr = msg.formattedDate
             if dateStr != lastDateStr {
                 append("<div class=\"time\">\(htmlEscape(dateStr))</div>\n")
@@ -776,7 +786,7 @@ final class MessageExporter {
     /// RFC 5322 envelope so Mail.app, Thunderbird, mutt, etc. can import the
     /// conversation as a mail folder. Attachments are embedded as base64 MIME parts
     /// when the backup file is available, otherwise referenced by name only.
-    private func exportMbox(messages: [Message], chatTitle: String, to path: String, includeAttachments: Bool = true) throws {
+    private func exportMbox(messages: [Message], chatTitle: String, to path: String, includeAttachments: Bool = true, cancellationCheck: (() throws -> Void)? = nil) throws {
         let crlf = "\r\n"
         let userDomain = "phosphor.local"
         let outputURL = URL(fileURLWithPath: path)
@@ -804,6 +814,7 @@ final class MessageExporter {
         rfc5322Formatter.locale = Locale(identifier: "en_US_POSIX")
 
         for msg in messages {
+            try cancellationCheck?()
             let envelopeDate = dateFormatter.string(from: msg.date)
             let envelopeFrom = msg.isFromMe ? "me" : (msg.handleId.isEmpty ? "unknown" : msg.handleId)
             let envelopeAddr = mboxAddress(envelopeFrom, domain: userDomain)
@@ -939,7 +950,7 @@ final class MessageExporter {
             .replacingOccurrences(of: "'", with: "&#39;")
     }
 
-    private func exportJSON(messages: [Message], chatTitle: String, to path: String) throws {
+    private func exportJSON(messages: [Message], chatTitle: String, to path: String, cancellationCheck: (() throws -> Void)? = nil) throws {
         let outputURL = URL(fileURLWithPath: path)
         try? FileManager.default.removeItem(at: outputURL)
         FileManager.default.createFile(atPath: path, contents: nil)
@@ -961,6 +972,7 @@ final class MessageExporter {
         """)
 
         for (index, msg) in messages.enumerated() {
+            try cancellationCheck?()
             var entry: [String: Any] = [
                 "id": msg.id,
                 "guid": msg.guid,

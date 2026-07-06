@@ -213,7 +213,7 @@ final class HealthExtractor {
         let samples = try getSamples(dataType: dataType, limit: 50000)
         var csv = "Date,Value,Unit,Source\n"
         for s in samples {
-            csv += "\"\(s.startDate.shortString)\",\(s.value),\"\(s.unit)\",\"\(s.sourceName)\"\n"
+            csv += CSVExport.row([s.startDate.shortString, String(s.value), s.unit, s.sourceName])
         }
         try csv.write(toFile: path, atomically: true, encoding: .utf8)
     }
@@ -222,8 +222,14 @@ final class HealthExtractor {
         let workouts = try getWorkouts(limit: 10000)
         var csv = "Date,Activity,Duration,Energy (kcal),Distance (m),Source\n"
         for w in workouts {
-            csv += "\"\(w.startDate.shortString)\",\"\(w.activityName)\",\"\(w.durationString)\","
-            csv += "\(w.totalEnergyBurned ?? 0),\(w.totalDistance ?? 0),\"\(w.sourceName)\"\n"
+            csv += CSVExport.row([
+                w.startDate.shortString,
+                w.activityName,
+                w.durationString,
+                String(w.totalEnergyBurned ?? 0),
+                String(w.totalDistance ?? 0),
+                w.sourceName
+            ])
         }
         try csv.write(toFile: path, atomically: true, encoding: .utf8)
     }

@@ -138,7 +138,7 @@ final class CallLogExtractor {
         let calls = try getCallLog()
         var csv = "Date,Number,Type,Duration\n"
         for call in calls {
-            csv += "\"\(call.date.shortString)\",\"\(call.address)\",\"\(call.callType.label)\",\"\(call.durationString)\"\n"
+            csv += CSVExport.row([call.date.shortString, call.address, call.callType.label, call.durationString])
         }
         try csv.write(toFile: path, atomically: true, encoding: .utf8)
     }

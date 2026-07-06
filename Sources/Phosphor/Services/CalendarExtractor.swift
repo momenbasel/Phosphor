@@ -157,17 +157,22 @@ final class CalendarExtractor {
     func exportAsCSV(events: [CalendarEvent], to path: String) throws {
         var csv = "Title,Start,End,All Day,Calendar,Location,Notes\r\n"
         for event in events {
-            csv += "\(csvEscape(event.title)),\(csvEscape(event.startDate.iso8601String)),\(csvEscape(event.endDate.iso8601String)),\(event.isAllDay),\(csvEscape(event.calendarTitle)),\(csvEscape(event.location)),\(csvEscape(event.notes))\r\n"
+            csv += CSVExport.row([
+                event.title,
+                event.startDate.iso8601String,
+                event.endDate.iso8601String,
+                String(event.isAllDay),
+                event.calendarTitle,
+                event.location,
+                event.notes
+            ], lineEnding: "\r\n")
         }
         try csv.write(toFile: path, atomically: true, encoding: .utf8)
     }
 
-    /// RFC 4180 CSV escaping: double-quote fields containing commas, quotes, or newlines.
+    /// RFC 4180 CSV escaping plus spreadsheet formula neutralization.
     private func csvEscape(_ field: String) -> String {
-        if field.contains(",") || field.contains("\"") || field.contains("\n") || field.contains("\r") {
-            return "\"\(field.replacingOccurrences(of: "\"", with: "\"\""))\""
-        }
-        return field
+        CSVExport.field(field)
     }
 
     // MARK: - Private

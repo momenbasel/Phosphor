@@ -21,6 +21,11 @@ struct ContentView: View {
                 if !tunnelRunning && deviceVM.hasDevices {
                     tunnelBanner
                 }
+
+                if backupVM.isCreating {
+                    globalBackupProgressBanner
+                }
+
                 detailView
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -96,6 +101,48 @@ struct ContentView: View {
                 c.resume(returning: TunnelService.isRunning)
             }
         }
+    }
+
+    private var globalBackupProgressBanner: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Image(systemName: "externaldrive.badge.timemachine")
+                    .foregroundStyle(.indigo)
+                    .font(.system(size: 14, weight: .semibold))
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Backing up to Phosphor")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(backupVM.progressText.isEmpty ? "Preparing backup..." : backupVM.progressText)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                if let fraction = backupVM.progressFraction {
+                    Text("\(Int((fraction * 100).rounded()))%")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.indigo)
+                        .monospacedDigit()
+                } else {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                }
+            }
+
+            if let fraction = backupVM.progressFraction {
+                ProgressView(value: fraction, total: 1.0)
+                    .progressViewStyle(.linear)
+                    .tint(.indigo)
+                    .accessibilityLabel("Global backup progress")
+                    .accessibilityValue("\(Int((fraction * 100).rounded())) percent")
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(Color.indigo.opacity(0.08))
     }
 
     @ViewBuilder

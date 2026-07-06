@@ -174,6 +174,15 @@ def test_backup_creation_surfaces_determinate_progress_bar(root: Path) -> None:
     assert_contains(view, "accessibilityLabel(\"Backup progress\")", "Backup progress bar should have an accessibility label")
     assert_contains(view, "monospacedDigit()", "The visible percent label should not jitter while progress changes")
 
+    content = read(root, "Sources/Phosphor/Views/ContentView.swift")
+    assert_contains(content, "if backupVM.isCreating", "Backup progress should be globally visible even when the user is not on the Backups screen")
+    assert_contains(content, "Backing up to Phosphor", "Global backup progress banner should clearly label the active backup")
+    assert_contains(content, "accessibilityLabel(\"Global backup progress\")", "Global backup progress bar should be accessible")
+
+    parser = read(root, "Sources/Phosphor/Utilities/PyMobileDevice.swift")
+    assert_contains(parser, "let matches = regex.matches", "Progress parser should inspect all percentages in a streaming chunk")
+    assert_contains(parser, "matches.last", "Progress parser should use the latest percentage when carriage-return redraws arrive in one chunk")
+
     manager = read(root, "Sources/Phosphor/Services/BackupManager.swift")
     assert_contains(manager, "onProgress(progressText)", "pymobiledevice3 stderr progress should be forwarded to the view model, not only stored internally")
     assert_contains(manager, "idevicebackupStderr.append(error)", "Fallback stderr should still be retained for failures after progress parsing")
@@ -182,9 +191,25 @@ def test_backup_creation_surfaces_determinate_progress_bar(root: Path) -> None:
 def test_backup_completion_is_verified_and_fallback_process_is_tracked(root: Path) -> None:
     manager = read(root, "Sources/Phosphor/Services/BackupManager.swift")
     assert_contains(manager, "finalizeSuccessfulBackup", "Successful backup commands should verify complete metadata before reporting success")
+    assert_contains(manager, "backups.contains(where: { $0.udid == udid || $0.id == udid })", "Post-backup verification should require the requested UDID to be rediscovered")
     assert_contains(manager, "Backup Metadata Incomplete", "Incomplete post-backup metadata should surface a structured failure")
     assert_contains(manager, "activeProcess = Shell.runStreaming", "Fallback idevicebackup2 backup/restore processes should be tracked for cancellation")
     assert_contains(manager, "self.activeProcess = nil", "Streaming fallback completion should clear activeProcess")
+    assert_contains(manager, "currentBackupOperationID", "Backup cancellation should use operation IDs to ignore stale completions")
+    assert_contains(manager, "guard isCurrentBackupOperation(operationID) else { return false }", "Cancelled primary backups should not continue into fallback")
+    assert_contains(manager, "guard !preferNetwork else", "Wi-Fi-only backups should skip transport-agnostic pymobiledevice3 backup path")
+
+
+def test_scheduled_backups_require_explicit_target_when_ambiguous(root: Path) -> None:
+    scheduler = read(root, "Sources/Phosphor/Services/BackupScheduler.swift")
+    backup_view = read(root, "Sources/Phosphor/Views/Backup/BackupListView.swift")
+    settings = read(root, "Sources/Phosphor/Views/Settings/SettingsView.swift")
+    assert_contains(scheduler, "eligiblePyEntries.count == 1", "Scheduler should auto-select only when exactly one eligible device is visible")
+    assert_contains(scheduler, "Multiple devices available; choose a scheduled backup target", "Scheduler should refuse ambiguous multi-device runs")
+    assert_contains(backup_view, "Picker(\"Device\"", "Backup schedule sheet should expose a target-device picker")
+    assert_contains(backup_view, "scheduler.schedule.targetUDID", "Backup schedule sheet should persist the selected target UDID")
+    assert_contains(settings, "Picker(\"Device\"", "Settings schedule tab should expose a target-device picker")
+    assert_contains(settings, "scheduler.schedule.targetUDID", "Settings schedule tab should persist the selected target UDID")
 
 
 def test_message_readiness_not_masked_by_manifest_selection_failure(root: Path) -> None:
