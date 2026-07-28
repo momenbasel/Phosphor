@@ -3,6 +3,7 @@ import SwiftUI
 /// App settings: backup location, dependencies check, about.
 struct SettingsView: View {
 
+    @EnvironmentObject private var updateController: UpdateViewModel
     @AppStorage("phosphor.backupDirectory") private var backupDirectory = BackupManager.defaultBackupDir
     @State private var dependencyList: [DependencyItem] = []
     @State private var isCheckingDependencies = false
@@ -285,6 +286,21 @@ struct SettingsView: View {
             Text("Version \(AppVersion.current) (\(AppVersion.build))")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+
+            HStack(spacing: 8) {
+                Button("Check for Updates") {
+                    Task { await updateController.checkForUpdates() }
+                }
+                .disabled(updateController.isChecking)
+
+                if updateController.isChecking {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Checking…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
 
             Text("Free and open-source iOS device manager for macOS.\nBattery diagnostics, screen capture, location tools, and more.")
                 .font(.system(size: 13))
