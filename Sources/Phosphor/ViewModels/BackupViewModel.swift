@@ -106,6 +106,7 @@ final class BackupViewModel: ObservableObject {
     }
 
     func createBackup(udid: String, incremental: Bool = false, preferNetwork: Bool = false) async {
+        guard !isCreating else { return }
         let operationID = UUID()
         backupOperationID = operationID
         lastBackupRequest = BackupRequest(udid: udid, incremental: incremental, preferNetwork: preferNetwork)

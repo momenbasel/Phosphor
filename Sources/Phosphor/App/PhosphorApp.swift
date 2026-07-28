@@ -105,7 +105,7 @@ struct PhosphorApp: App {
                     }
                 }
                 .keyboardShortcut("b", modifiers: .command)
-                .disabled(deviceVM.selectedDevice == nil)
+                .disabled(deviceVM.selectedDevice == nil || backupVM.isCreating)
 
                 Button("Refresh Backups") {
                     backupVM.loadBackups()
