@@ -139,3 +139,39 @@ struct ManifestPlist {
     let systemVersion: String?
     let wasPasscodeSet: Bool
 }
+
+/// Per-app metadata pulled from Manifest.plist's Applications dictionary.
+/// `PlaceholderIcon` is the PNG the App Store/download placeholder used at
+/// backup time — the only app icon bytes actually present in a backup.
+struct BackupApplicationInfo {
+    let bundleID: String
+    let name: String?
+    let placeholderIconData: Data?
+}
+
+extension PlistParser {
+    /// Parse per-app metadata (display names + placeholder icons) from
+    /// Manifest.plist. Returns an empty array when the backup has no
+    /// Applications dictionary (e.g. partial/legacy backups).
+    static func parseApplications(_ backupPath: String) -> [BackupApplicationInfo] {
+        let manifestPath = (backupPath as NSString).appendingPathComponent("Manifest.plist")
+        guard let dict = parse(manifestPath),
+              let apps = dict["Applications"] as? [String: [String: Any]] else { return [] }
+        return apps.map { bundleID, info in
+            // App names live inside the nested iTunesMetadata plist blob
+            // (itemName / bundleDisplayName), not as top-level keys.
+            var name = (info["CFBundleDisplayName"] as? String)
+                ?? (info["CFBundleName"] as? String)
+            if name == nil,
+               let metaData = info["iTunesMetadata"] as? Data,
+               let meta = parse(data: metaData) {
+                name = (meta["bundleDisplayName"] as? String)
+                    ?? (meta["itemName"] as? String)
+                    ?? (meta["title"] as? String)
+            }
+            let icon = (info["PlaceholderIcon"] as? Data)
+                ?? (info["PlaceholderIconData"] as? Data)
+            return BackupApplicationInfo(bundleID: bundleID, name: name, placeholderIconData: icon)
+        }.sorted { $0.bundleID < $1.bundleID }
+    }
+}

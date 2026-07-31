@@ -139,6 +139,23 @@
 "watch.apps" = "Watch Apps";
 "watch.activity" = "Activity";
 
+/* Home Screen */
+"homeScreen.homeScreen" = "Home Screen";
+"homeScreen.noBackupSelected" = "No Backup Selected";
+"homeScreen.selectBackup" = "Select a backup from the Backups section to see its home screen.";
+"homeScreen.noLayout" = "No Home Screen Data";
+"homeScreen.noLayoutDesc" = "This backup does not contain IconState.plist (HomeDomain/SpringBoard).";
+"homeScreen.readFailed" = "Could Not Read Layout";
+"homeScreen.exportPNG" = "Export PNG";
+"homeScreen.reload" = "Reload";
+"homeScreen.reading" = "Reading home screen layout…";
+
+/* Backup Browser */
+"browser.allDomains" = "All Domains";
+"browser.items" = "%lld items";
+"browser.preview" = "Toggle Preview";
+"browser.extract" = "Extract";
+
 /* Welcome */
 "welcome.title" = "Welcome to Phosphor";
 "welcome.subtitle" = "Connect an iOS device or select a section from the sidebar.";

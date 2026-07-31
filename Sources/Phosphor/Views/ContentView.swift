@@ -126,6 +126,8 @@ struct ContentView: View {
             BackupBrowserView()
         case .timeMachine:
             BackupTimeMachineView(onBrowseBackup: { selectedSection = .backupBrowser })
+        case .homeScreen:
+            HomeScreenView()
         case .messages:
             MessageListView()
         case .whatsapp:

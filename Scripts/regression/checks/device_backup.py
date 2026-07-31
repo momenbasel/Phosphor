@@ -312,7 +312,7 @@ def test_backup_selection_and_browser_navigation_stay_in_sync(root: Path) -> Non
 
     browser = read(root, "Sources/Phosphor/Views/Backup/BackupBrowserView.swift")
     assert_contains(browser, ".onChange(of: backupVM.selectedBackup?.id)", "Backup browser should clear local selections when the selected backup changes")
-    assert_contains(browser, "selectedFiles.removeAll()", "Backup browser should drop selected file state when backup/domain changes")
+    assert_contains(browser, "selectedFileIDs.removeAll()", "Backup browser should drop selected file state when backup/domain changes")
 
 
 def test_file_browser_delete_requires_confirmation_and_blocks_directories(root: Path) -> None:

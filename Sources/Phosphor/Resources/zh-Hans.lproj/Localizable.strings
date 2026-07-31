@@ -48,3 +48,19 @@
 /* Welcome */
 "welcome.title" = "欢迎使用Phosphor";
 "welcome.subtitle" = "连接iOS设备或从侧边栏选择一个部分。";
+
+/* Home Screen */
+"homeScreen.homeScreen" = "主屏幕";
+"homeScreen.noBackupSelected" = "未选择备份";
+"homeScreen.selectBackup" = "在“备份”部分中选择一个备份以查看其主屏幕。";
+"homeScreen.noLayout" = "无主屏幕数据";
+"homeScreen.noLayoutDesc" = "此备份不包含 IconState.plist（HomeDomain/SpringBoard）。";
+"homeScreen.readFailed" = "无法读取布局";
+"homeScreen.exportPNG" = "导出 PNG";
+"homeScreen.reload" = "重新加载";
+"homeScreen.reading" = "正在读取主屏幕布局…";
+"browser.allDomains" = "所有域";
+"browser.items" = "%lld 个项目";
+"browser.preview" = "切换预览";
+"browser.extract" = "提取";
+

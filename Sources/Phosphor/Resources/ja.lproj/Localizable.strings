@@ -48,3 +48,19 @@
 /* Welcome */
 "welcome.title" = "Phosphorへようこそ";
 "welcome.subtitle" = "iOSデバイスを接続するか、サイドバーからセクションを選択してください。";
+
+/* Home Screen */
+"homeScreen.homeScreen" = "ホーム画面";
+"homeScreen.noBackupSelected" = "バックアップが選択されていません";
+"homeScreen.selectBackup" = "「バックアップ」セクションからバックアップを選択してホーム画面を表示します。";
+"homeScreen.noLayout" = "ホーム画面データがありません";
+"homeScreen.noLayoutDesc" = "このバックアップには IconState.plist（HomeDomain/SpringBoard）が含まれていません。";
+"homeScreen.readFailed" = "レイアウトを読み取れませんでした";
+"homeScreen.exportPNG" = "PNGを書き出す";
+"homeScreen.reload" = "再読み込み";
+"homeScreen.reading" = "ホーム画面レイアウトを読み取り中…";
+"browser.allDomains" = "すべてのドメイン";
+"browser.items" = "%lld 項目";
+"browser.preview" = "プレビュー表示切替";
+"browser.extract" = "抽出";
+

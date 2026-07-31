@@ -29,7 +29,16 @@ final class BackupViewModel: ObservableObject {
     @Published var isUnlocking = false
 
     let backupManager = BackupManager()
-    private var currentManifest: BackupManifest?
+    private var queryStore: ManifestQueryStore?
+    /// Manifest of the currently-open backup, for views that need direct file
+    /// access (preview inspector). Access is serialized by the query store's
+    /// actor; read-only file reads are safe to run from the main actor.
+    private(set) var activeManifest: BackupManifest?
+    private var browserLoadTask: Task<Void, Never>?
+    private var domainSizeTask: Task<Void, Never>?
+    private var searchSizeTask: Task<Void, Never>?
+    private var currentDomainToken = UUID()
+    private var currentSearchToken = UUID()
     private var sizeResolutionTask: Task<Void, Never>?
     private var lastBackupRequest: BackupRequest?
     private var backupOperationID: UUID?
@@ -221,8 +230,15 @@ final class BackupViewModel: ObservableObject {
     // MARK: - Browsing
 
     private func clearBrowserState() {
+        browserLoadTask?.cancel()
+        browserLoadTask = nil
+        domainSizeTask?.cancel()
+        domainSizeTask = nil
+        searchSizeTask?.cancel()
+        searchSizeTask = nil
         selectedBackup = nil
-        currentManifest = nil
+        queryStore = nil
+        activeManifest = nil
         browserDomains = []
         browserFiles = []
         currentDomain = nil
@@ -246,25 +262,30 @@ final class BackupViewModel: ObservableObject {
             }
         }
 
-        currentManifest = backupManager.openManifest(for: backup)
-
-        guard let manifest = currentManifest else {
-            // openManifest swallows the error into backupManager.lastError; surface it.
+        guard let manifest = backupManager.openManifest(for: backup) else {
             alertMessage = backupManager.lastError ?? "Failed to open backup."
             showAlert = true
             return false
         }
+        let store = ManifestQueryStore(manifest: manifest)
+        queryStore = store
+        activeManifest = manifest
+        selectedBackup = backup
 
-        do {
-            browserDomains = try manifest.domains()
-            selectedBackup = backup
-            return true
-        } catch {
-            clearBrowserState()
-            alertMessage = "Failed to read backup: \(error.localizedDescription)"
-            showAlert = true
-            return false
+        browserLoadTask?.cancel()
+        browserLoadTask = Task { [weak self] in
+            do {
+                let domains = try await store.domains()
+                if Task.isCancelled { return }
+                self?.browserDomains = domains
+            } catch {
+                guard let self else { return }
+                self.clearBrowserState()
+                self.alertMessage = "Failed to read backup: \(error.localizedDescription)"
+                self.showAlert = true
+            }
         }
+        return true
     }
 
     /// Derive the backup's keys and open it. Key derivation runs two PBKDF2 chains,
@@ -310,25 +331,95 @@ final class BackupViewModel: ObservableObject {
     }
 
     func browseDomain(_ domain: String) {
+        domainSizeTask?.cancel()
         currentDomain = domain
-        guard let manifest = currentManifest else { return }
-        do {
-            browserFiles = manifest.resolvingSizes(for: try manifest.files(inDomain: domain))
-        } catch {
-            alertMessage = error.localizedDescription
-            showAlert = true
+        let token = UUID()
+        currentDomainToken = token
+        browserFiles = []
+        guard let store = queryStore else { return }
+        domainSizeTask = Task { [weak self] in
+            do {
+                let entries = try await store.files(inDomain: domain)
+                try Task.checkCancellation()
+                guard let self, self.currentDomainToken == token else { return }
+                self.browserFiles = entries
+                let chunkSize = 500
+                var idx = 0
+                while idx < entries.count {
+                    try Task.checkCancellation()
+                    let end = Swift.min(idx + chunkSize, entries.count)
+                    let sized = try await store.resolveSizes(for: Array(entries[idx..<end]))
+                    guard self.currentDomainToken == token else { return }
+                    self.splice(&self.browserFiles, sized, at: idx)
+                    idx = end
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard let self, self.currentDomainToken == token else { return }
+                self.alertMessage = error.localizedDescription
+                self.showAlert = true
+            }
         }
     }
 
+    /// Navigate out of the current domain, cancelling any in-flight size work.
+    func leaveDomain() {
+        domainSizeTask?.cancel()
+        domainSizeTask = nil
+        currentDomainToken = UUID()
+        currentDomain = nil
+        browserFiles = []
+    }
+
     func searchBackup(_ query: String) {
-        guard !query.isEmpty, let manifest = currentManifest else {
+        searchSizeTask?.cancel()
+        let token = UUID()
+        currentSearchToken = token
+        guard !query.isEmpty, let store = queryStore else {
             searchResults = []
             return
         }
-        do {
-            searchResults = manifest.resolvingSizes(for: try manifest.search(query))
-        } catch {
-            searchResults = []
+        searchResults = []
+        searchSizeTask = Task { [weak self] in
+            do {
+                let entries = try await store.search(query)
+                try Task.checkCancellation()
+                guard let self, self.currentSearchToken == token else { return }
+                self.searchResults = entries
+                let chunkSize = 500
+                var idx = 0
+                while idx < entries.count {
+                    try Task.checkCancellation()
+                    let end = Swift.min(idx + chunkSize, entries.count)
+                    let sized = try await store.resolveSizes(for: Array(entries[idx..<end]))
+                    guard self.currentSearchToken == token else { return }
+                    self.splice(&self.searchResults, sized, at: idx)
+                    idx = end
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard let self, self.currentSearchToken == token else { return }
+                self.searchResults = []
+            }
+        }
+    }
+
+    /// Overwrite entries in `destination` starting at `offset` with `sized`,
+    /// bounds-checked so a stale chunk from an obsolete query cannot corrupt
+    /// the freshly published array.
+    private func splice(
+        _ destination: inout [BackupManifest.FileEntry],
+        _ sized: [BackupManifest.FileEntry],
+        at offset: Int
+    ) {
+        guard destination.count >= offset + sized.count else { return }
+        for (i, entry) in sized.enumerated() {
+            let idx = offset + i
+            if destination[idx].id == entry.id {
+                destination[idx] = entry
+            }
         }
     }
 
@@ -358,5 +449,40 @@ final class BackupViewModel: ObservableObject {
             return "calculating..."
         }
         return backupManager.totalBackupSize.formattedFileSize
+    }
+}
+
+/// Serializes Manifest.db access off the main actor. All SQLite queries and any
+/// FileManager stat calls for size resolution run inside the actor's executor,
+/// leaving the UI free from disk I/O.
+actor ManifestQueryStore {
+    private let manifest: BackupManifest
+
+    init(manifest: BackupManifest) {
+        self.manifest = manifest
+    }
+
+    func domains() throws -> [String] {
+        try manifest.domains()
+    }
+
+    func files(inDomain domain: String) throws -> [BackupManifest.FileEntry] {
+        try manifest.files(inDomain: domain)
+    }
+
+    func children(ofPath path: String, inDomain domain: String) throws -> [BackupManifest.FileEntry] {
+        try manifest.children(ofPath: path, inDomain: domain)
+    }
+
+    func search(_ query: String) throws -> [BackupManifest.FileEntry] {
+        try manifest.search(query)
+    }
+
+    /// Resolve on-disk sizes for one chunk. Callers drive chunking from the
+    /// main actor so they can splice updates into the published array and
+    /// react to cancellation without the store holding a closure.
+    func resolveSizes(for slice: [BackupManifest.FileEntry]) throws -> [BackupManifest.FileEntry] {
+        try Task.checkCancellation()
+        return manifest.resolvingSizes(for: slice)
     }
 }

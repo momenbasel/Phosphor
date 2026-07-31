@@ -17,8 +17,12 @@ def test_lazy_manifest_size_queries_do_not_eager_stat(root: Path) -> None:
         assert "SELECT fileID, domain, relativePath, flags" in body, f"{signature} should query metadata only"
 
     vm = read(root, "Sources/Phosphor/ViewModels/BackupViewModel.swift")
-    assert "manifest.resolvingSizes(for: try manifest.files(inDomain: domain))" in vm, "backup browser should resolve visible domain sizes"
-    assert "manifest.resolvingSizes(for: try manifest.search(query))" in vm, "backup search should resolve visible search sizes"
+    # Sizes resolve progressively through the actor store in cancellable chunks,
+    # never synchronously on the main actor inside browseDomain/searchBackup.
+    assert "store.resolveSizes(for: " in vm, "size resolution should go through the query store"
+    assert "Task.checkCancellation()" in vm, "chunked size resolution should observe cancellation"
+    assert "manifest.resolvingSizes(for: try manifest.files(inDomain: domain))" not in vm, "browseDomain must not synchronously resolve all sizes on the main actor"
+    assert "manifest.resolvingSizes(for: try manifest.search(query))" not in vm, "searchBackup must not synchronously resolve all sizes on the main actor"
 
 
 def test_manifest_open_preflights_encrypted_and_missing_backups(root: Path) -> None:
