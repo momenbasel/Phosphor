@@ -149,7 +149,7 @@ struct StatusChip: View {
                 Image(systemName: icon)
                     .font(.system(size: 9, weight: .semibold))
             }
-            Text(text)
+            Text(LocalizedStringKey(text))
                 .font(.system(size: 11, weight: .medium))
         }
         .foregroundStyle(color)
@@ -165,7 +165,7 @@ struct PillBadge: View {
     var color: Color = .brandAccent
 
     var body: some View {
-        Text(text)
+        Text(LocalizedStringKey(text))
             .font(.system(size: 9, weight: .semibold))
             .foregroundStyle(.white)
             .padding(.horizontal, 5)

@@ -260,7 +260,7 @@ struct MessageListView: View {
 
                 Picker("Date", selection: $dateFilter) {
                     ForEach(MessageDateFilter.allCases) { filter in
-                        Text(filter.rawValue).tag(filter)
+                        Text(LocalizedStringKey(filter.rawValue)).tag(filter)
                     }
                 }
                 .labelsHidden()

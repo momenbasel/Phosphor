@@ -26,7 +26,7 @@ final class WhatsAppExporter {
 
         var displayName: String {
             if !partnerName.isEmpty { return partnerName }
-            // Clean up JID: "+1234567890@s.whatsapp.net" -> "+1234567890"
+            // Clean up the WhatsApp JID to the user-facing contact identifier.
             return contactJid
                 .replacingOccurrences(of: "@s.whatsapp.net", with: "")
                 .replacingOccurrences(of: "@g.us", with: " (Group)")

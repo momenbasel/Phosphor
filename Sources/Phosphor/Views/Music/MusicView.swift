@@ -48,7 +48,7 @@ struct MusicView: View {
             Spacer()
 
             Picker("Tab", selection: $activeTab) {
-                ForEach(MusicTab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                ForEach(MusicTab.allCases, id: \.self) { Text(LocalizedStringKey($0.rawValue)).tag($0) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()

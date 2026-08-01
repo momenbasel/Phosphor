@@ -262,7 +262,7 @@ struct SidebarView: View {
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(isSelected ? Color.brandAccent : section.iconColor)
                     .frame(width: 22, alignment: .center)
-                Text(section.label)
+                Text(LocalizedStringKey(section.label))
                     .font(.system(size: 13))
                     .foregroundStyle(isSelected ? Color.brandAccent : Color.primary)
                 Spacer()

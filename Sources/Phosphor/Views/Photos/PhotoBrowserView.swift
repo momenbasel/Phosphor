@@ -80,7 +80,7 @@ struct PhotoBrowserView: View {
 
             // Source toggle
             Picker("Source", selection: $sourceMode) {
-                ForEach(SourceMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                ForEach(SourceMode.allCases, id: \.self) { Text(LocalizedStringKey($0.rawValue)).tag($0) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()

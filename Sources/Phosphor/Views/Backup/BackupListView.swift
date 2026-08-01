@@ -647,7 +647,7 @@ struct BackupScheduleSheet: View {
                     if scheduler.schedule.enabled {
                         Picker("Frequency", selection: $scheduler.schedule.frequency) {
                             ForEach(BackupScheduler.Frequency.allCases, id: \.self) { freq in
-                                Text(freq.rawValue).tag(freq)
+                                Text(LocalizedStringKey(freq.rawValue)).tag(freq)
                             }
                         }
 
