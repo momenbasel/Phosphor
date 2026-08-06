@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -54,6 +55,200 @@ def test_message_pdf_export_is_registered_and_uses_native_pdf_writer(root: Path)
     assert_contains(exporter, "linkURL: msg.linkURL", "PDF export should pass rich-link URLs into the PDF writer")
     assert_contains(exporter, "status: statusParts.isEmpty ? nil", "PDF export should pass service/read status into the PDF writer")
     assert_contains(writer, "entry.isFromMe ? margin + contentWidth - bubbleWidth : margin", "PDF writer should right-align outgoing bubbles and left-align incoming bubbles")
+
+
+def test_attributed_message_body_is_decoded_when_plain_text_is_missing(root: Path) -> None:
+    exporter = read(root, "Sources/Phosphor/Services/MessageExporter.swift")
+    decoder = root / "Sources/Phosphor/Utilities/MessageAttributedBodyDecoder.swift"
+    typedstream_sources = sorted((root / "Sources/Phosphor/Utilities/MessageTypedStream").glob("*.swift"))
+    writer = root / "Sources/Phosphor/Utilities/PDFTranscriptWriter.swift"
+    notices = root / "THIRD_PARTY_NOTICES.md"
+    build_script = read(root, "Scripts/build.sh")
+    assert decoder.exists(), "Message exports should include an attributedBody typedstream decoder"
+    assert typedstream_sources, "Message exports should include the bounded pure-Swift typedstream parser"
+    assert notices.exists() and "Madrid TypedStream" in notices.read_text(), "Vendored typedstream code should retain its MIT notice"
+    assert_contains(build_script, 'THIRD_PARTY_NOTICES.md', "Release bundles should include third-party license notices")
+    assert_contains(exporter, '"attributedBody"', "Message queries should select attributedBody when the schema provides it")
+    assert_contains(exporter, "MessageAttributedBodyDecoder.text", "Message parsing should fall back to decoded attributedBody text")
+    assert "NSUnarchiver" not in decoder.read_text(), "Backup-controlled attributedBody data must not use unsafe Foundation unarchiving"
+
+    probe = r'''
+import Foundation
+import PDFKit
+
+@main
+struct AttributedBodyProbe {
+    static func main() throws {
+        let expected = "INLINE_ATTRIBUTED_BODY_SENTINEL"
+        let archived = NSArchiver.archivedData(withRootObject: NSAttributedString(string: expected))
+        guard let decoded = MessageAttributedBodyDecoder.text(from: archived), decoded == expected else {
+            fputs("failed to decode NSArchiver attributed string\n", stderr)
+            exit(1)
+        }
+        guard MessageAttributedBodyDecoder.text(from: Data([0x00, 0x01, 0x02])) == nil else {
+            fputs("malformed archives must fail closed\n", stderr)
+            exit(2)
+        }
+        let truncatedTypedstream = Data([0x04, 0x0B]) + Data("streamtyped".utf8)
+        guard MessageAttributedBodyDecoder.text(from: truncatedTypedstream) == nil else {
+            fputs("truncated typedstreams must fail closed\n", stderr)
+            exit(3)
+        }
+        let referenceRun = truncatedTypedstream + Data(repeating: 0xFF, count: 1_048_576)
+        guard MessageAttributedBodyDecoder.text(from: referenceRun) == nil else {
+            fputs("malformed reference runs must fail closed\n", stderr)
+            exit(4)
+        }
+        var amplifiedTypes = truncatedTypedstream + Data([0x81, 0xE8, 0x03])
+        amplifiedTypes.append(contentsOf: [0x84, 0x82, 0x00, 0x00, 0x01, 0x00])
+        amplifiedTypes.append(Data(repeating: 0x7F, count: 65_536))
+        for _ in 0..<100 {
+            amplifiedTypes.append(contentsOf: [0x92, 0x86])
+        }
+        do {
+            _ = try MessageTypedStreamDecoder.decode(amplifiedTypes)
+            fputs("repeated type references must exhaust a decoded-output budget\n", stderr)
+            exit(5)
+        } catch MessageTypedStreamDecoderError.resourceLimit {
+            // Expected: references must not amplify a small archive into an unbounded output graph.
+        }
+        try PDFTranscriptWriter.write(
+            title: "Attributed Body Regression",
+            subtitle: "",
+            entries: [PDFTranscriptWriter.Entry(
+                title: "Me",
+                subtitle: "",
+                body: decoded,
+                isFromMe: true,
+                inlineReply: "original message"
+            )],
+            to: CommandLine.arguments[1]
+        )
+        guard let text = PDFDocument(url: URL(fileURLWithPath: CommandLine.arguments[1]))?.string,
+              text.filter({ $0.isLetter || $0.isNumber }).contains(expected.filter({ $0.isLetter || $0.isNumber })),
+              text.contains("Inline reply") else {
+            fputs("decoded attributedBody text was missing from PDF output\n", stderr)
+            exit(6)
+        }
+    }
+}
+'''
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp = Path(temp_dir)
+        probe_path = temp / "Probe.swift"
+        probe_path.write_text(probe)
+        executable = temp / "attributed-body-probe"
+        compile_result = subprocess.run(
+            [
+                "swiftc", "-parse-as-library", *map(str, typedstream_sources), str(decoder), str(writer), str(probe_path),
+                "-framework", "PDFKit", "-o", str(executable),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert compile_result.returncode == 0, compile_result.stderr
+        result = subprocess.run([str(executable), str(temp / "attributed-body.pdf")], capture_output=True, text=True, timeout=10)
+        assert result.returncode == 0, result.stderr
+
+
+def test_oversized_attributed_body_is_null_before_sqlite_materialization(root: Path) -> None:
+    exporter = read(root, "Sources/Phosphor/Services/MessageExporter.swift")
+    decoder = root / "Sources/Phosphor/Utilities/MessageAttributedBodyDecoder.swift"
+    sqlite_reader = root / "Sources/Phosphor/Utilities/SQLiteReader.swift"
+    typedstream_sources = sorted((root / "Sources/Phosphor/Utilities/MessageTypedStream").glob("*.swift"))
+    assert_contains(
+        exporter,
+        "MessageAttributedBodyDecoder.attributedBodyCandidateSQLProjection",
+        "Bulk message queries should select only bounded attributedBody candidate row IDs",
+    )
+    assert_contains(
+        exporter,
+        "loadAttributedBodyText(messageId:",
+        "Attributed bodies should be loaded and decoded one row at a time instead of retained across a result set",
+    )
+    assert_contains(
+        exporter,
+        "remainingAttributedBodyTextBytes",
+        "Each message query should cap the aggregate recovered attributedBody text retained in memory",
+    )
+    select_fields = re.search(
+        r"private func messageSelectFields\(\) -> String \{(?P<body>.*?)\n    \}",
+        exporter,
+        re.S,
+    )
+    assert select_fields is not None
+    assert "fields.append(MessageAttributedBodyDecoder.attributedBodySQLProjection)" not in select_fields.group("body"), (
+        "Bulk message SELECTs must not materialize attributedBody BLOBs"
+    )
+
+    probe = r'''
+import Foundation
+
+@main
+struct OversizedAttributedBodyProbe {
+    static func main() throws {
+        let reader = try SQLiteReader(path: CommandLine.arguments[1])
+        let candidates = try reader.query(
+            "SELECT \(MessageAttributedBodyDecoder.attributedBodyCandidateSQLProjection) FROM message m ORDER BY m.ROWID"
+        )
+        guard candidates.count == 3,
+              candidates[0]["attributed_body_rowid"] as? Int == 1,
+              (candidates[1]["attributed_body_rowid"] ?? nil) == nil,
+              (candidates[2]["attributed_body_rowid"] ?? nil) == nil else {
+            fputs("bulk query did not reduce attributedBody values to bounded candidate row IDs\n", stderr)
+            exit(1)
+        }
+
+        let smallRows = try reader.query(
+            "SELECT \(MessageAttributedBodyDecoder.attributedBodySQLProjection) FROM message m WHERE m.ROWID = 1 LIMIT 1"
+        )
+        let oversizedRows = try reader.query(
+            "SELECT \(MessageAttributedBodyDecoder.attributedBodySQLProjection) FROM message m WHERE m.ROWID = 2 LIMIT 1"
+        )
+        guard let small = smallRows.first?["attributedBody"] as? Data,
+              small == Data([0x01, 0x02, 0x03]),
+              (oversizedRows.first?["attributedBody"] ?? nil) == nil else {
+            fputs("oversized attributedBody was materialized instead of projected as NULL\n", stderr)
+            exit(2)
+        }
+    }
+}
+'''
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp = Path(temp_dir)
+        database = temp / "sms.db"
+        connection = sqlite3.connect(database)
+        try:
+            connection.execute("CREATE TABLE message (text TEXT, attributedBody BLOB)")
+            connection.execute("INSERT INTO message (text, attributedBody) VALUES (NULL, ?)", (sqlite3.Binary(b"\x01\x02\x03"),))
+            connection.execute(
+                "INSERT INTO message (text, attributedBody) VALUES (NULL, zeroblob(?))",
+                (16 * 1024 * 1024 + 1,),
+            )
+            connection.execute(
+                "INSERT INTO message (text, attributedBody) VALUES ('plain text wins', ?)",
+                (sqlite3.Binary(b"\x04\x05\x06"),),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        probe_path = temp / "Probe.swift"
+        probe_path.write_text(probe)
+        executable = temp / "oversized-attributed-body-probe"
+        compile_result = subprocess.run(
+            [
+                "swiftc", "-parse-as-library", *map(str, typedstream_sources), str(decoder), str(sqlite_reader),
+                str(probe_path), "-lsqlite3", "-o", str(executable),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert compile_result.returncode == 0, compile_result.stderr
+        result = subprocess.run([str(executable), str(database)], capture_output=True, text=True, timeout=10)
+        assert result.returncode == 0, result.stderr
 
 
 

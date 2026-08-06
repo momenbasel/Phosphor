@@ -266,6 +266,11 @@ final class MessageExporter {
             "m.service", "m.cache_has_attachments", "m.is_read",
             "COALESCE(h.id, '') as handle_id"
         ]
+        if messageColumns.contains("attributedBody") {
+            // Keep backup-controlled BLOBs out of the bulk result set. Rows that
+            // need the fallback are loaded and decoded individually below.
+            fields.append(MessageAttributedBodyDecoder.attributedBodyCandidateSQLProjection)
+        }
         for opt in [
             "associated_message_type", "associated_message_guid", "balloon_bundle_id", "payload_data",
             "reply_to_guid", "thread_originator_guid", "thread_originator_part", "expressive_send_style_id",
@@ -334,12 +339,20 @@ final class MessageExporter {
             }
         }
 
+        // Recovered fallback strings are retained in the returned Message array.
+        // Bound their aggregate contribution per query just like each source BLOB.
+        var remainingAttributedBodyTextBytes = 64 * 1024 * 1024
         return primaryRows.compactMap { row in
             let rowId = (row["ROWID"] ?? nil) as? Int
             let guid = (row["guid"] ?? nil) as? String
             let attachments = rowId.flatMap { attachmentsByMessage[$0] } ?? []
             let reactionList = guid.flatMap { reactionsByTarget[$0] } ?? []
-            return parseMessage(row, attachments: attachments, reactions: reactionList)
+            return parseMessage(
+                row,
+                attachments: attachments,
+                reactions: reactionList,
+                remainingAttributedBodyTextBytes: &remainingAttributedBodyTextBytes
+            )
         }
     }
 
@@ -1139,7 +1152,8 @@ final class MessageExporter {
 
     private func parseMessage(_ row: [String: Any?],
                               attachments: [MessageAttachment],
-                              reactions: [Reaction]) -> Message? {
+                              reactions: [Reaction],
+                              remainingAttributedBodyTextBytes: inout Int) -> Message? {
         guard let rowId = row["ROWID"] as? Int,
               let guid = row["guid"] as? String else { return nil }
 
@@ -1154,7 +1168,22 @@ final class MessageExporter {
         let isFromMe = (row["is_from_me"] as? Int) == 1
         let visibleAttachments = attachments.filter { !$0.isPluginPayload }
 
-        let text = row["text"] as? String
+        let plainText = row["text"] as? String
+        let text: String?
+        if let plainText, !plainText.isEmpty {
+            text = plainText
+        } else if let messageId = row["attributed_body_rowid"] as? Int,
+                  let recovered = loadAttributedBodyText(messageId: messageId) {
+            let recoveredByteCount = recovered.utf8.count
+            if recoveredByteCount <= remainingAttributedBodyTextBytes {
+                remainingAttributedBodyTextBytes -= recoveredByteCount
+                text = recovered
+            } else {
+                text = plainText
+            }
+        } else {
+            text = plainText
+        }
         let balloonBundle = row["balloon_bundle_id"] as? String
         let payload = row["payload_data"] as? Data
 
@@ -1188,6 +1217,22 @@ final class MessageExporter {
             linkURL: linkURL,
             balloonBundleID: balloonBundle
         )
+    }
+
+    /// Loads at most one schema- and size-gated attributed body at a time so a
+    /// full chat query never retains every backup-controlled BLOB in memory.
+    private func loadAttributedBodyText(messageId: Int) -> String? {
+        let sql = """
+            SELECT \(MessageAttributedBodyDecoder.attributedBodySQLProjection)
+            FROM message m
+            WHERE m.ROWID = ?
+            LIMIT 1
+        """
+        guard let rows = try? db.query(sql, params: [String(messageId)]),
+              let body = rows.first?["attributedBody"] as? Data else {
+            return nil
+        }
+        return MessageAttributedBodyDecoder.text(from: body)
     }
 
     /// First http(s) URL inside a string, using a cached `NSDataDetector`.
