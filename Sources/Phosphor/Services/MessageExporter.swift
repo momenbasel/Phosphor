@@ -561,7 +561,7 @@ final class MessageExporter {
         for chat in chats {
             try cancellationCheck?()
             try onProgress?(count, chats.count, chat.title)
-            let filename = exportFilename(for: chat, format: format)
+            let filename = chat.exportFilename(format: format, includeChatID: true)
             let path = (directory as NSString).appendingPathComponent(filename)
             try exportChat(chatId: chat.id, format: format, to: path, options: options, cancellationCheck: cancellationCheck)
             count += 1
@@ -595,14 +595,6 @@ final class MessageExporter {
     }
 
     // MARK: - Private Export Implementations
-
-    private func exportFilename(for chat: MessageChat, format: MessageExportFormat) -> String {
-        let safeName = chat.title
-            .replacingOccurrences(of: "/", with: "-")
-            .replacingOccurrences(of: ":", with: "-")
-            .prefix(50)
-        return "\(safeName)-chat-\(chat.id).\(format.fileExtension)"
-    }
 
     private func exportCSV(messages: [Message], chatTitle: String, to path: String, cancellationCheck: (() throws -> Void)? = nil) throws {
         let outputURL = URL(fileURLWithPath: path)

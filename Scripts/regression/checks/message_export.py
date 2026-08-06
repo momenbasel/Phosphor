@@ -256,11 +256,77 @@ struct OversizedAttributedBodyProbe {
 
 def test_bulk_message_exports_use_collision_safe_filenames(root: Path) -> None:
     src = read(root, "Sources/Phosphor/Services/MessageExporter.swift")
-    assert_contains(src, "private func exportFilename(for chat", "Bulk message export should centralize filename generation")
-    assert_contains(src, "-chat-\\(chat.id)", "Bulk message export filenames should include chat id to avoid duplicate-title overwrites")
     export_all = re.search(r"func exportAllChats\(.*?\) throws -> Int \{(?P<body>.*?)\n    \}", src, re.S)
     assert export_all is not None, "exportAllChats should exist"
-    assert_contains(export_all.group("body"), "exportFilename(for: chat", "exportAllChats should use collision-safe filenames")
+    assert_contains(
+        export_all.group("body"),
+        "chat.exportFilename(format: format, includeChatID: true)",
+        "exportAllChats should preserve contact names and include collision-safe chat IDs",
+    )
+
+
+def test_pdf_export_filenames_preserve_resolved_contact_name(root: Path) -> None:
+    model = root / "Sources/Phosphor/Models/Message.swift"
+    exporter = read(root, "Sources/Phosphor/Services/MessageExporter.swift")
+    view = read(root, "Sources/Phosphor/Views/Messages/MessageListView.swift")
+    assert_contains(
+        model.read_text(),
+        "func exportFilename(format: MessageExportFormat, includeChatID: Bool)",
+        "MessageChat should own contact-preserving export filename generation",
+    )
+    assert_contains(
+        exporter,
+        "chat.exportFilename(format: format, includeChatID: true)",
+        "Bulk exports should preserve the resolved contact name while retaining collision-safe chat IDs",
+    )
+    assert_contains(
+        view,
+        "chat.exportFilename(format: format, includeChatID: false)",
+        "Single-chat save panels should default PDF files to the resolved contact name",
+    )
+
+    probe = r'''
+import Foundation
+
+extension Date {
+    var shortString: String { "" }
+}
+
+@main
+struct ContactFilenameProbe {
+    static func main() {
+        let chat = MessageChat(
+            id: 42,
+            chatIdentifier: "+15551234567",
+            displayName: "",
+            participants: ["+15551234567"],
+            resolvedTitle: "Jane Doe",
+            lastMessageDate: nil,
+            messageCount: 1,
+            isGroupChat: false
+        )
+        guard chat.exportFilename(format: .pdf, includeChatID: false) == "Jane Doe.pdf",
+              chat.exportFilename(format: .pdf, includeChatID: true) == "Jane Doe-chat-42.pdf" else {
+            fputs("PDF export filename did not preserve the resolved contact name\n", stderr)
+            exit(1)
+        }
+    }
+}
+'''
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp = Path(temp_dir)
+        probe_path = temp / "Probe.swift"
+        probe_path.write_text(probe)
+        executable = temp / "contact-filename-probe"
+        result = subprocess.run(
+            ["swiftc", "-parse-as-library", str(model), str(probe_path), "-o", str(executable)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        run = subprocess.run([str(executable)], capture_output=True, text=True, timeout=10)
+        assert run.returncode == 0, run.stderr
 
 
 def test_html_export_cleans_stale_attachment_folder(root: Path) -> None:

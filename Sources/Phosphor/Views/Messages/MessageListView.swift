@@ -486,7 +486,7 @@ struct MessageListView: View {
         guard loadedBackupIsCurrent, let chat = messageVM.selectedChat else { return }
         let panel = NSSavePanel()
         panel.title = "Export Conversation"
-        panel.nameFieldStringValue = "\(safeFileName(chat.title)).\(format.fileExtension)"
+        panel.nameFieldStringValue = chat.exportFilename(format: format, includeChatID: false)
         if let type = format.contentType { panel.allowedContentTypes = [type] }
         panel.canCreateDirectories = true
 
@@ -524,12 +524,6 @@ struct MessageListView: View {
         }
     }
 
-    private func safeFileName(_ raw: String) -> String {
-        let stripped = raw
-            .replacingOccurrences(of: "/", with: "-")
-            .replacingOccurrences(of: ":", with: "-")
-        return String(stripped.prefix(80))
-    }
 }
 
 private extension MessageExportFormat {

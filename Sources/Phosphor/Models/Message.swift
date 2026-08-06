@@ -18,6 +18,18 @@ struct MessageChat: Identifiable, Hashable {
     var title: String {
         resolvedTitle.isEmpty ? chatIdentifier : resolvedTitle
     }
+
+    /// Keeps the resolved contact/group name in exported filenames while bulk
+    /// exports retain the chat ID suffix that prevents same-name collisions.
+    func exportFilename(format: MessageExportFormat, includeChatID: Bool) -> String {
+        let sanitized = title
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+        let contactName = String(sanitized.prefix(80))
+        let baseName = contactName.isEmpty ? "Conversation" : contactName
+        let chatIDSuffix = includeChatID ? "-chat-\(id)" : ""
+        return "\(baseName)\(chatIDSuffix).\(format.fileExtension)"
+    }
 }
 
 /// Represents a single message within a conversation.
