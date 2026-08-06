@@ -112,6 +112,7 @@ final class MessageViewModel: ObservableObject {
 
     private var exporter: MessageExporter?
     private var backupPath: String?
+    private var contactDirectory: ContactDirectory = .empty
     private var exportCancelled = false
     private var exportTask: Task<Void, Never>?
     private var exportOperationID: UUID?
@@ -124,6 +125,7 @@ final class MessageViewModel: ObservableObject {
         exportOperationID = nil
         exporter = nil
         backupPath = nil
+        contactDirectory = .empty
         chats = []
         selectedChat = nil
         messages = []
@@ -154,6 +156,7 @@ final class MessageViewModel: ObservableObject {
             invalidateExportForBackupSwitch()
         }
         self.backupPath = backupPath
+        contactDirectory = .empty
         backupReadiness = Self.readiness(for: backupPath)
         backupReadinessMessage = backupReadiness.subtitle
         selectedChat = nil
@@ -178,6 +181,7 @@ final class MessageViewModel: ObservableObject {
         } else {
             directory = .empty
         }
+        self.contactDirectory = directory
 
         do {
             let exporter = try MessageExporter(backupPath: backupPath, contacts: directory)
@@ -244,6 +248,7 @@ final class MessageViewModel: ObservableObject {
         let options = MessageExportOptions(startDate: range.start, endDate: range.end, includeAttachments: includeAttachments)
         let sourceMessages = visibleMessages
         let fallbackMessages = messages
+        let contactDirectory = self.contactDirectory
         isExporting = true
         exportCancelled = false
         exportProgress = 0.1
@@ -251,9 +256,9 @@ final class MessageViewModel: ObservableObject {
         let exportID = UUID()
         exportOperationID = exportID
 
-        exportTask = Task.detached(priority: .userInitiated) { [weak self, chat, sourceMessages, fallbackMessages, backupPath, exportID] in
+        exportTask = Task.detached(priority: .userInitiated) { [weak self, chat, sourceMessages, fallbackMessages, backupPath, contactDirectory, exportID] in
             do {
-                let exporter = try MessageExporter(backupPath: backupPath, contacts: .empty)
+                let exporter = try MessageExporter(backupPath: backupPath, contacts: contactDirectory)
                 let baseMessages: [Message]
                 if let sourceMessages {
                     baseMessages = sourceMessages
@@ -298,6 +303,7 @@ final class MessageViewModel: ObservableObject {
         guard let backupPath else { return }
         let range = dateFilter.range(customStart: customStart, customEnd: customEnd)
         let options = MessageExportOptions(startDate: range.start, endDate: range.end, includeAttachments: includeAttachments)
+        let contactDirectory = self.contactDirectory
         isExporting = true
         exportCancelled = false
         exportProgress = 0
@@ -305,9 +311,9 @@ final class MessageViewModel: ObservableObject {
         let exportID = UUID()
         exportOperationID = exportID
 
-        exportTask = Task.detached(priority: .userInitiated) { [weak self, backupPath, exportID] in
+        exportTask = Task.detached(priority: .userInitiated) { [weak self, backupPath, contactDirectory, exportID] in
             do {
-                let exporter = try MessageExporter(backupPath: backupPath, contacts: .empty)
+                let exporter = try MessageExporter(backupPath: backupPath, contacts: contactDirectory)
                 let count = try exporter.exportAllChats(
                     format: format,
                     to: directory,

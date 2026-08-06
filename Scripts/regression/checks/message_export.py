@@ -329,6 +329,23 @@ struct ContactFilenameProbe {
         assert run.returncode == 0, run.stderr
 
 
+def test_background_message_exports_keep_loaded_contact_directory(root: Path) -> None:
+    view_model = read(root, "Sources/Phosphor/ViewModels/MessageViewModel.swift")
+    assert_contains(
+        view_model,
+        "private var contactDirectory: ContactDirectory = .empty",
+        "MessageViewModel should retain the contact directory loaded for the selected backup",
+    )
+    assert_contains(
+        view_model,
+        "self.contactDirectory = directory",
+        "Loading chats should retain the resolved contacts for later background exports",
+    )
+    assert view_model.count("contacts: contactDirectory") >= 2, (
+        "Single-chat and bulk detached exporters should preserve resolved contact names and sender labels"
+    )
+
+
 def test_html_export_cleans_stale_attachment_folder(root: Path) -> None:
     src = read(root, "Sources/Phosphor/Services/MessageExporter.swift")
     assert_contains(src, "private func removeAttachmentFolder(forHTMLPath", "HTML export should have explicit stale attachment cleanup")
