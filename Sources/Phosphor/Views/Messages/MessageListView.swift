@@ -266,9 +266,10 @@ struct MessageListView: View {
                 .labelsHidden()
                 .frame(width: 130)
 
-                Toggle("Attachments", isOn: $includeAttachments)
+                Toggle("Export Attachments", isOn: $includeAttachments)
                     .toggleStyle(.checkbox)
                     .font(.system(size: 11))
+                    .help("Copies original photos, videos, audio, and files into an attachments folder beside the transcript.")
             }
             .padding(.horizontal, 16)
 

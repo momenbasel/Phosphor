@@ -578,6 +578,12 @@ final class MessageExporter {
         options: MessageExportOptions = MessageExportOptions(),
         cancellationCheck: (() throws -> Void)? = nil
     ) throws {
+        let attachmentMap = try stageOriginalAttachments(
+            messages: messages,
+            exportPath: path,
+            includeAttachments: options.includeAttachments,
+            cancellationCheck: cancellationCheck
+        )
         switch format {
         case .csv:
             try exportCSV(messages: messages, chatTitle: chatTitle, to: path, cancellationCheck: cancellationCheck)
@@ -586,7 +592,14 @@ final class MessageExporter {
         case .pdf:
             try exportPDF(messages: messages, chatTitle: chatTitle, to: path, includeAttachments: options.includeAttachments, cancellationCheck: cancellationCheck)
         case .html:
-            try exportHTML(messages: messages, chatTitle: chatTitle, to: path, includeAttachments: options.includeAttachments, cancellationCheck: cancellationCheck)
+            try exportHTML(
+                messages: messages,
+                chatTitle: chatTitle,
+                to: path,
+                includeAttachments: options.includeAttachments,
+                attachmentMap: attachmentMap,
+                cancellationCheck: cancellationCheck
+            )
         case .json:
             try exportJSON(messages: messages, chatTitle: chatTitle, to: path, cancellationCheck: cancellationCheck)
         case .mbox:
@@ -737,66 +750,49 @@ final class MessageExporter {
         )
     }
 
-    /// Copy referenced attachments into a sibling `<export>_attachments` folder so the
-    /// HTML can <img>/<a href> them. Returns map of attachment filename -> relative
-    /// path used inside the HTML. Failures are silent: attachments missing from the
-    /// backup just stay as text annotations.
-    ///
-    /// Plugin payload blobs (rich-link metadata) are skipped because they are
-    /// binary plists that macOS has no handler for and would clutter the export
-    /// folder with `*.pluginPayloadAttachment` files (issue #17).
-    private func stageAttachments(messages: [Message], htmlPath: String, cancellationCheck: (() throws -> Void)? = nil) throws -> [String: String] {
-        let baseName = (htmlPath as NSString).deletingPathExtension
-        let dir = "\(baseName)_attachments"
-        let fm = FileManager.default
-        var map: [String: String] = [:]
-        var folderCreated = false
+    /// Resolve user-visible attachment blobs and stage originals beside every
+    /// transcript format. Rich-link plugin payloads remain internal metadata.
+    private func stageOriginalAttachments(
+        messages: [Message],
+        exportPath: String,
+        includeAttachments: Bool,
+        cancellationCheck: (() throws -> Void)? = nil
+    ) throws -> [String: String] {
+        var seenFilenames: Set<String> = []
+        var items: [MessageAttachmentExporter.Item] = []
 
-        for msg in messages {
-            try cancellationCheck?()
-            for attachment in msg.attachments {
-                guard !attachment.isPluginPayload else { continue }
-                guard let filename = attachment.filename, !filename.isEmpty else { continue }
-                if map[filename] != nil { continue }
-                guard let source = resolveAttachmentDiskPath(filename: filename) else { continue }
-
-                if !folderCreated {
-                    try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
-                    folderCreated = true
-                }
-
-                let displayName = (filename as NSString).lastPathComponent
-                var unique = displayName
-                var dest = (dir as NSString).appendingPathComponent(unique)
-                var i = 2
-                while fm.fileExists(atPath: dest) {
-                    let ext = (displayName as NSString).pathExtension
-                    let stem = (displayName as NSString).deletingPathExtension
-                    unique = ext.isEmpty ? "\(stem)-\(i)" : "\(stem)-\(i).\(ext)"
-                    dest = (dir as NSString).appendingPathComponent(unique)
-                    i += 1
-                }
-                do {
-                    try fm.copyItem(atPath: source, toPath: dest)
-                    let folderName = (dir as NSString).lastPathComponent
-                    map[filename] = "\(folderName)/\(unique)"
-                } catch {
-                    continue
+        if includeAttachments {
+            for message in messages {
+                try cancellationCheck?()
+                for attachment in message.attachments where !attachment.isPluginPayload {
+                    guard let filename = attachment.filename,
+                          !filename.isEmpty,
+                          seenFilenames.insert(filename).inserted,
+                          let sourcePath = resolveAttachmentDiskPath(filename: filename) else { continue }
+                    items.append(.init(
+                        key: filename,
+                        displayName: attachment.displayName,
+                        sourcePath: sourcePath
+                    ))
                 }
             }
         }
-        return map
+
+        return try MessageAttachmentExporter.export(
+            items,
+            beside: exportPath,
+            cancellationCheck: cancellationCheck
+        )
     }
 
-    private func removeAttachmentFolder(forHTMLPath htmlPath: String) {
-        let baseName = (htmlPath as NSString).deletingPathExtension
-        let dir = "\(baseName)_attachments"
-        try? FileManager.default.removeItem(atPath: dir)
-    }
-
-    private func exportHTML(messages: [Message], chatTitle: String, to path: String, includeAttachments: Bool = true, cancellationCheck: (() throws -> Void)? = nil) throws {
-        removeAttachmentFolder(forHTMLPath: path)
-        let attachmentMap = includeAttachments ? try stageAttachments(messages: messages, htmlPath: path, cancellationCheck: cancellationCheck) : [:]
+    private func exportHTML(
+        messages: [Message],
+        chatTitle: String,
+        to path: String,
+        includeAttachments: Bool = true,
+        attachmentMap: [String: String],
+        cancellationCheck: (() throws -> Void)? = nil
+    ) throws {
         let outputURL = URL(fileURLWithPath: path)
         try? FileManager.default.removeItem(at: outputURL)
         FileManager.default.createFile(atPath: path, contents: nil)
@@ -879,7 +875,7 @@ final class MessageExporter {
                 bubbleHTML += text
             }
 
-            for attachment in msg.attachments where !attachment.isPluginPayload {
+            for attachment in msg.attachments where includeAttachments && !attachment.isPluginPayload {
                 guard let filename = attachment.filename,
                       let relPath = attachmentMap[filename] else {
                     if !bubbleHTML.isEmpty { bubbleHTML += "<br>" }
@@ -887,13 +883,14 @@ final class MessageExporter {
                     continue
                 }
                 if !bubbleHTML.isEmpty { bubbleHTML += "<br>" }
+                let relativeURL = MessageAttachmentExporter.relativeURL(for: relPath)
                 if attachment.isImage {
-                    bubbleHTML += "<img class=\"attach-img\" src=\"\(htmlEscape(relPath))\" loading=\"lazy\">"
+                    bubbleHTML += "<img class=\"attach-img\" src=\"\(htmlEscape(relativeURL))\" loading=\"lazy\">"
                 } else if attachment.isVideo {
-                    bubbleHTML += "<video class=\"attach-video\" controls src=\"\(htmlEscape(relPath))\"></video>"
+                    bubbleHTML += "<video class=\"attach-video\" controls src=\"\(htmlEscape(relativeURL))\"></video>"
                 } else {
                     let name = (relPath as NSString).lastPathComponent
-                    bubbleHTML += "<a class=\"attach-link\" href=\"\(htmlEscape(relPath))\">\(htmlEscape(name))</a>"
+                    bubbleHTML += "<a class=\"attach-link\" href=\"\(htmlEscape(relativeURL))\">\(htmlEscape(name))</a>"
                 }
             }
 

@@ -435,12 +435,17 @@ def test_background_message_exports_keep_loaded_contact_directory(root: Path) ->
     )
 
 
-def test_html_export_cleans_stale_attachment_folder(root: Path) -> None:
+def test_html_export_uses_shared_fresh_attachment_sidecar(root: Path) -> None:
     src = read(root, "Sources/Phosphor/Services/MessageExporter.swift")
-    assert_contains(src, "private func removeAttachmentFolder(forHTMLPath", "HTML export should have explicit stale attachment cleanup")
+    helper = read(root, "Sources/Phosphor/Utilities/MessageAttachmentExporter.swift")
+    assert_contains(helper, "stagingURL", "attachment sidecars should stage a fresh folder before replacing prior output")
+    assert_contains(helper, "replaceItemAt", "attachment sidecars should atomically replace prior completed output")
     html = re.search(r"private func exportHTML\(.*?\) throws \{(?P<body>.*?)\n    \}", src, re.S)
     assert html is not None, "exportHTML should exist"
-    assert_contains(html.group("body"), "removeAttachmentFolder(forHTMLPath: path)", "HTML export should remove stale attachment folders before staging/writing")
+    assert "stageOriginalAttachments" not in html.group("body"), "HTML should not copy attachments a second time"
+    assert_contains(html.group("body"), "attachmentMap", "HTML should link to the shared original-attachment sidecar")
+
+
 def test_json_overwrite_fixture_has_no_stale_tail(root: Path) -> None:
     del root  # fixture mirrors the Swift export invariant without touching source files.
     with tempfile.TemporaryDirectory() as tmp:
@@ -462,6 +467,165 @@ def test_attachment_path_cache_invariants(root: Path) -> None:
     assert_contains(src, "missingAttachmentDiskPaths.contains(filename)", "resolver should hit negative cache")
     assert_contains(src, "attachmentDiskPathCache[filename] = candidate", "resolver should store positive cache")
     assert_contains(src, "missingAttachmentDiskPaths.insert(filename)", "resolver should store negative cache")
+
+
+def test_message_attachment_sidecars_are_collision_safe_and_cancellation_safe(root: Path) -> None:
+    exporter = root / "Sources/Phosphor/Utilities/MessageAttachmentExporter.swift"
+    assert exporter.exists(), "message exports should have a reusable original-attachment sidecar writer"
+
+    probe = r'''
+import Foundation
+
+@main
+struct AttachmentSidecarProbe {
+    static func main() throws {
+        let root = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
+        let htmlExport = root.appendingPathComponent("conversation.html")
+        let pdfExport = root.appendingPathComponent("conversation.pdf")
+        let first = root.appendingPathComponent("source-a/photo.jpg")
+        let second = root.appendingPathComponent("source-b/photo.jpg")
+        let fileManager = FileManager.default
+        let legacySidecar = root.appendingPathComponent("conversation_attachments", isDirectory: true)
+        try fileManager.createDirectory(at: legacySidecar, withIntermediateDirectories: true)
+        try Data("stale".utf8).write(to: legacySidecar.appendingPathComponent("old.jpg"))
+        let encodedPath = MessageAttachmentExporter.relativeURL(
+            for: "conversation-html_attachments/photo#1? 50%.jpg"
+        )
+        guard encodedPath == "conversation-html_attachments/photo%231%3F%2050%25.jpg" else {
+            fputs("HTML attachment paths were not URL encoded by segment\n", stderr)
+            exit(1)
+        }
+        try fileManager.createDirectory(at: first.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: second.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("A".utf8).write(to: first)
+        try Data("B".utf8).write(to: second)
+
+        let initial = try MessageAttachmentExporter.export([
+            .init(key: "first", displayName: "photo.jpg", sourcePath: first.path),
+            .init(key: "second", displayName: "photo.jpg", sourcePath: second.path),
+        ], beside: htmlExport.path)
+        guard initial["first"] == "conversation-html_attachments/photo.jpg",
+              initial["second"] == "conversation-html_attachments/photo-2.jpg" else {
+            fputs("duplicate attachment names were not made collision-safe\n", stderr)
+            exit(1)
+        }
+
+        let sidecar = root.appendingPathComponent("conversation-html_attachments", isDirectory: true)
+        guard !fileManager.fileExists(atPath: legacySidecar.path) else {
+            fputs("legacy HTML sidecar was not cleaned after successful replacement\n", stderr)
+            exit(2)
+        }
+        let initialNames = try Set(fileManager.contentsOfDirectory(atPath: sidecar.path))
+        guard initialNames == ["photo.jpg", "photo-2.jpg"] else {
+            fputs("initial sidecar contents were incomplete\n", stderr)
+            exit(2)
+        }
+
+        let refreshed = try MessageAttachmentExporter.export([
+            .init(key: "first", displayName: "photo.jpg", sourcePath: first.path),
+        ], beside: htmlExport.path)
+        let remaining = try Set(fileManager.contentsOfDirectory(atPath: sidecar.path))
+        guard refreshed.count == 1,
+              remaining == ["photo.jpg"],
+              try Data(contentsOf: sidecar.appendingPathComponent("photo.jpg")) == Data("A".utf8) else {
+            fputs("rerun did not replace stale sidecar content\n", stderr)
+            exit(3)
+        }
+
+        _ = try MessageAttachmentExporter.export([], beside: pdfExport.path)
+        guard fileManager.fileExists(atPath: sidecar.appendingPathComponent("photo.jpg").path) else {
+            fputs("exporting another transcript format removed the HTML sidecar\n", stderr)
+            exit(4)
+        }
+
+        var checks = 0
+        do {
+            _ = try MessageAttachmentExporter.export([
+                .init(key: "second", displayName: "photo.jpg", sourcePath: second.path),
+                .init(key: "first", displayName: "photo.jpg", sourcePath: first.path),
+            ], beside: htmlExport.path) {
+                checks += 1
+                if checks == 2 { throw CancellationError() }
+            }
+            fputs("cancelled attachment export unexpectedly succeeded\n", stderr)
+            exit(5)
+        } catch is CancellationError {
+            let preserved = try Data(contentsOf: sidecar.appendingPathComponent("photo.jpg"))
+            guard preserved == Data("A".utf8),
+                  !fileManager.fileExists(atPath: sidecar.appendingPathComponent("photo-2.jpg").path) else {
+                fputs("cancellation replaced the previously completed attachment folder\n", stderr)
+                exit(6)
+            }
+        }
+
+        _ = try MessageAttachmentExporter.export([], beside: htmlExport.path)
+        guard !fileManager.fileExists(atPath: sidecar.path) else {
+            fputs("empty re-export did not clean the stale attachment folder\n", stderr)
+            exit(7)
+        }
+    }
+}
+'''
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp = Path(temp_dir)
+        probe_path = temp / "Probe.swift"
+        probe_path.write_text(probe)
+        executable = temp / "attachment-sidecar-probe"
+        compile_result = subprocess.run(
+            ["swiftc", "-parse-as-library", str(exporter), str(probe_path), "-o", str(executable)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert compile_result.returncode == 0, compile_result.stderr
+        result = subprocess.run([str(executable), str(temp)], capture_output=True, text=True, timeout=10)
+        assert result.returncode == 0, result.stderr
+
+
+def test_original_attachment_option_applies_to_every_message_export_format(root: Path) -> None:
+    exporter = read(root, "Sources/Phosphor/Services/MessageExporter.swift")
+    view = read(root, "Sources/Phosphor/Views/Messages/MessageListView.swift")
+    export_messages = re.search(
+        r"func exportMessages\(.*?\) throws \{(?P<body>.*?)\n    \}",
+        exporter,
+        re.S,
+    )
+    assert export_messages is not None, "exportMessages should exist"
+    body = export_messages.group("body")
+    assert_contains(
+        body,
+        "stageOriginalAttachments(",
+        "every export format should stage original attachments before format-specific rendering",
+    )
+    assert body.index("stageOriginalAttachments") < body.index("switch format"), (
+        "original attachment export must not be limited to HTML, PDF, or MBOX"
+    )
+    assert_contains(
+        exporter,
+        "MessageAttachmentExporter.export",
+        "message exports should use the cancellation-safe sidecar writer",
+    )
+    assert_contains(
+        exporter,
+        "attachmentMap: attachmentMap",
+        "HTML should link to the same original attachment sidecar instead of copying files twice",
+    )
+    assert_contains(
+        exporter,
+        "MessageAttachmentExporter.relativeURL(for: relPath)",
+        "HTML attachment src/href values should URL-encode reserved filename characters",
+    )
+    assert_contains(
+        view,
+        'Toggle("Export Attachments", isOn: $includeAttachments)',
+        "the Messages export control should clearly say that it exports original attachments",
+    )
+    assert_contains(
+        view,
+        "Copies original photos, videos, audio, and files",
+        "the attachment option should explain that originals are written beside the transcript",
+    )
 
 
 def test_message_view_clears_stale_loaded_backup_and_preserves_readiness(root: Path) -> None:
@@ -569,9 +733,11 @@ def test_message_export_writers_check_cancellation_inside_long_loops(root: Path)
         match = re.search(rf"private func {func_name}.*?(?=\n    private func|\n    ///|\Z)", src, re.S)
         assert match is not None, f"{func_name} not found"
         assert_contains(match.group(0), "try cancellationCheck?()", f"{func_name} should stop promptly during large single-chat exports")
-    stage = re.search(r"private func stageAttachments.*?(?=\n    private func|\n    ///|\Z)", src, re.S)
-    assert stage is not None, "stageAttachments should exist"
-    assert_contains(stage.group(0), "try cancellationCheck?()", "HTML attachment staging should be cancellable")
+    stage = re.search(r"private func stageOriginalAttachments.*?(?=\n    private func|\n    ///|\Z)", src, re.S)
+    assert stage is not None, "stageOriginalAttachments should exist"
+    assert_contains(stage.group(0), "try cancellationCheck?()", "attachment resolution should be cancellable")
+    helper = read(root, "Sources/Phosphor/Utilities/MessageAttachmentExporter.swift")
+    assert_contains(helper, "try cancellationCheck?()", "original attachment copying should be cancellable between files")
 
 
 def test_minimal_sms_schema_fixture_supports_limited_attachment_query(root: Path) -> None:
