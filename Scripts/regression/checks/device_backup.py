@@ -167,7 +167,7 @@ def test_device_polling_prefers_lightweight_discovery_before_python_fallback(roo
     # them as duplicate rows for a full interval once the probe recovers.
     assert_contains(manager, "if lightweightScan.isAvailable {", "the compatibility cache may only be refreshed from a scan whose lightweight probe succeeded")
     assert_contains(manager, "compatibilityOnlyDeviceEntries = []", "a failed lightweight probe must clear the compatibility cache instead of poisoning it")
-    assert_contains(manager, "entries = mergeDeviceEntries(pyEntries)", "when the lightweight probe fails, the pymobiledevice snapshot is the whole picture for that poll")
+    assert_contains(manager, "discoveredEntries = mergeDeviceEntries(pyEntries)", "when the lightweight probe fails, the pymobiledevice snapshot is the whole picture for that poll")
     # Date() here would hide pymobiledevice-only devices for the first full interval
     # after launch, which is exactly what this discovery path promises to prevent.
     assert_contains(manager, "lastCompatibilityDiscoveryAt = Date.distantPast", "the first poll after launch must run a compatibility scan, not wait out the interval")
