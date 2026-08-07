@@ -55,6 +55,7 @@ final class DeviceCloneService: ObservableObject {
     func clone(
         sourceUDID: String,
         destinationUDID: String,
+        backupViewModel: BackupViewModel,
         encrypted: Bool = false
     ) async -> Bool {
         guard sourceUDID != destinationUDID else {
@@ -71,15 +72,12 @@ final class DeviceCloneService: ObservableObject {
         overallProgress = 0.05
         progress = "Starting backup of source device..."
 
-        let backupSuccess = await backupManager.createBackup(udid: sourceUDID, encrypted: encrypted) { [weak self] text in
-            self?.progress = text
-            if let pct = PyMobileDevice.parseProgress(from: text) {
-                self?.overallProgress = pct / 2.0
-            }
-        }
+        await backupViewModel.createBackup(udid: sourceUDID, encrypted: encrypted)
+        let sourceActivity = backupViewModel.activity(for: sourceUDID)
+        let backupSuccess = sourceActivity?.state == .completed
 
         guard backupSuccess else {
-            lastError = backupManager.lastError ?? "Backup of source device failed"
+            lastError = sourceActivity?.errorMessage ?? "Backup of source device failed"
             phase = .failed
             isRunning = false
             return false

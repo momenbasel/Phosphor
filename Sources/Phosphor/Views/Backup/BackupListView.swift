@@ -28,7 +28,7 @@ struct BackupListView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Backups")
                         .font(.title2.weight(.semibold))
-                    Text("\(backupVM.backups.count) backups - \(backupVM.totalSize) total")
+                    Text(backupSummary)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -38,7 +38,6 @@ struct BackupListView: View {
                 newBackupMenu
                 .buttonStyle(.borderedProminent)
                 .tint(.brandAccent)
-                .disabled(backupVM.isCreating)
 
                 Button {
                     backupVM.loadBackups()
@@ -52,8 +51,8 @@ struct BackupListView: View {
 
             backupStateNotice
 
-            if backupVM.isCreating {
-                backupProgressView
+            if !activeBackupActivities.isEmpty {
+                backupActivityList
             }
 
             if let err = backupVM.loadError, backupVM.backups.isEmpty {
@@ -96,7 +95,7 @@ struct BackupListView: View {
             }
         } message: {
             if let backup = backupToDelete {
-                Text("This will permanently delete the backup of \(backup.deviceName) (\(backup.sizeResolved ? backup.sizeString : "size calculating")). This cannot be undone.")
+                Text("This will permanently delete \(backup.deviceIdentityLabel) (\(backup.sizeResolved ? backup.sizeString : "size calculating")). This cannot be undone.")
             }
         }
         .alert("Backup", isPresented: $backupVM.showAlert) {
@@ -143,7 +142,7 @@ struct BackupListView: View {
         }
         .sheet(isPresented: $showScheduleSheet) {
             BackupScheduleSheet()
-                .frame(width: 440, height: 400)
+                .frame(width: 480, height: 500)
         }
         .onAppear { backupVM.loadBackups() }
     }
@@ -176,6 +175,34 @@ struct BackupListView: View {
         } label: {
             Label("New Backup", systemImage: "plus")
         }
+    }
+
+    private var activeBackupActivities: [BackupViewModel.BackupActivity] {
+        backupVM.backupActivities.values
+            .filter(\.isActive)
+            .sorted { lhs, rhs in
+                switch (lhs.state, rhs.state) {
+                case (.running, .queued): true
+                case (.queued, .running): false
+                default: lhs.udid < rhs.udid
+                }
+            }
+    }
+
+    private var backedUpDeviceCount: Int {
+        Set(backupVM.backups.map { backup in
+            backup.udid.isEmpty ? "backup:\(backup.id)" : "device:\(backup.udid)"
+        }).count
+    }
+
+    private var backupSummary: String {
+        let backupWord = backupVM.backups.count == 1 ? "backup" : "backups"
+        let deviceWord = backedUpDeviceCount == 1 ? "device" : "devices"
+        return "\(backupVM.backups.count) \(backupWord) across \(backedUpDeviceCount) \(deviceWord) - \(backupVM.totalSize) total"
+    }
+
+    private var selectedDeviceBackupIsActive: Bool {
+        deviceVM.selectedDevice.map { backupVM.isBackupActive(for: $0.id) } == true
     }
 
 
@@ -368,22 +395,50 @@ struct BackupListView: View {
         }
     }
 
-    private var backupProgressView: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(backupVM.displayProgressText)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Spacer()
+    private var backupActivityList: some View {
+        VStack(spacing: 0) {
+            ForEach(activeBackupActivities) { activity in
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Image(systemName: activity.state == .running ? "externaldrive.badge.timemachine" : "clock")
+                            .foregroundStyle(Color.brandAccent)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(deviceIdentity(for: activity.udid))
+                                .font(.system(size: 13, weight: .semibold))
+                            Text(activity.displayProgressText)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                        Button("Cancel") {
+                            backupVM.cancelBackup(udid: activity.udid)
+                        }
+                        .controlSize(.small)
+                    }
+                    if case .running = activity.state {
+                        ProgressView(
+                            value: activity.displayProgressFraction,
+                            total: 1.0
+                        )
+                        .progressViewStyle(.linear)
+                        .tint(.brandAccent)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                if activity.id != activeBackupActivities.last?.id { Divider() }
             }
-            ProgressView(value: backupVM.displayProgressFraction, total: 1.0)
-                .progressViewStyle(.linear)
-                .tint(.brandAccent)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
         .background(Color.brandAccent.opacity(0.06))
+    }
+
+    private func deviceIdentity(for udid: String) -> String {
+        let suffix = String(udid.suffix(8))
+        guard let device = deviceVM.devices.first(where: { $0.id == udid }) else {
+            return "Device · ID …\(suffix)"
+        }
+        return "\(device.name) · \(device.displayModelName) · ID …\(suffix)"
     }
 
     @ViewBuilder
@@ -513,8 +568,10 @@ struct BackupRow: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Text(backup.deviceName)
+                    Text(backup.deviceIdentityLabel)
                         .font(.system(size: 14, weight: .medium))
+                        .lineLimit(1)
+                        .help("Full device ID: \(backup.udid.isEmpty ? "Unavailable" : backup.udid)")
 
                     if backup.isEncrypted {
                         Image(systemName: "lock.fill")
@@ -529,8 +586,6 @@ struct BackupRow: View {
                 }
 
                 HStack(spacing: 8) {
-                    Text(backup.modelName)
-                    Text("-")
                     Text("iOS \(backup.iosVersion)")
                 }
                 .font(.system(size: 12))
@@ -625,6 +680,8 @@ struct BackupRow: View {
 struct BackupScheduleSheet: View {
 
     @StateObject private var scheduler = BackupScheduler()
+    @EnvironmentObject private var deviceVM: DeviceViewModel
+    @EnvironmentObject private var backupVM: BackupViewModel
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -642,7 +699,25 @@ struct BackupScheduleSheet: View {
 
             Form {
                 Section("Schedule") {
+                    ScheduledBackupDevicePicker(
+                        targetUDID: Binding(
+                            get: { scheduler.schedule.targetUDID },
+                            set: { targetUDID in
+                                let targetName = deviceVM.devices.first(where: { $0.id == targetUDID })?.name
+                                scheduler.selectSchedule(targetUDID: targetUDID, targetName: targetName)
+                            }
+                        ),
+                        targetName: $scheduler.schedule.targetName,
+                        devices: deviceVM.devices,
+                        wifiOnly: scheduler.schedule.wifiOnly
+                    )
+
                     Toggle("Enable automatic backups", isOn: $scheduler.schedule.enabled)
+                        .disabled(
+                            !scheduler.schedule.enabled &&
+                            scheduler.schedule.targetUDID == nil &&
+                            deviceVM.devices.count != 1
+                        )
 
                     if scheduler.schedule.enabled {
                         Picker("Frequency", selection: $scheduler.schedule.frequency) {
@@ -702,7 +777,10 @@ struct BackupScheduleSheet: View {
                         Button("Run Now") {
                             Task { await scheduler.runNow() }
                         }
-                        .disabled(scheduler.isRunningScheduledBackup)
+                        .disabled(
+                            scheduler.isRunningScheduledBackup ||
+                            (scheduler.schedule.targetUDID == nil && deviceVM.devices.count > 1)
+                        )
                     }
 
                     if !scheduler.recentLogs.isEmpty {
@@ -731,5 +809,6 @@ struct BackupScheduleSheet: View {
         .onChange(of: scheduler.schedule.frequency) { _, _ in scheduler.updateNextRunDate() }
         .onChange(of: scheduler.schedule.preferredHour) { _, _ in scheduler.updateNextRunDate() }
         .onChange(of: scheduler.schedule.preferredMinute) { _, _ in scheduler.updateNextRunDate() }
+        .onAppear { scheduler.attachBackupViewModel(backupVM) }
     }
 }

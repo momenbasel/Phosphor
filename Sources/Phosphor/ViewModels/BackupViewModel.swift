@@ -5,6 +5,47 @@ import SwiftUI
 @MainActor
 final class BackupViewModel: ObservableObject {
 
+    struct BackupActivity: Identifiable {
+        enum State: Equatable {
+            case queued(position: Int)
+            case running
+            case completed
+            case failed
+            case cancelled
+        }
+
+        var id: String { udid }
+        let udid: String
+        var state: State
+        var progressText: String
+        var progressFraction: Double?
+        var errorMessage: String?
+
+        var isActive: Bool {
+            switch state {
+            case .queued, .running: true
+            case .completed, .failed, .cancelled: false
+            }
+        }
+
+        var displayProgressText: String {
+            switch state {
+            case .queued(let position): return "Queued · #\(position)"
+            case .running:
+                guard let progressFraction else { return "Backing up" }
+                return "Backing up \(Int(progressFraction * 100))%"
+            case .completed: return "Completed"
+            case .failed: return "Failed"
+            case .cancelled: return "Cancelled"
+            }
+        }
+
+        var displayProgressFraction: Double {
+            guard let progressFraction else { return 0.05 }
+            return min(max(progressFraction, 0.05), 1)
+        }
+    }
+
     @Published var backups: [BackupInfo] = []
     @Published var selectedBackup: BackupInfo?
     @Published var isCreating = false
@@ -14,6 +55,7 @@ final class BackupViewModel: ObservableObject {
     @Published var alertMessage = ""
     @Published var backupIssue: BackupManager.BackupFailure?
     @Published var loadError: String?
+    @Published private(set) var backupActivities: [String: BackupActivity] = [:]
 
     // Browser state
     @Published var browserDomains: [String] = []
@@ -32,12 +74,18 @@ final class BackupViewModel: ObservableObject {
     private var currentManifest: BackupManifest?
     private var sizeResolutionTask: Task<Void, Never>?
     private var lastBackupRequest: BackupRequest?
-    private var backupOperationID: UUID?
+    private var jobQueue = BackupJobQueue(maxConcurrent: 2)
+    private var pendingBackupRequests: [String: BackupRequest] = [:]
+    private var backupManagers: [String: BackupManager] = [:]
+    private var backupJobTasks: [String: Task<Void, Never>] = [:]
+    private var backupCompletionContinuations: [String: CheckedContinuation<Void, Never>] = [:]
+    private var backupJobWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
 
     private struct BackupRequest {
         let udid: String
         let incremental: Bool
         let preferNetwork: Bool
+        let encrypted: Bool
     }
 
     func loadBackups() {
@@ -105,43 +153,184 @@ final class BackupViewModel: ObservableObject {
         }
     }
 
-    func createBackup(udid: String, incremental: Bool = false, preferNetwork: Bool = false) async {
-        let operationID = UUID()
-        backupOperationID = operationID
-        lastBackupRequest = BackupRequest(udid: udid, incremental: incremental, preferNetwork: preferNetwork)
-        isCreating = true
-        progressText = "Preparing..."
-        progressFraction = nil
+    func createBackup(udid: String, incremental: Bool = false, preferNetwork: Bool = false, encrypted: Bool = false) async {
+        let request = BackupRequest(udid: udid, incremental: incremental, preferNetwork: preferNetwork, encrypted: encrypted)
+        lastBackupRequest = request
+
+        switch jobQueue.enqueue(udid: udid) {
+        case .duplicate:
+            await withCheckedContinuation { continuation in
+                backupJobWaiters[udid, default: []].append(continuation)
+            }
+        case .queued(let position):
+            pendingBackupRequests[udid] = request
+            backupActivities[udid] = BackupActivity(
+                udid: udid,
+                state: .queued(position: position),
+                progressText: "Queued",
+                progressFraction: nil,
+                errorMessage: nil
+            )
+            refreshLegacyProgressState()
+            await withCheckedContinuation { continuation in
+                backupCompletionContinuations[udid] = continuation
+            }
+        case .started:
+            pendingBackupRequests[udid] = request
+            backupActivities[udid] = BackupActivity(
+                udid: udid,
+                state: .running,
+                progressText: "Preparing...",
+                progressFraction: nil,
+                errorMessage: nil
+            )
+            refreshLegacyProgressState()
+            await runBackupJob(udid: udid)
+        }
+    }
+
+    func activity(for udid: String) -> BackupActivity? {
+        backupActivities[udid]
+    }
+
+    func isBackupActive(for udid: String) -> Bool {
+        backupActivities[udid]?.isActive == true
+    }
+
+    func cancelBackup(udid: String) {
+        switch jobQueue.cancel(udid: udid) {
+        case .removedQueued:
+            pendingBackupRequests.removeValue(forKey: udid)
+            backupCompletionContinuations.removeValue(forKey: udid)?.resume()
+            resumeBackupWaiters(for: udid)
+            updateActivity(udid: udid) {
+                $0.state = .cancelled
+                $0.progressText = "Cancelled"
+            }
+            renumberQueuedActivities()
+            refreshLegacyProgressState()
+        case .cancelRunning:
+            if let manager = backupManagers[udid] {
+                manager.cancelBackup()
+            } else {
+                // A queued job is marked running when it is promoted, just before
+                // its task creates a BackupManager. Preserve cancellation through
+                // that handoff instead of letting the promoted job start anyway.
+                backupJobTasks[udid]?.cancel()
+            }
+            updateActivity(udid: udid) { $0.progressText = "Cancelling..." }
+        case .notFound:
+            break
+        }
+    }
+
+    private func runBackupJob(udid: String) async {
+        guard !Task.isCancelled else {
+            updateActivity(udid: udid) {
+                $0.state = .cancelled
+                $0.progressText = "Cancelled"
+            }
+            finishBackupJob(udid: udid)
+            return
+        }
+        guard let request = pendingBackupRequests[udid] else {
+            finishBackupJob(udid: udid)
+            return
+        }
+
+        let manager = BackupManager()
+        backupManagers[udid] = manager
+        updateActivity(udid: udid) {
+            $0.state = .running
+            $0.progressText = "Preparing..."
+        }
+        refreshLegacyProgressState()
 
         let success: Bool
-        if incremental {
-            success = await backupManager.createIncrementalBackup(udid: udid, preferNetwork: preferNetwork) { [weak self, operationID] text in
-                guard self?.backupOperationID == operationID else { return }
-                self?.updateBackupProgress(text)
+        if request.incremental {
+            success = await manager.createIncrementalBackup(udid: udid, preferNetwork: request.preferNetwork) { [weak self, weak manager] text in
+                guard let manager else { return }
+                self?.updateBackupProgress(udid: udid, text: text, manager: manager)
             }
         } else {
-            success = await backupManager.createBackup(udid: udid, preferNetwork: preferNetwork) { [weak self, operationID] text in
-                guard self?.backupOperationID == operationID else { return }
-                self?.updateBackupProgress(text)
+            success = await manager.createBackup(udid: udid, encrypted: request.encrypted, preferNetwork: request.preferNetwork) { [weak self, weak manager] text in
+                guard let manager else { return }
+                self?.updateBackupProgress(udid: udid, text: text, manager: manager)
             }
         }
 
-        guard backupOperationID == operationID else { return }
-        backupOperationID = nil
-        isCreating = false
         if success {
-            alertMessage = "Backup completed"
-            showAlert = true
+            updateActivity(udid: udid) {
+                $0.state = .completed
+                $0.progressText = "Completed"
+                $0.progressFraction = 1
+            }
             loadBackups()
-        } else if backupManager.lastOperationWasCancelled {
-            // User-initiated cancellation is not a backup failure.
-            progressText = "Cancelled"
-        } else if let failure = backupManager.lastBackupFailure {
-            backupIssue = failure
+        } else if manager.lastOperationWasCancelled {
+            updateActivity(udid: udid) {
+                $0.state = .cancelled
+                $0.progressText = "Cancelled"
+            }
         } else {
-            alertMessage = backupManager.lastError ?? "Backup failed"
-            showAlert = true
+            let error = manager.lastBackupFailure?.message ?? manager.lastError ?? "Backup failed"
+            updateActivity(udid: udid) {
+                $0.state = .failed
+                $0.progressText = "Failed"
+                $0.errorMessage = error
+            }
+            if let failure = manager.lastBackupFailure {
+                backupIssue = failure
+            }
         }
+
+        finishBackupJob(udid: udid)
+    }
+
+    private func finishBackupJob(udid: String) {
+        pendingBackupRequests.removeValue(forKey: udid)
+        backupManagers.removeValue(forKey: udid)
+        backupJobTasks.removeValue(forKey: udid)
+        backupCompletionContinuations.removeValue(forKey: udid)?.resume()
+        resumeBackupWaiters(for: udid)
+        let nextUDID = jobQueue.finish(udid: udid)
+        renumberQueuedActivities()
+        refreshLegacyProgressState()
+
+        if let nextUDID {
+            let task = Task { [weak self] in
+                guard let self else { return }
+                await self.runBackupJob(udid: nextUDID)
+            }
+            backupJobTasks[nextUDID] = task
+        }
+    }
+
+    private func updateActivity(udid: String, update: (inout BackupActivity) -> Void) {
+        guard var activity = backupActivities[udid] else { return }
+        update(&activity)
+        backupActivities[udid] = activity
+    }
+
+    private func resumeBackupWaiters(for udid: String) {
+        let waiters = backupJobWaiters.removeValue(forKey: udid) ?? []
+        waiters.forEach { $0.resume() }
+    }
+
+    private func renumberQueuedActivities() {
+        for (offset, udid) in jobQueue.queuedUDIDs.enumerated() {
+            updateActivity(udid: udid) {
+                $0.state = .queued(position: offset + 1)
+                $0.progressText = "Queued · #\(offset + 1)"
+            }
+        }
+    }
+
+    private func refreshLegacyProgressState() {
+        let active = backupActivities.values.filter(\.isActive)
+        isCreating = !active.isEmpty
+        let representative = active.first(where: { $0.state == .running }) ?? active.first
+        progressText = representative?.progressText ?? ""
+        progressFraction = representative?.progressFraction
     }
 
     private func recoveryUdid(for issue: BackupManager.BackupFailure) -> String? {
@@ -158,13 +347,16 @@ final class BackupViewModel: ObservableObject {
         return min(max(progressFraction, 0.05), 1.0)
     }
 
-    private func updateBackupProgress(_ text: String) {
-        progressText = text
-        if let pct = PyMobileDevice.parseProgress(from: text) {
-            progressFraction = pct
-        } else {
-            progressFraction = backupManager.backupPercent > 0 ? backupManager.backupPercent : progressFraction
+    private func updateBackupProgress(udid: String, text: String, manager: BackupManager) {
+        updateActivity(udid: udid) { activity in
+            activity.progressText = text
+            if let pct = PyMobileDevice.parseProgress(from: text) {
+                activity.progressFraction = pct
+            } else if manager.backupPercent > 0 {
+                activity.progressFraction = manager.backupPercent
+            }
         }
+        refreshLegacyProgressState()
     }
 
     private func recoveryPrefersNetwork(for udid: String) -> Bool {

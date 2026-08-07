@@ -53,16 +53,29 @@ final class BackupManager: ObservableObject {
         case incomplete(path: String)
     }
 
-    /// Active backup process for cancellation.
+    /// Active backup process for cancellation. Ownership is shared across manager
+    /// instances by device UDID, allowing different devices to run concurrently
+    /// without permitting two writers to operate on the same physical device.
+    private static var operationRegistry = BackupOperationRegistry()
     private var activeProcess: Process?
-    private var activeOperationID: UUID?
+    private var operationCoordinator = BackupOperationCoordinator()
     private var cancelledOperationIDs: Set<UUID> = []
 
-    private func beginCancellableOperation() -> UUID {
-        let id = UUID()
-        activeOperationID = id
+    private func beginCancellableOperation(udid: String) -> UUID? {
+        guard operationCoordinator.activeOperationID == nil else {
+            lastError = "Another backup or restore operation is already running."
+            return nil
+        }
         lastOperationWasCancelled = false
-        return id
+        lastBackupFailure = nil
+        guard let operationID = operationCoordinator.begin(
+            udid: udid,
+            registry: &Self.operationRegistry
+        ) else {
+            lastError = "Another backup or restore operation is already running for this device."
+            return nil
+        }
+        return operationID
     }
 
     private func operationWasCancelled(_ id: UUID) -> Bool {
@@ -70,8 +83,7 @@ final class BackupManager: ObservableObject {
     }
 
     private func finishOperation(_ id: UUID) {
-        if activeOperationID == id {
-            activeOperationID = nil
+        if operationCoordinator.finish(operationID: id, registry: &Self.operationRegistry) {
             activeProcess = nil
             isCreatingBackup = false
         }
@@ -79,7 +91,7 @@ final class BackupManager: ObservableObject {
     }
 
     private func markOperationCancelled(_ id: UUID, progress: String = "Cancelled") {
-        if activeOperationID == id {
+        if operationCoordinator.activeOperationID == id {
             lastOperationWasCancelled = true
             backupProgress = progress
             lastError = nil
@@ -481,8 +493,8 @@ final class BackupManager: ObservableObject {
         preferNetwork: Bool = false,
         onProgress: @escaping (String) -> Void
     ) async -> Bool {
+        guard let operationID = beginCancellableOperation(udid: udid) else { return false }
         isCreatingBackup = true
-        let operationID = beginCancellableOperation()
         backupProgress = "Starting backup..."
         backupPercent = 0
         lastError = nil
@@ -676,7 +688,7 @@ final class BackupManager: ObservableObject {
                             continuation.resume(returning: false)
                             return
                         }
-                        if self.activeOperationID == operationID {
+                        if self.operationCoordinator.activeOperationID == operationID {
                             self.activeProcess = nil
                         }
                         if self.operationWasCancelled(operationID) {
@@ -696,8 +708,8 @@ final class BackupManager: ObservableObject {
         preferNetwork: Bool = false,
         onProgress: @escaping (String) -> Void
     ) async -> Bool {
+        guard let operationID = beginCancellableOperation(udid: udid) else { return false }
         isCreatingBackup = true
-        let operationID = beginCancellableOperation()
         backupProgress = "Starting incremental backup..."
         backupPercent = 0
         lastError = nil
@@ -852,7 +864,7 @@ final class BackupManager: ObservableObject {
             return false
         }
 
-        let operationID = beginCancellableOperation()
+        guard let operationID = beginCancellableOperation(udid: targetUDID) else { return false }
         // Primary: pymobiledevice3
         if PyMobileDevice.available() {
             return await withCheckedContinuation { continuation in
@@ -913,7 +925,7 @@ final class BackupManager: ObservableObject {
 
     /// Cancel an active backup/restore.
     func cancelBackup() {
-        if let activeOperationID {
+        if let activeOperationID = operationCoordinator.activeOperationID {
             cancelledOperationIDs.insert(activeOperationID)
         }
         lastOperationWasCancelled = true

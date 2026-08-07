@@ -98,7 +98,9 @@ enum BackupArchiver {
         dateFormatter.dateFormat = "yyyy-MM-dd_HHmmss"
         let dateStr = dateFormatter.string(from: backup.lastBackupDate ?? Date())
 
-        let archiveName = "\(safeName)_\(dateStr).\(fileExtension)"
+        // Keep portable archives attributable when same-name devices create
+        // backups at similar times.
+        let archiveName = "\(safeName)_\(backup.shortUDID)_\(dateStr).\(fileExtension)"
         let archivePath = (destinationDir as NSString).appendingPathComponent(archiveName)
 
         // Remove existing file

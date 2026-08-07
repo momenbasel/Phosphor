@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import subprocess
+import tempfile
 from pathlib import Path
 
 
@@ -92,8 +94,8 @@ def test_finder_wifi_sync_can_be_enabled_from_usb_device(root: Path) -> None:
     assert_contains(view, "Start a backup for this device", "Device overview should surface a backup action")
     assert_contains(view, "Full Wi-Fi Backup?", "Device overview Wi-Fi full backups should use the same safety confirmation pattern")
     assert_contains(view, "BackupManager.hasExistingBackup(for: device.id) && backupVM.backups.contains", "Device overview should only run incremental Wi-Fi backups when complete metadata exists")
-    assert_contains(view, "ProgressView(value: backupVM.displayProgressFraction", "Device overview backup progress should use a linear loading bar")
-    assert_contains(view, "backupVM.displayProgressText", "Device overview should show sanitized backup progress copy")
+    assert_contains(view, "value: activity.displayProgressFraction", "Device overview backup progress should use a device-scoped linear loading bar")
+    assert_contains(view, "activity.displayProgressText", "Device overview should show sanitized device-scoped backup progress copy")
 
 
 def test_backup_progress_ui_uses_sanitized_loading_bar(root: Path) -> None:
@@ -103,8 +105,8 @@ def test_backup_progress_ui_uses_sanitized_loading_bar(root: Path) -> None:
     assert_contains(backup_vm, "var displayProgressText", "BackupViewModel should expose user-facing progress copy")
     assert_contains(backup_vm, "return \"Backing up", "Backup progress copy should say Backing up, not the backend/protocol name")
     assert_contains(backup_vm, "var displayProgressFraction", "BackupViewModel should expose progress for a loading bar")
-    assert_contains(backup_view, "ProgressView(value: backupVM.displayProgressFraction", "Backup list should show a linear loading bar while backing up")
-    assert_contains(backup_view, "backupVM.displayProgressText", "Backup list should not show raw backend/protocol progress text")
+    assert_contains(backup_view, "value: activity.displayProgressFraction", "Backup list should show a linear loading bar for every active device")
+    assert_contains(backup_view, "activity.displayProgressText", "Backup list should not show raw backend/protocol progress text")
     assert_contains(manager, "onProgress(\"Backing up", "pymobiledevice3 stderr percentage updates should reach the user-facing progress bar")
 
 
@@ -178,19 +180,20 @@ def test_wifi_schedules_use_network_discovery_and_network_backup_flag(root: Path
     scheduler = read(root, "Sources/Phosphor/Services/BackupScheduler.swift")
     assert_contains(scheduler, "pyEntries.filter { $0.connectionType != \"USB\" }", "Wi-Fi-only schedules should filter out USB pymobiledevice entries")
     assert_contains(scheduler, "PyMobileDevice.listNetworkDevices()", "Wi-Fi-only schedules should probe network devices explicitly")
-    assert_contains(scheduler, 'let fallbackArgs = schedule.wifiOnly ? ["-n"] : ["-l"]', "Wi-Fi-only fallback should use idevice_id -n")
-    assert_contains(scheduler, "createIncrementalBackup(udid: udid, preferNetwork: preferNetwork)", "scheduled incremental backups should preserve network preference")
-    assert_contains(scheduler, "createBackup(udid: udid, preferNetwork: preferNetwork)", "scheduled full backups should preserve network preference")
-    assert_contains(scheduler, "schedule.incrementalOnly && BackupManager.hasExistingBackup(for: udid)", "Scheduled incremental mode should run the required first full backup when metadata is missing")
+    assert_contains(scheduler, 'let fallbackArgs = runSchedule.wifiOnly ? ["-n"] : ["-l"]', "Wi-Fi-only fallback should use idevice_id -n")
+    assert_contains(scheduler, "createBackup(udid: udid, incremental: incremental, preferNetwork: preferNetwork)", "all scheduled backups should preserve incremental and network preferences through the shared queue")
+    assert_contains(scheduler, "runSchedule.incrementalOnly && BackupManager.hasExistingBackup(for: udid)", "Scheduled incremental mode should run the required first full backup when metadata is missing")
     assert_contains(scheduler, "running required first full backup", "Scheduled first-full fallback should be logged clearly")
-    assert_contains(scheduler, "able to notice a schedule that is enabled after launch", "App-level scheduler should keep monitoring so schedules enabled after launch can run")
-    assert_contains(scheduler, "if schedule.nextRunDate == nil { updateNextRunDate() }", "Scheduler should initialize next run when a separate UI instance enables the schedule")
+    assert_contains(scheduler, "scheduleDidChangeNotification", "App-level scheduler should react when another window enables a schedule after launch")
+    assert_contains(scheduler, "self.configureMonitoring()", "schedule changes should reconfigure monitoring without an idle disabled timer")
+    assert_contains(scheduler, "if candidate.nextRunDate == nil", "Scheduler should initialize every enabled device schedule after a separate UI instance changes it")
     assert_contains(scheduler, "func scheduledTime(on date: Date) -> Date", "Scheduler should align non-hourly next runs to preferred wall-clock time")
     assert_contains(scheduler, "components.hour = schedule.preferredHour", "Scheduler should use preferred hour even after a previous run exists")
     assert_contains(scheduler, "components.minute = schedule.preferredMinute", "Scheduler should use preferred minute even after a previous run exists")
     assert_contains(scheduler, "while next <= now", "Scheduler should advance preferred-time candidates until they are in the future")
     assert_not_contains(scheduler, "next = lastRun.addingTimeInterval(schedule.frequency.interval)", "Scheduler should not drift nextRunDate to the last completion time")
-    assert_contains(scheduler, "func runNow() async {\n        guard !isRunningScheduledBackup else { return }\n        isRunningScheduledBackup = true", "Run Now should set the running guard before async device discovery")
+    run_body = scheduler.split("private func run(schedule runSchedule:", 1)[1].split("// MARK: - Backup Execution", 1)[0]
+    assert run_body.index("runningScheduledUDIDs.insert(scheduleIdentity)") < run_body.index("findTargetDevice(for: runSchedule)"), "Run Now should claim its device schedule before async discovery"
 
     view = read(root, "Sources/Phosphor/Views/Backup/BackupListView.swift")
     assert_contains(view, "Wi-Fi only (skip if Wi-Fi is not available)", "Wi-Fi-only schedule copy should not say USB is required")
@@ -203,6 +206,329 @@ def test_wifi_schedules_use_network_discovery_and_network_backup_flag(root: Path
     assert_contains(settings, "Wi-Fi only (skip if Wi-Fi is not available)", "Settings schedule copy should match the safer schedule sheet copy")
     assert_contains(settings, "Incremental when possible (faster)", "Settings should not promise incremental-only behavior when first run may be full")
     assert_contains(settings, ".onChange(of: scheduler.schedule.preferredHour)", "Settings should refresh next-run timing when preferred time changes")
+
+
+def test_scheduled_backups_never_choose_between_multiple_devices(root: Path) -> None:
+    resolver = root / "Sources/Phosphor/Utilities/ScheduledBackupTargetResolver.swift"
+    scheduler = read(root, "Sources/Phosphor/Services/BackupScheduler.swift")
+    schedule_sheet = read(root, "Sources/Phosphor/Views/Backup/BackupListView.swift")
+    settings = read(root, "Sources/Phosphor/Views/Settings/SettingsView.swift")
+
+    assert_contains(scheduler, "ScheduledBackupTargetResolver.resolve", "scheduled backup discovery must use the fail-closed target resolver")
+    assert_contains(scheduler, "Multiple devices are available. Choose a device", "ambiguous discovery should explain why no backup started")
+    assert_not_contains(scheduler, "if let first = eligiblePyEntries.first", "scheduled backups must not pick the first enumerated device")
+    assert_not_contains(scheduler, "if let first = devices.first", "libimobiledevice fallback must not pick the first enumerated device")
+    assert_contains(schedule_sheet, "ScheduledBackupDevicePicker", "the backup schedule sheet should expose an explicit device picker")
+    assert_contains(settings, "ScheduledBackupDevicePicker", "Settings should expose the same explicit device picker")
+
+    probe = r'''
+import Foundation
+
+typealias Resolver = ScheduledBackupTargetResolver
+
+func require(_ condition: @autoclosure () -> Bool, _ message: String) {
+    guard condition() else {
+        FileHandle.standardError.write(Data((message + "\n").utf8))
+        exit(1)
+    }
+}
+
+let phone = Resolver.Candidate(udid: "phone", preferNetwork: true)
+let tablet = Resolver.Candidate(udid: "tablet", preferNetwork: false)
+
+require(Resolver.resolve(candidates: [], targetUDID: nil) == .noneAvailable, "zero devices must remain unavailable")
+require(Resolver.resolve(candidates: [phone], targetUDID: nil) == .target(phone), "one legacy device may remain automatic")
+require(Resolver.resolve(candidates: [phone, tablet], targetUDID: nil) == .selectionRequired, "multiple devices must require selection")
+require(Resolver.resolve(candidates: [tablet, phone], targetUDID: nil) == .selectionRequired, "discovery order must not select a target")
+require(Resolver.resolve(candidates: [phone, tablet], targetUDID: "tablet") == .target(tablet), "an explicit target must win")
+require(Resolver.resolve(candidates: [phone], targetUDID: "tablet") == .noneAvailable, "a missing target must not fall back to another device")
+
+let phoneUSB = Resolver.Candidate(udid: "phone", preferNetwork: false)
+require(Resolver.resolve(candidates: [phone, phoneUSB], targetUDID: nil) == .target(phoneUSB), "duplicate transports are one device and USB should win")
+'''
+
+    with tempfile.TemporaryDirectory(prefix="phosphor-schedule-target-") as temp_dir:
+        temp = Path(temp_dir)
+        main = temp / "main.swift"
+        binary = temp / "target-resolver-probe"
+        main.write_text(probe)
+        compile_result = subprocess.run(
+            ["swiftc", str(resolver), str(main), "-o", str(binary)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert compile_result.returncode == 0, f"target resolver probe should compile: {compile_result.stderr}"
+        run_result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=10)
+        assert run_result.returncode == 0, f"target resolver behavior failed: {run_result.stderr}"
+
+
+def test_legacy_schedule_resolves_the_complete_discovery_union(root: Path) -> None:
+    scheduler = read(root, "Sources/Phosphor/Services/BackupScheduler.swift")
+    no_target = scheduler.split("// Legacy schedules may not have a target yet.", 1)[1]
+    discovery = no_target.split("// MARK: - Scheduling Math", 1)[0]
+
+    assert_contains(discovery, "var discoveredCandidates", "legacy target discovery should accumulate candidates across backends")
+    assert_contains(discovery, "discoveredCandidates.append(contentsOf:", "every applicable discovery backend should contribute to one candidate union")
+    assert_contains(discovery, "resolveTarget(from: discoveredCandidates, targetUDID: runSchedule.targetUDID)", "legacy target resolution must happen once against the complete candidate union")
+    resolve_call = "resolveTarget(from: discoveredCandidates, targetUDID: runSchedule.targetUDID)"
+    assert discovery.rindex(resolve_call) > discovery.index("PyMobileDevice.listNetworkDevices()"), "network discovery must finish before resolving a legacy target"
+    assert discovery.rindex(resolve_call) > discovery.index('Shell.runAsync("idevice_id"'), "libimobiledevice fallback must finish before resolving a legacy target"
+
+    # A single primary candidate plus a distinct fallback candidate is ambiguous.
+    # This is the cross-backend scenario that previously selected the primary early.
+    resolver = root / "Sources/Phosphor/Utilities/ScheduledBackupTargetResolver.swift"
+    probe = r'''
+import Foundation
+
+let primary = ScheduledBackupTargetResolver.Candidate(udid: "phone", preferNetwork: true)
+let fallback = ScheduledBackupTargetResolver.Candidate(udid: "tablet", preferNetwork: true)
+precondition(
+    ScheduledBackupTargetResolver.resolve(
+        candidates: [primary, fallback],
+        targetUDID: nil
+    ) == .selectionRequired
+)
+'''
+    with tempfile.TemporaryDirectory(prefix="phosphor-schedule-union-") as temp_dir:
+        temp = Path(temp_dir)
+        main = temp / "main.swift"
+        binary = temp / "schedule-union-probe"
+        main.write_text(probe)
+        result = subprocess.run(["swiftc", str(resolver), str(main), "-o", str(binary)], capture_output=True, text=True, timeout=60)
+        assert result.returncode == 0, result.stderr
+        result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=10)
+        assert result.returncode == 0, result.stderr
+
+
+def test_multi_device_backup_queue_limits_concurrency_and_deduplicates_devices(root: Path) -> None:
+    queue_source = root / "Sources/Phosphor/Utilities/BackupJobQueue.swift"
+    assert queue_source.exists(), "multi-device backups need a behaviorally testable queue"
+    probe = r'''
+import Foundation
+
+@main
+struct BackupQueueProbe {
+    static func main() {
+        var queue = BackupJobQueue(maxConcurrent: 2)
+
+        precondition(queue.enqueue(udid: "phone") == .started)
+        precondition(queue.enqueue(udid: "tablet") == .started)
+        precondition(queue.enqueue(udid: "spare") == .queued(position: 1))
+        precondition(queue.enqueue(udid: "phone") == .duplicate)
+        precondition(queue.runningUDIDs == Set(["phone", "tablet"]))
+        precondition(queue.queuedUDIDs == ["spare"])
+
+        precondition(queue.finish(udid: "phone") == "spare")
+        precondition(queue.runningUDIDs == Set(["tablet", "spare"]))
+        precondition(queue.finish(udid: "missing") == nil)
+
+        precondition(queue.enqueue(udid: "fourth") == .queued(position: 1))
+        precondition(queue.cancel(udid: "fourth") == .removedQueued)
+        precondition(queue.cancel(udid: "tablet") == .cancelRunning)
+        precondition(queue.cancel(udid: "missing") == .notFound)
+        print("PASS")
+    }
+}
+'''
+    with tempfile.TemporaryDirectory(prefix="phosphor-backup-queue-") as temp_dir:
+        temp = Path(temp_dir)
+        probe_path = temp / "Probe.swift"
+        binary_path = temp / "backup-queue-probe"
+        probe_path.write_text(probe)
+        result = subprocess.run(
+            ["swiftc", "-parse-as-library", str(queue_source), str(probe_path), "-o", str(binary_path)],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert result.returncode == 0, result.stderr
+        result = subprocess.run([str(binary_path)], capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "PASS"
+
+
+def test_backup_view_model_tracks_and_cancels_jobs_per_device(root: Path) -> None:
+    view_model = read(root, "Sources/Phosphor/ViewModels/BackupViewModel.swift")
+    assert_contains(view_model, "@Published private(set) var backupActivities: [String: BackupActivity]", "backup activity must be keyed by device")
+    assert_contains(view_model, "private var backupManagers: [String: BackupManager]", "each running device needs an independent process owner")
+    assert_contains(view_model, "BackupJobQueue(maxConcurrent: 2)", "the app should run at most two device backups concurrently")
+    assert_contains(view_model, "func cancelBackup(udid: String)", "each device needs its own cancellation entry point")
+    assert_contains(view_model, "manager.cancelBackup()", "cancelling one device must not terminate another device's process")
+    assert_contains(view_model, "backupJobTasks[udid]?.cancel()", "a promoted job must remain cancellable before its BackupManager exists")
+    assert_contains(view_model, "backupJobTasks[nextUDID] = task", "promotion must register task ownership before the job can start")
+    assert_contains(view_model, "let encrypted: Bool", "queued backup requests must retain encryption intent")
+    assert_contains(view_model, "func activity(for udid: String)", "device views need device-scoped progress")
+    create = view_model.split("func createBackup(udid: String", 1)[1].split("private func", 1)[0]
+    assert "guard !isCreating" not in create, "a global creation guard would block a second device"
+    assert_contains(create, "jobQueue.enqueue(udid: udid)", "backup requests should enter the bounded per-device queue")
+
+
+def test_backup_surfaces_show_stable_device_identity(root: Path) -> None:
+    model = read(root, "Sources/Phosphor/Models/BackupInfo.swift")
+    backup_list = read(root, "Sources/Phosphor/Views/Backup/BackupListView.swift")
+    browser = read(root, "Sources/Phosphor/Views/Backup/BackupBrowserView.swift")
+    time_machine = read(root, "Sources/Phosphor/Views/Backup/BackupTimeMachineView.swift")
+    unlock = read(root, "Sources/Phosphor/Views/Backup/BackupUnlockSheet.swift")
+    archiver = read(root, "Sources/Phosphor/Services/BackupArchiver.swift")
+    apps = read(root, "Sources/Phosphor/Views/Apps/AppManagerView.swift")
+    messages = read(root, "Sources/Phosphor/Views/Messages/MessageListView.swift")
+
+    assert_contains(model, "var shortUDID", "backup metadata should expose a stable physical-device discriminator")
+    assert_contains(model, "let source = !udid.isEmpty ? udid", "the visible discriminator should prefer the authoritative backup UDID")
+    assert_contains(model, "var deviceIdentityLabel", "all backup pickers should share one device identity label")
+    assert_contains(model, "deviceName", "the identity label should retain the friendly device name")
+    assert_contains(model, "modelName", "the identity label should distinguish devices by model when possible")
+    assert_contains(model, "shortUDID", "same-name and same-model devices still need a unique visible suffix")
+
+    for source, surface in [
+        (backup_list, "backup list"),
+        (browser, "backup browser"),
+        (time_machine, "backup history"),
+        (unlock, "encrypted-backup prompt"),
+        (apps, "Apps backup picker"),
+        (messages, "Messages backup picker"),
+    ]:
+        assert_contains(source, "backup.deviceIdentityLabel", f"{surface} should identify which physical device owns the backup")
+    assert_contains(apps, "$0.deviceIdentityLabel", "the closed Apps picker must retain the selected device discriminator")
+    assert_contains(messages, "$0.deviceIdentityLabel", "the closed Messages picker must retain the selected device discriminator")
+    assert_contains(backup_list, "backedUpDeviceCount", "the backup list should report how many distinct devices it contains")
+    assert_contains(archiver, "backup.shortUDID", "portable archive filenames should remain attributable when two devices share a name")
+    assert_contains(time_machine, "request.targetUDID.suffix(8)", "restore confirmation must identify the exact destination device")
+    assert_contains(time_machine, "request.backup.deviceIdentityLabel", "restore confirmation must identify the exact source backup")
+
+    probe = r'''
+import Foundation
+
+struct BackupInfoPlist {
+    let deviceName: String
+    let displayName: String
+    let productType: String
+    let productVersion: String
+    let buildVersion: String
+    let serialNumber: String
+    let udid: String
+    let iccid: String?
+    let imei: String?
+    let meid: String?
+    let phoneNumber: String?
+    let lastBackupDate: Date?
+    let isEncrypted: Bool
+    var modelName: String { productType }
+}
+struct BackupStatusProbe { let date: Date?; let isFullBackup: Bool }
+struct BackupManifestProbe { let isEncrypted: Bool; let applicationBundleIds: [String] }
+enum PlistParser {
+    static func parseBackupInfo(_ path: String) -> BackupInfoPlist? { nil }
+    static func parseBackupStatus(_ path: String) -> BackupStatusProbe? { nil }
+    static func parseManifest(_ path: String) -> BackupManifestProbe? { nil }
+}
+extension FileManager { func directorySize(at path: String) -> UInt64 { 0 } }
+extension UInt64 { var formattedFileSize: String { "0 B" } }
+extension Date {
+    var shortString: String { "date" }
+    var relativeString: String { "relative" }
+}
+
+@main
+struct Probe {
+    static func backup(id: String? = nil, udid: String, serial: String = "serial") -> BackupInfo {
+        BackupInfo(
+            id: id ?? udid,
+            path: "/tmp/\(udid)",
+            deviceName: "My iPhone",
+            displayName: "My iPhone",
+            productType: "iPhone17,1",
+            iosVersion: "18.0",
+            serialNumber: serial,
+            udid: udid,
+            lastBackupDate: nil,
+            isEncrypted: false,
+            isFullBackup: true,
+            size: 0,
+            sizeResolved: true,
+            appCount: 0
+        )
+    }
+
+    static func main() {
+        let phone = backup(udid: "00000000AAAAAAAA")
+        let tablet = backup(udid: "00000000BBBBBBBB")
+        precondition(phone.deviceIdentityLabel != tablet.deviceIdentityLabel)
+        precondition(phone.deviceIdentityLabel.contains("AAAAAAAA"))
+        precondition(tablet.deviceIdentityLabel.contains("BBBBBBBB"))
+        precondition(phone.shortUDID == "AAAAAAAA")
+        let legacyPhone = backup(id: "folder-11111111", udid: "", serial: "serial-11111111")
+        let legacyTablet = backup(id: "folder-22222222", udid: "", serial: "serial-22222222")
+        precondition(legacyPhone.deviceIdentityLabel != legacyTablet.deviceIdentityLabel)
+        precondition(legacyPhone.deviceIdentityLabel.contains("11111111"))
+        precondition(legacyTablet.deviceIdentityLabel.contains("22222222"))
+        print("PASS")
+    }
+}
+'''
+    with tempfile.TemporaryDirectory(prefix="phosphor-backup-identity-") as temp_dir:
+        temp = Path(temp_dir)
+        probe_path = temp / "Probe.swift"
+        binary_path = temp / "backup-identity-probe"
+        probe_path.write_text(probe)
+        result = subprocess.run(
+            ["swiftc", str(root / "Sources/Phosphor/Models/BackupInfo.swift"), str(probe_path), "-o", str(binary_path)],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert result.returncode == 0, result.stderr
+        result = subprocess.run([str(binary_path)], capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "PASS"
+
+
+def test_multi_device_backup_activity_is_visible_and_device_scoped(root: Path) -> None:
+    view_model = read(root, "Sources/Phosphor/ViewModels/BackupViewModel.swift")
+    backup_list = read(root, "Sources/Phosphor/Views/Backup/BackupListView.swift")
+    overview = read(root, "Sources/Phosphor/Views/Device/DeviceOverviewView.swift")
+    app = read(root, "Sources/Phosphor/App/PhosphorApp.swift")
+
+    assert_contains(view_model, "func isBackupActive(for udid: String)", "action gating should be scoped to one device")
+    assert_contains(backup_list, "activeBackupActivities", "the Backups screen should render all active and queued devices")
+    assert_contains(backup_list, "deviceIdentity(for: activity.udid)", "same-name devices need a visible UDID discriminator while backing up")
+    assert_contains(backup_list, "backupVM.cancelBackup(udid: activity.udid)", "each activity row needs its own cancel action")
+    assert_contains(overview, "backupVM.activity(for: device.id)", "a device card must not show another device's progress")
+    assert_contains(overview, ".disabled(backupVM.isBackupActive(for: device.id))", "only the busy device's backup button should be disabled")
+    assert "backupVM.isCreating" not in app.split('Button("New Backup")', 1)[1].split('Button("Refresh Backups")', 1)[0], "Cmd-B should remain available when another device is backing up"
+
+
+def test_schedules_are_persisted_and_executed_per_device(root: Path) -> None:
+    scheduler = read(root, "Sources/Phosphor/Services/BackupScheduler.swift")
+    app = read(root, "Sources/Phosphor/App/PhosphorApp.swift")
+    settings = read(root, "Sources/Phosphor/Views/Settings/SettingsView.swift")
+    backup_list = read(root, "Sources/Phosphor/Views/Backup/BackupListView.swift")
+
+    assert_contains(scheduler, "@Published private(set) var schedules: [Schedule]", "scheduler should retain independent per-device schedules")
+    assert_contains(scheduler, 'schedulesKey = "phosphor.backup.schedules"', "multiple schedules need a new persistence key")
+    assert_contains(scheduler, "JSONDecoder().decode([Schedule].self", "new installs should restore all device schedules")
+    assert_contains(scheduler, "JSONDecoder().decode(Schedule.self", "the previous single schedule must migrate without data loss")
+    assert_contains(scheduler, "func selectSchedule(targetUDID:", "schedule surfaces need to switch between device configurations")
+    assert_contains(scheduler, "for dueSchedule in dueSchedules", "all due device schedules should be considered in one monitor tick")
+    assert_contains(scheduler, "withTaskGroup", "different due devices should be allowed to enter the bounded shared queue together")
+    assert_not_contains(scheduler, "targetDiscoveryFailure", "concurrent device discovery must not share one mutable failure message")
+    assert_contains(scheduler, "backupViewModel.createBackup", "scheduled jobs must share the app-wide two-device queue")
+    assert_contains(scheduler, "guard let backupViewModel else", "scheduled jobs must fail closed if the shared queue is unavailable")
+    assert_not_contains(scheduler, "let manager = BackupManager()", "scheduled jobs must never bypass the shared bounded queue")
+    assert_contains(scheduler, "latestPersistedSchedules()", "separate schedule windows must merge instead of overwriting another device's saved schedule")
+    assert_contains(scheduler, "scheduleDidChangeNotification", "all open schedule editors must refresh after another instance saves")
+    assert_contains(scheduler, "mergeEditedFields", "stale editors must apply only fields the user actually changed")
+    assert_contains(scheduler, "guard schedules.contains(where: \\.enabled)", "disabled schedules must not keep an idle polling timer alive")
+    assert_contains(scheduler, "latestSchedule(matching: runSchedule.targetUDID)", "a completed run must preserve edits made while that device backup was active")
+    assert_contains(app, "scheduler.attachBackupViewModel(backupVM)", "the app monitor must use the shared backup activity center")
+    assert_contains(settings, "scheduler.selectSchedule", "Settings should load the selected device's independent schedule")
+    assert_contains(backup_list, "scheduler.selectSchedule", "the schedule sheet should load the selected device's independent schedule")
+    assert_contains(backup_list, "ScheduledBackupDevicePicker", "the backup schedule sheet should share the identity-safe device picker")
+    picker = read(root, "Sources/Phosphor/Views/Backup/ScheduledBackupDevicePicker.swift")
+    assert_contains(picker, "device.id.suffix(8)", "same-name devices must be distinguishable in schedule target selection")
 
 
 def test_incremental_backups_require_existing_metadata(root: Path) -> None:

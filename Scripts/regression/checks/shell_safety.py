@@ -168,19 +168,19 @@ def test_backup_streaming_callers_are_timeout_bounded_and_cancelable(root: Path)
     assert "timeout: Self.streamingBackupTimeout" in backup, "backup subprocess streams must pass the backup timeout"
     assert "timeout: Self.streamingRestoreTimeout" in backup, "restore subprocess streams must pass the restore timeout"
     assert "activeProcess = Shell.runStreaming" in backup, "fallback streaming processes should be cancelable via activeProcess"
-    assert "beginCancellableOperation()" in backup, "backup/restore operations should use operation IDs rather than one shared cancellation boolean"
+    assert "beginCancellableOperation(udid:" in backup, "backup/restore operations should use per-device operation IDs rather than one shared cancellation boolean"
     assert "cancelledOperationIDs.insert(activeOperationID)" in backup, "cancelBackup should mark the active operation canceled before killing the child"
     assert "operationWasCancelled(operationID)" in backup, "cancelled primary streams should not fall through into fallback backups"
     assert "lastOperationWasCancelled" in backup, "cancellation should be exposed separately from lastError/backup failures"
-    assert "if activeOperationID == id" in swift_block_after(backup, "private func markOperationCancelled"), "stale cancelled operations should not overwrite current operation UI state"
+    assert "if operationCoordinator.activeOperationID == id" in swift_block_after(backup, "private func markOperationCancelled"), "stale cancelled operations should not overwrite current operation UI state"
     assert "backupCancelled" not in backup, "backup/restore cancellation must not use one shared mutable boolean"
     assert "lastError = nil" in swift_block_after(backup, "func cancelBackup()"), "cancelBackup should not report user cancellation as an error"
     assert "Shell.terminate(activeProcess)" in backup, "cancelBackup should escalate termination for stuck subprocesses"
 
     backup_vm = read(root, "Sources/Phosphor/ViewModels/BackupViewModel.swift")
-    assert "backupManager.lastOperationWasCancelled" in backup_vm, "backup UI should not show failure alerts after user cancellation"
-    assert "backupOperationID" in backup_vm, "BackupViewModel should ignore stale backup task progress/completions"
-    assert "guard backupOperationID == operationID else { return }" in backup_vm, "stale backup completions should not update alerts or progress"
+    assert "manager.lastOperationWasCancelled" in backup_vm, "each device activity should treat its own cancellation separately from failure"
+    assert "private var backupManagers: [String: BackupManager]" in backup_vm, "concurrent devices need independent process and completion owners"
+    assert "updateBackupProgress(udid: udid" in backup_vm, "backup progress updates must remain scoped to the originating device"
 
     time_machine = read(root, "Sources/Phosphor/Views/Backup/BackupTimeMachineView.swift")
     assert "lastOperationWasCancelled" in time_machine, "restore UI should not show a generic failure alert after cancellation"
@@ -197,6 +197,74 @@ def test_backup_streaming_callers_are_timeout_bounded_and_cancelable(root: Path)
     assert "syslogStreamID = nil" in swift_block_after(diagnostics, "func stopSyslog()"), "stopSyslog should invalidate stream identity before termination completions fire"
     assert "syslogProcess = Shell.runStreaming" in diagnostics, "syslog fallback should be stoppable via syslogProcess"
     assert "Shell.terminate(syslogProcess)" in diagnostics, "stopSyslog should escalate termination for stuck syslog children"
+
+
+def test_backup_ownership_blocks_same_device_but_allows_different_devices(root: Path) -> None:
+    manager = read(root, "Sources/Phosphor/Services/BackupManager.swift")
+    coordinator_path = root / "Sources/Phosphor/Services/BackupOperationCoordinator.swift"
+    assert coordinator_path.exists(), "backup ownership should be extracted for behavioral testing"
+    coordinator = coordinator_path.read_text()
+    assert "struct BackupOperationRegistry" in coordinator
+    assert "struct BackupOperationCoordinator" in coordinator
+    assert "private static var operationRegistry" in manager, "all manager instances must share per-device ownership"
+    assert manager.count("beginCancellableOperation(udid:") >= 4, "full, incremental, restore, and the helper must use device ownership"
+
+    probe = r'''
+import Foundation
+
+@main
+struct OperationOwnershipProbe {
+    static func main() {
+        var registry = BackupOperationRegistry()
+        var phoneManager = BackupOperationCoordinator()
+        var duplicatePhoneManager = BackupOperationCoordinator()
+        var tabletManager = BackupOperationCoordinator()
+        var thirdDeviceManager = BackupOperationCoordinator()
+
+        let phoneID = UUID()
+        let duplicateID = UUID()
+        let tabletID = UUID()
+        let replacementID = UUID()
+        let thirdDeviceID = UUID()
+
+        precondition(phoneManager.begin(udid: "phone", operationID: phoneID, registry: &registry) == phoneID)
+        precondition(duplicatePhoneManager.begin(udid: "phone", operationID: duplicateID, registry: &registry) == nil)
+        precondition(tabletManager.begin(udid: "tablet", operationID: tabletID, registry: &registry) == tabletID)
+        precondition(thirdDeviceManager.begin(udid: "watch", operationID: thirdDeviceID, registry: &registry) == nil)
+
+        // Cancellation does not release ownership until the subprocess completion
+        // finishes with the matching operation identity.
+        precondition(duplicatePhoneManager.begin(udid: "phone", operationID: replacementID, registry: &registry) == nil)
+        precondition(phoneManager.finish(operationID: phoneID, registry: &registry))
+        precondition(thirdDeviceManager.begin(udid: "watch", operationID: thirdDeviceID, registry: &registry) == thirdDeviceID)
+        precondition(thirdDeviceManager.finish(operationID: thirdDeviceID, registry: &registry))
+        precondition(phoneManager.begin(udid: "phone", operationID: replacementID, registry: &registry) == replacementID)
+
+        // A stale completion cannot release the replacement operation.
+        precondition(!phoneManager.finish(operationID: phoneID, registry: &registry))
+        precondition(duplicatePhoneManager.begin(udid: "phone", operationID: duplicateID, registry: &registry) == nil)
+        precondition(phoneManager.finish(operationID: replacementID, registry: &registry))
+        precondition(tabletManager.finish(operationID: tabletID, registry: &registry))
+        print("PASS")
+    }
+}
+'''
+    with tempfile.TemporaryDirectory(prefix="phosphor-device-ownership-") as temp_dir:
+        temp = Path(temp_dir)
+        probe_path = temp / "Probe.swift"
+        binary_path = temp / "operation-ownership-probe"
+        probe_path.write_text(probe)
+        result = subprocess.run(
+            ["swiftc", "-parse-as-library", str(coordinator_path), str(probe_path), "-o", str(binary_path)],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert result.returncode == 0, result.stderr
+        result = subprocess.run([str(binary_path)], capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "PASS"
 
 
 def test_restore_captures_target_and_uses_backup_parent_with_source_udid(root: Path) -> None:

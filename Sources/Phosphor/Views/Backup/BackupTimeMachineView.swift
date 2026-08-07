@@ -87,7 +87,7 @@ struct BackupTimeMachineView: View {
                 performRestore(request)
             }
         } message: { request in
-            Text("Restore \(request.targetName) from \(request.backup.dateString)? The device will restart, and this cannot be undone.")
+            Text("Restore \(request.targetName) · ID …\(request.targetUDID.suffix(8)) using \(request.backup.deviceIdentityLabel) from \(request.backup.dateString)? The target device will restart, and this cannot be undone.")
         }
     }
 
@@ -145,9 +145,10 @@ struct BackupTimeMachineView: View {
                     .font(.system(size: 16))
                     .foregroundStyle(.white.opacity(0.9))
 
-                Text(backup.deviceName)
+                Text(backup.deviceIdentityLabel)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.white)
+                    .lineLimit(1)
 
                 Spacer()
 
