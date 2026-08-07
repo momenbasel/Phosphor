@@ -51,10 +51,99 @@ def test_message_pdf_export_is_registered_and_uses_native_pdf_writer(root: Path)
     assert_contains(exporter, "inlineReply: replyPreview(for: msg)", "PDF export should pass inline reply previews into the PDF writer")
     assert_contains(exporter, "thread_originator_guid", "Message export should read iMessage inline reply thread metadata")
     assert_contains(exporter, "reply_to_guid", "Message export should read modern inline reply target metadata")
-    assert_contains(exporter, "attachments: attachmentSummaries", "PDF export should pass attachment metadata into the PDF writer")
+    assert_contains(exporter, "attachments: pdfAttachments", "PDF export should pass attachment metadata and resolved image paths into the PDF writer")
+    assert_contains(exporter, "resolveAttachmentDiskPath(filename: filename)", "PDF export should resolve image attachments from the backup")
+    assert_contains(writer, "CGImageSourceCreateThumbnailAtIndex", "PDF image previews should use bounded ImageIO thumbnails")
     assert_contains(exporter, "linkURL: msg.linkURL", "PDF export should pass rich-link URLs into the PDF writer")
     assert_contains(exporter, "status: statusParts.isEmpty ? nil", "PDF export should pass service/read status into the PDF writer")
     assert_contains(writer, "entry.isFromMe ? margin + contentWidth - bubbleWidth : margin", "PDF writer should right-align outgoing bubbles and left-align incoming bubbles")
+
+
+def test_message_pdf_export_renders_image_attachments(root: Path) -> None:
+    writer = root / "Sources/Phosphor/Utilities/PDFTranscriptWriter.swift"
+    probe = r'''
+import AppKit
+import Foundation
+import PDFKit
+
+@main
+struct PDFAttachmentProbe {
+    static func main() throws {
+        let imagePath = CommandLine.arguments[1]
+        let pdfPath = CommandLine.arguments[2]
+        let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 120,
+            pixelsHigh: 90,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        )!
+        for y in 0..<bitmap.pixelsHigh {
+            for x in 0..<bitmap.pixelsWide {
+                bitmap.setColor(NSColor(calibratedRed: 1, green: 0, blue: 0, alpha: 1), atX: x, y: y)
+            }
+        }
+        try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: imagePath))
+
+        try PDFTranscriptWriter.write(
+            title: "Attachment Regression",
+            subtitle: "",
+            entries: [PDFTranscriptWriter.Entry(
+                title: "Me",
+                subtitle: "",
+                body: "",
+                isFromMe: true,
+                attachments: [.init(summary: "photo.png • image/png", imagePath: imagePath)]
+            )],
+            to: pdfPath
+        )
+
+        guard let document = PDFDocument(url: URL(fileURLWithPath: pdfPath)),
+              let page = document.page(at: 0) else { exit(1) }
+        let rendered = page.thumbnail(of: CGSize(width: 612, height: 792), for: .mediaBox)
+        guard let tiff = rendered.tiffRepresentation, let pixels = NSBitmapImageRep(data: tiff) else { exit(2) }
+        var foundRedPixel = false
+        for y in stride(from: 0, to: pixels.pixelsHigh, by: 2) {
+            for x in stride(from: 0, to: pixels.pixelsWide, by: 2) {
+                guard let color = pixels.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+                if color.redComponent > 0.8 && color.greenComponent < 0.2 && color.blueComponent < 0.2 {
+                    foundRedPixel = true
+                    break
+                }
+            }
+            if foundRedPixel { break }
+        }
+        guard foundRedPixel else {
+            fputs("PDF did not visibly render the image attachment\n", stderr)
+            exit(3)
+        }
+    }
+}
+'''
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp = Path(temp_dir)
+        probe_path = temp / "Probe.swift"
+        probe_path.write_text(probe)
+        executable = temp / "pdf-attachment-probe"
+        compile_result = subprocess.run(
+            ["swiftc", "-parse-as-library", str(writer), str(probe_path), "-framework", "PDFKit", "-o", str(executable)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert compile_result.returncode == 0, compile_result.stderr
+        result = subprocess.run(
+            [str(executable), str(temp / "photo.png"), str(temp / "attachment.pdf")],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        assert result.returncode == 0, result.stderr
 
 
 def test_attributed_message_body_is_decoded_when_plain_text_is_missing(root: Path) -> None:

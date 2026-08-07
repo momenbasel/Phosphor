@@ -681,13 +681,33 @@ final class MessageExporter {
 
         let entries = messages.map { msg -> PDFTranscriptWriter.Entry in
             let visibleAttachments = includeAttachments ? msg.attachments.filter { !$0.isPluginPayload } : []
-            let body = (msg.text?.isEmpty == false) ? (msg.text ?? "") : msg.displayText
+            let body: String
+            if msg.text?.isEmpty == false {
+                body = msg.text ?? ""
+            } else if !visibleAttachments.isEmpty || msg.linkURL != nil {
+                // The attachment/link card is the visible message content. Avoid
+                // adding a redundant "[Attachment]" transcript line beneath it.
+                body = ""
+            } else {
+                body = msg.displayText
+            }
             let reactionBadges = msg.reactions.map { $0.type.emoji }
-            let attachmentSummaries = visibleAttachments.map { attachment in
+            var renderedImageCount = 0
+            let pdfAttachments = visibleAttachments.map { attachment in
                 var parts: [String] = [attachment.displayName]
                 if let mime = attachment.mimeType, !mime.isEmpty { parts.append(mime) }
                 if attachment.totalBytes > 0 { parts.append(ByteCountFormatter.string(fromByteCount: Int64(attachment.totalBytes), countStyle: .file)) }
-                return parts.joined(separator: " • ")
+                var imagePath: String?
+                if attachment.isImage,
+                   renderedImageCount < 3,
+                   let filename = attachment.filename {
+                    imagePath = resolveAttachmentDiskPath(filename: filename)
+                    if imagePath != nil { renderedImageCount += 1 }
+                }
+                return PDFTranscriptWriter.Attachment(
+                    summary: parts.joined(separator: " • "),
+                    imagePath: imagePath
+                )
             }
             // Keep PDF exports conversation-like: don't print "iMessage" or
             // read/unread under every bubble. Surface the service only when it
@@ -702,7 +722,7 @@ final class MessageExporter {
                 isFromMe: msg.isFromMe,
                 reactions: reactionBadges,
                 inlineReply: replyPreview(for: msg),
-                attachments: attachmentSummaries,
+                attachments: pdfAttachments,
                 linkURL: msg.linkURL,
                 status: statusParts.isEmpty ? nil : statusParts.joined(separator: " • ")
             )
