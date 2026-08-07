@@ -16,14 +16,101 @@ def assert_contains(text: str, needle: str, message: str) -> None:
     assert needle in text, message
 
 
-def test_streaming_exports_truncate_before_write(root: Path) -> None:
+def test_message_exports_publish_generation_sidecars_without_crash_mismatch(root: Path) -> None:
     src = read(root, "Sources/Phosphor/Services/MessageExporter.swift")
+    transaction = root / "Sources/Phosphor/Utilities/MessageExportTransaction.swift"
+    attachment_exporter = root / "Sources/Phosphor/Utilities/MessageAttachmentExporter.swift"
+    assert transaction.exists(), "single-conversation exports need a transactional staging helper"
+    assert_contains(src, "MessageExportTransaction.write", "exportMessages must stage the transcript and sidecar as one recoverable operation")
+    assert_contains(src, "stagedTranscriptURL.path", "format writers must receive a same-volume staging path")
     for func_name in ["exportCSV", "exportPlainText", "exportHTML", "exportMbox", "exportJSON"]:
         match = re.search(rf"private func {func_name}.*?(?=\n    private func|\n    ///|\Z)", src, re.S)
         assert match is not None, f"{func_name} not found"
-        body = match.group(0)
-        assert_contains(body, "removeItem(at: outputURL)", f"{func_name} must remove existing output before streaming")
-        assert_contains(body, "FileHandle(forWritingTo: outputURL)", f"{func_name} must stream through FileHandle")
+        assert_contains(match.group(0), "FileHandle(forWritingTo: outputURL)", f"{func_name} must continue streaming through FileHandle")
+
+    probe = r'''
+import Foundation
+
+@main
+struct GenerationPublicationProbe {
+    enum ProbeError: Error { case cancelled }
+
+    static func main() throws {
+        let root = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
+        let final = root.appendingPathComponent("chat.txt")
+        let source = root.appendingPathComponent("source.bin")
+        let fileManager = FileManager.default
+        try Data("NEW_ATTACHMENT".utf8).write(to: source)
+
+        // The completed transcript points at its own immutable old generation.
+        let oldGeneration = root.appendingPathComponent("chat-txt_attachments-old", isDirectory: true)
+        try fileManager.createDirectory(at: oldGeneration, withIntermediateDirectories: true)
+        try Data("OLD_ATTACHMENT".utf8).write(to: oldGeneration.appendingPathComponent("old.bin"))
+        try Data("OLD:chat-txt_attachments-old/old.bin".utf8).write(to: final)
+
+        let item = MessageAttachmentExporter.Item(key: "attachment", displayName: "new.bin", sourcePath: source.path)
+
+        // Model abrupt process death after publishing a new sidecar but before
+        // replacing the transcript. The old transcript must still resolve its old
+        // sidecar; the new directory is merely an orphan recoverable on next run.
+        let orphan = try MessageAttachmentExporter.prepareGeneration([item], beside: final.path)
+        guard try String(contentsOf: final, encoding: .utf8) == "OLD:chat-txt_attachments-old/old.bin",
+              fileManager.fileExists(atPath: oldGeneration.appendingPathComponent("old.bin").path),
+              let orphanPath = orphan.paths["attachment"],
+              let orphanURL = orphan.directoryURL,
+              fileManager.fileExists(atPath: root.appendingPathComponent(orphanPath).path) else {
+            exit(1)
+        }
+
+        // In-process writer failure removes the unreferenced new generation and
+        // leaves the old published transcript/sidecar pair intact.
+        do {
+            try MessageExportTransaction.write(to: final, prepareAttachments: {
+                try MessageAttachmentExporter.prepareGeneration([item], beside: final.path)
+            }) { staged, paths in
+                try Data("PARTIAL:\(paths["attachment"]!)".utf8).write(to: staged)
+                throw ProbeError.cancelled
+            }
+            exit(2)
+        } catch ProbeError.cancelled {}
+        guard try String(contentsOf: final, encoding: .utf8) == "OLD:chat-txt_attachments-old/old.bin",
+              fileManager.fileExists(atPath: oldGeneration.appendingPathComponent("old.bin").path),
+              !fileManager.fileExists(atPath: root.appendingPathComponent("chat-txt_attachments").path) else {
+            exit(3)
+        }
+
+        // A subsequent successful publication commits a transcript that embeds
+        // the generation it references, then reclaims old/orphan generations.
+        try MessageExportTransaction.write(to: final, prepareAttachments: {
+            try MessageAttachmentExporter.prepareGeneration([item], beside: final.path)
+        }) { staged, paths in
+            try Data("NEW:\(paths["attachment"]!)".utf8).write(to: staged)
+        }
+        let transcript = try String(contentsOf: final, encoding: .utf8)
+        let hasExpectedPrefix = transcript.hasPrefix("NEW:chat-txt_attachments-")
+        let relativePath = transcript.split(separator: ":", maxSplits: 1).last.map(String.init)
+        let newSidecarExists = relativePath.map { fileManager.fileExists(atPath: root.appendingPathComponent($0).path) } ?? false
+        let oldGenerationExists = fileManager.fileExists(atPath: oldGeneration.path)
+        let orphanExists = fileManager.fileExists(atPath: orphanURL.path)
+        guard hasExpectedPrefix, newSidecarExists, !oldGenerationExists, !orphanExists else {
+            fputs("prefix=\(hasExpectedPrefix) new=\(newSidecarExists) old=\(oldGenerationExists) orphan=\(orphanExists)\n", stderr)
+            exit(4)
+        }
+    }
+}
+'''
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp = Path(temp_dir)
+        probe_path = temp / "Probe.swift"
+        probe_path.write_text(probe)
+        executable = temp / "generation-publication-probe"
+        compile_result = subprocess.run(
+            ["swiftc", "-parse-as-library", str(attachment_exporter), str(transaction), str(probe_path), "-o", str(executable)],
+            capture_output=True, text=True, timeout=60,
+        )
+        assert compile_result.returncode == 0, compile_result.stderr
+        result = subprocess.run([str(executable), str(temp)], capture_output=True, text=True, timeout=20)
+        assert result.returncode == 0, f"generation publication probe exited {result.returncode}: {result.stderr}"
 
 
 def test_message_pdf_export_is_registered_and_uses_native_pdf_writer(root: Path) -> None:
@@ -500,17 +587,19 @@ struct AttachmentSidecarProbe {
         try Data("A".utf8).write(to: first)
         try Data("B".utf8).write(to: second)
 
-        let initial = try MessageAttachmentExporter.export([
+        let initialGeneration = try MessageAttachmentExporter.prepareGeneration([
             .init(key: "first", displayName: "photo.jpg", sourcePath: first.path),
             .init(key: "second", displayName: "photo.jpg", sourcePath: second.path),
         ], beside: htmlExport.path)
-        guard initial["first"] == "conversation-html_attachments/photo.jpg",
-              initial["second"] == "conversation-html_attachments/photo-2.jpg" else {
+        let initial = initialGeneration.paths
+        MessageAttachmentExporter.cleanupObsoleteGenerations(for: initialGeneration)
+        guard initial["first"]?.hasSuffix("/photo.jpg") == true,
+              initial["second"]?.hasSuffix("/photo-2.jpg") == true else {
             fputs("duplicate attachment names were not made collision-safe\n", stderr)
             exit(1)
         }
 
-        let sidecar = root.appendingPathComponent("conversation-html_attachments", isDirectory: true)
+        let sidecar = initialGeneration.directoryURL!
         guard !fileManager.fileExists(atPath: legacySidecar.path) else {
             fputs("legacy HTML sidecar was not cleaned after successful replacement\n", stderr)
             exit(2)
@@ -521,26 +610,29 @@ struct AttachmentSidecarProbe {
             exit(2)
         }
 
-        let refreshed = try MessageAttachmentExporter.export([
+        let refreshedGeneration = try MessageAttachmentExporter.prepareGeneration([
             .init(key: "first", displayName: "photo.jpg", sourcePath: first.path),
         ], beside: htmlExport.path)
-        let remaining = try Set(fileManager.contentsOfDirectory(atPath: sidecar.path))
+        let refreshed = refreshedGeneration.paths
+        MessageAttachmentExporter.cleanupObsoleteGenerations(for: refreshedGeneration)
+        let refreshedSidecar = refreshedGeneration.directoryURL!
+        let remaining = try Set(fileManager.contentsOfDirectory(atPath: refreshedSidecar.path))
         guard refreshed.count == 1,
               remaining == ["photo.jpg"],
-              try Data(contentsOf: sidecar.appendingPathComponent("photo.jpg")) == Data("A".utf8) else {
+              try Data(contentsOf: refreshedSidecar.appendingPathComponent("photo.jpg")) == Data("A".utf8) else {
             fputs("rerun did not replace stale sidecar content\n", stderr)
             exit(3)
         }
 
-        _ = try MessageAttachmentExporter.export([], beside: pdfExport.path)
-        guard fileManager.fileExists(atPath: sidecar.appendingPathComponent("photo.jpg").path) else {
+        _ = try MessageAttachmentExporter.prepareGeneration([], beside: pdfExport.path)
+        guard fileManager.fileExists(atPath: refreshedSidecar.appendingPathComponent("photo.jpg").path) else {
             fputs("exporting another transcript format removed the HTML sidecar\n", stderr)
             exit(4)
         }
 
         var checks = 0
         do {
-            _ = try MessageAttachmentExporter.export([
+            _ = try MessageAttachmentExporter.prepareGeneration([
                 .init(key: "second", displayName: "photo.jpg", sourcePath: second.path),
                 .init(key: "first", displayName: "photo.jpg", sourcePath: first.path),
             ], beside: htmlExport.path) {
@@ -550,16 +642,17 @@ struct AttachmentSidecarProbe {
             fputs("cancelled attachment export unexpectedly succeeded\n", stderr)
             exit(5)
         } catch is CancellationError {
-            let preserved = try Data(contentsOf: sidecar.appendingPathComponent("photo.jpg"))
+            let preserved = try Data(contentsOf: refreshedSidecar.appendingPathComponent("photo.jpg"))
             guard preserved == Data("A".utf8),
-                  !fileManager.fileExists(atPath: sidecar.appendingPathComponent("photo-2.jpg").path) else {
+                  !fileManager.fileExists(atPath: refreshedSidecar.appendingPathComponent("photo-2.jpg").path) else {
                 fputs("cancellation replaced the previously completed attachment folder\n", stderr)
                 exit(6)
             }
         }
 
-        _ = try MessageAttachmentExporter.export([], beside: htmlExport.path)
-        guard !fileManager.fileExists(atPath: sidecar.path) else {
+        let emptyGeneration = try MessageAttachmentExporter.prepareGeneration([], beside: htmlExport.path)
+        MessageAttachmentExporter.cleanupObsoleteGenerations(for: emptyGeneration)
+        guard !fileManager.fileExists(atPath: refreshedSidecar.path) else {
             fputs("empty re-export did not clean the stale attachment folder\n", stderr)
             exit(7)
         }
@@ -595,10 +688,10 @@ def test_original_attachment_option_applies_to_every_message_export_format(root:
     body = export_messages.group("body")
     assert_contains(
         body,
-        "stageOriginalAttachments(",
-        "every export format should stage original attachments before format-specific rendering",
+        "prepareOriginalAttachmentGeneration(",
+        "every export format should prepare a generation before format-specific rendering",
     )
-    assert body.index("stageOriginalAttachments") < body.index("switch format"), (
+    assert body.index("prepareOriginalAttachmentGeneration") < body.index("switch format"), (
         "original attachment export must not be limited to HTML, PDF, or MBOX"
     )
     assert_contains(

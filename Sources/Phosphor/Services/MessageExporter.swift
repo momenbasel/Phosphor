@@ -638,37 +638,44 @@ final class MessageExporter {
         attachmentMap providedAttachmentMap: [String: String]? = nil,
         cancellationCheck: (() throws -> Void)? = nil
     ) throws {
-        let attachmentMap: [String: String]
-        if let providedAttachmentMap {
-            attachmentMap = providedAttachmentMap
-        } else {
-            attachmentMap = try stageOriginalAttachments(
-                messages: messages,
-                exportPath: path,
-                includeAttachments: options.includeAttachments,
-                cancellationCheck: cancellationCheck
-            )
-        }
-        switch format {
-        case .csv:
-            try exportCSV(messages: messages, chatTitle: chatTitle, to: path, cancellationCheck: cancellationCheck)
-        case .txt:
-            try exportPlainText(messages: messages, chatTitle: chatTitle, to: path, cancellationCheck: cancellationCheck)
-        case .pdf:
-            try exportPDF(messages: messages, chatTitle: chatTitle, to: path, includeAttachments: options.includeAttachments, cancellationCheck: cancellationCheck)
-        case .html:
-            try exportHTML(
-                messages: messages,
-                chatTitle: chatTitle,
-                to: path,
-                includeAttachments: options.includeAttachments,
-                attachmentMap: attachmentMap,
-                cancellationCheck: cancellationCheck
-            )
-        case .json:
-            try exportJSON(messages: messages, chatTitle: chatTitle, to: path, cancellationCheck: cancellationCheck)
-        case .mbox:
-            try exportMbox(messages: messages, chatTitle: chatTitle, to: path, includeAttachments: options.includeAttachments, cancellationCheck: cancellationCheck)
+        let finalTranscriptURL = URL(fileURLWithPath: path)
+        let prepareAttachments: (() throws -> MessageAttachmentExporter.Generation)? = providedAttachmentMap == nil
+            ? { [self] in
+                try prepareOriginalAttachmentGeneration(
+                    messages: messages,
+                    exportPath: path,
+                    includeAttachments: options.includeAttachments,
+                    cancellationCheck: cancellationCheck
+                )
+            }
+            : nil
+
+        try MessageExportTransaction.write(
+            to: finalTranscriptURL,
+            attachmentMap: providedAttachmentMap ?? [:],
+            prepareAttachments: prepareAttachments
+        ) { stagedTranscriptURL, attachmentMap in
+            switch format {
+            case .csv:
+                try exportCSV(messages: messages, chatTitle: chatTitle, to: stagedTranscriptURL.path, cancellationCheck: cancellationCheck)
+            case .txt:
+                try exportPlainText(messages: messages, chatTitle: chatTitle, to: stagedTranscriptURL.path, cancellationCheck: cancellationCheck)
+            case .pdf:
+                try exportPDF(messages: messages, chatTitle: chatTitle, to: stagedTranscriptURL.path, includeAttachments: options.includeAttachments, cancellationCheck: cancellationCheck)
+            case .html:
+                try exportHTML(
+                    messages: messages,
+                    chatTitle: chatTitle,
+                    to: stagedTranscriptURL.path,
+                    includeAttachments: options.includeAttachments,
+                    attachmentMap: attachmentMap,
+                    cancellationCheck: cancellationCheck
+                )
+            case .json:
+                try exportJSON(messages: messages, chatTitle: chatTitle, to: stagedTranscriptURL.path, cancellationCheck: cancellationCheck)
+            case .mbox:
+                try exportMbox(messages: messages, chatTitle: chatTitle, to: stagedTranscriptURL.path, includeAttachments: options.includeAttachments, cancellationCheck: cancellationCheck)
+            }
         }
     }
 
@@ -817,18 +824,18 @@ final class MessageExporter {
 
     /// Resolve user-visible attachment blobs and stage originals beside every
     /// transcript format. Rich-link plugin payloads remain internal metadata.
-    private func stageOriginalAttachments(
+    private func prepareOriginalAttachmentGeneration(
         messages: [Message],
         exportPath: String,
         includeAttachments: Bool,
         cancellationCheck: (() throws -> Void)? = nil
-    ) throws -> [String: String] {
+    ) throws -> MessageAttachmentExporter.Generation {
         let items = try originalAttachmentItems(
             messages: messages,
             includeAttachments: includeAttachments,
             cancellationCheck: cancellationCheck
         )
-        return try MessageAttachmentExporter.export(
+        return try MessageAttachmentExporter.prepareGeneration(
             items,
             beside: exportPath,
             cancellationCheck: cancellationCheck

@@ -1,8 +1,11 @@
 import Foundation
 
-/// Copies original message attachments into a collision-safe sibling folder.
-/// Work is staged before replacing a previous completed sidecar so cancellation
-/// never leaves users with a partially refreshed attachment export.
+/// Copies original message attachments into collision-safe directories.
+///
+/// Single-transcript exports publish a fresh immutable generation before their
+/// transcript is replaced. The transcript embeds that generation's relative
+/// name, so an interrupted process can only leave an unreferenced orphan; it
+/// cannot make a completed transcript point at moved or replaced sidecars.
 enum MessageAttachmentExporter {
     struct Item {
         let key: String
@@ -10,36 +13,94 @@ enum MessageAttachmentExporter {
         let sourcePath: String
     }
 
-    static func export(
+    /// A sidecar generation that has been made visible but is not necessarily
+    /// referenced by a committed transcript yet.
+    struct Generation {
+        let directoryURL: URL?
+        let paths: [String: String]
+        fileprivate let exportURL: URL
+    }
+
+    /// Copy originals into a unique, immutable generation beside an export.
+    /// The caller must either commit the transcript containing `paths` or call
+    /// `discard(_:)`; successful transcript publication calls
+    /// `cleanupObsoleteGenerations(for:)` afterwards.
+    static func prepareGeneration(
         _ items: [Item],
         beside exportPath: String,
         cancellationCheck: (() throws -> Void)? = nil
-    ) throws -> [String: String] {
+    ) throws -> Generation {
         let fileManager = FileManager.default
         let exportURL = URL(fileURLWithPath: exportPath)
-        let parentURL = exportURL.deletingLastPathComponent()
-        let baseName = exportURL.deletingPathExtension().lastPathComponent
-        let formatSuffix = exportURL.pathExtension.lowercased()
-        let sidecarName = formatSuffix.isEmpty
-            ? "\(baseName)_attachments"
-            : "\(baseName)-\(formatSuffix)_attachments"
-        let sidecarURL = parentURL.appendingPathComponent(sidecarName, isDirectory: true)
-        let exportedPaths = try export(items, to: sidecarURL, cancellationCheck: cancellationCheck)
-
-        // Older Phosphor HTML exports used `<base>_attachments`. Remove that
-        // stale sidecar only after the new format-isolated export succeeds.
-        if formatSuffix == "html" {
-            let legacySidecarURL = parentURL.appendingPathComponent("\(baseName)_attachments", isDirectory: true)
-            if legacySidecarURL != sidecarURL {
-                try? fileManager.removeItem(at: legacySidecarURL)
-            }
+        guard !items.isEmpty else {
+            return Generation(directoryURL: nil, paths: [:], exportURL: exportURL)
         }
 
-        return exportedPaths
+        let parentURL = exportURL.deletingLastPathComponent()
+        try fileManager.createDirectory(at: parentURL, withIntermediateDirectories: true)
+        let generationName = "\(sidecarBaseName(for: exportURL))-\(UUID().uuidString)"
+        let generationURL = parentURL.appendingPathComponent(generationName, isDirectory: true)
+        let stagingURL = parentURL.appendingPathComponent(
+            ".\(generationName).staging-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? fileManager.removeItem(at: stagingURL) }
+
+        try fileManager.createDirectory(at: stagingURL, withIntermediateDirectories: true)
+        var exportedPaths: [String: String] = [:]
+        for item in items {
+            try cancellationCheck?()
+            guard exportedPaths[item.key] == nil else { continue }
+
+            let baseName = safeFilename(item.displayName)
+            let uniqueName = availableFilename(baseName, in: stagingURL, fileManager: fileManager)
+            let destinationURL = stagingURL.appendingPathComponent(uniqueName)
+            try fileManager.copyItem(at: URL(fileURLWithPath: item.sourcePath), to: destinationURL)
+            exportedPaths[item.key] = "\(generationName)/\(uniqueName)"
+        }
+        try cancellationCheck?()
+        try fileManager.moveItem(at: stagingURL, to: generationURL)
+        return Generation(directoryURL: generationURL, paths: exportedPaths, exportURL: exportURL)
     }
 
-    /// Export to a caller-selected folder. Multi-format bundles use this to
-    /// share one `Attachments` directory across every transcript in a chat.
+    /// Remove a sidecar generation that was published but never referenced by a
+    /// committed transcript. Errors are deliberately best-effort during the
+    /// caller's failure path; an unreferenced generation is safe to recover.
+    static func discard(_ generation: Generation) {
+        guard let directoryURL = generation.directoryURL else { return }
+        try? FileManager.default.removeItem(at: directoryURL)
+    }
+
+    /// Reclaim sidecars from completed exports only after the transcript commit.
+    /// Cleanup intentionally tolerates crashes and deletion failures: stale
+    /// generations are harmless because every transcript names its own one.
+    static func cleanupObsoleteGenerations(for generation: Generation) {
+        let fileManager = FileManager.default
+        let exportURL = generation.exportURL
+        let parentURL = exportURL.deletingLastPathComponent()
+        let currentURL = generation.directoryURL
+        let baseName = sidecarBaseName(for: exportURL)
+        let generationPrefix = "\(baseName)-"
+        let legacyNames = legacySidecarNames(for: exportURL)
+
+        guard let entries = try? fileManager.contentsOfDirectory(
+            at: parentURL,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return }
+
+        for entry in entries {
+            let name = entry.lastPathComponent
+            guard name.hasPrefix(generationPrefix) || legacyNames.contains(name) else { continue }
+            guard entry.standardizedFileURL.path != currentURL?.standardizedFileURL.path else { continue }
+            var isDirectory: ObjCBool = false
+            guard fileManager.fileExists(atPath: entry.path, isDirectory: &isDirectory), isDirectory.boolValue else { continue }
+            try? fileManager.removeItem(at: entry)
+        }
+    }
+
+    /// Export to a caller-selected unpublished folder. Multi-format bundles use
+    /// this while their enclosing bundle root is still private staging state.
     static func export(
         _ items: [Item],
         to directoryURL: URL,
@@ -52,9 +113,7 @@ enum MessageAttachmentExporter {
             ".\(directoryName).staging-\(UUID().uuidString)",
             isDirectory: true
         )
-        defer {
-            try? fileManager.removeItem(at: stagingURL)
-        }
+        defer { try? fileManager.removeItem(at: stagingURL) }
 
         var exportedPaths: [String: String] = [:]
         if !items.isEmpty {
@@ -97,6 +156,24 @@ enum MessageAttachmentExporter {
                 String(segment).addingPercentEncoding(withAllowedCharacters: allowed) ?? String(segment)
             }
             .joined(separator: "/")
+    }
+
+    private static func sidecarBaseName(for exportURL: URL) -> String {
+        let baseName = exportURL.deletingPathExtension().lastPathComponent
+        let formatSuffix = exportURL.pathExtension.lowercased()
+        return formatSuffix.isEmpty
+            ? "\(baseName)_attachments"
+            : "\(baseName)-\(formatSuffix)_attachments"
+    }
+
+    private static func legacySidecarNames(for exportURL: URL) -> Set<String> {
+        let baseName = exportURL.deletingPathExtension().lastPathComponent
+        let formatSuffix = exportURL.pathExtension.lowercased()
+        var names = [sidecarBaseName(for: exportURL)]
+        if formatSuffix == "html" {
+            names.append("\(baseName)_attachments")
+        }
+        return Set(names)
     }
 
     private static func safeFilename(_ displayName: String) -> String {
