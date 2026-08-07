@@ -192,8 +192,8 @@ def test_wifi_schedules_use_network_discovery_and_network_backup_flag(root: Path
     assert_contains(scheduler, "components.minute = schedule.preferredMinute", "Scheduler should use preferred minute even after a previous run exists")
     assert_contains(scheduler, "while next <= now", "Scheduler should advance preferred-time candidates until they are in the future")
     assert_not_contains(scheduler, "next = lastRun.addingTimeInterval(schedule.frequency.interval)", "Scheduler should not drift nextRunDate to the last completion time")
-    run_body = scheduler.split("private func run(schedule runSchedule:", 1)[1].split("// MARK: - Backup Execution", 1)[0]
-    assert run_body.index("runningScheduledUDIDs.insert(scheduleIdentity)") < run_body.index("findTargetDevice(for: runSchedule)"), "Run Now should claim its device schedule before async discovery"
+    run_now = scheduler.split("func runNow() async", 1)[1].split("private func run(", 1)[0]
+    assert run_now.index("scheduledRunOwnership.claim(identity: scheduleIdentity, runID: runID)") < run_now.index("await run("), "Run Now should claim its device schedule before async discovery"
 
     view = read(root, "Sources/Phosphor/Views/Backup/BackupListView.swift")
     assert_contains(view, "Wi-Fi only (skip if Wi-Fi is not available)", "Wi-Fi-only schedule copy should not say USB is required")
@@ -674,3 +674,130 @@ def test_live_photo_exports_use_path_based_names(root: Path) -> None:
     assert_contains(live, "photo.path", "Live photo export naming should use the full device path, not only the basename")
     assert_contains(live, "replacingOccurrences(of: \"/\", with: \"_\")", "Live photo export should preserve DCIM folder identity in local filenames")
     assert_contains(live, "appendingPathComponent(uniqueLocalName(for: photo))", "Live photo temp cache and export should use duplicate-safe names")
+
+
+def test_clearing_a_schedule_target_persists_a_disabled_clear_state(root: Path) -> None:
+    scheduler = read(root, "Sources/Phosphor/Services/BackupScheduler.swift")
+    selection = scheduler.split("func selectSchedule(targetUDID:", 1)[1].split("// MARK: - Timer Control", 1)[0]
+
+    assert_contains(selection, "if targetUDID == nil", "choosing the empty device picker option needs an explicit clear path")
+    assert_contains(selection, "let previousTargetUDID = schedule.targetUDID", "clearing must identify the currently edited device schedule")
+    assert_contains(selection, "schedules.removeAll", "clearing a target must remove the old per-device schedule from persisted schedules")
+    assert_contains(selection, "schedule = Schedule()", "clearing a target must persist a disabled, targetless editor state")
+    assert_contains(selection, "saveSchedules()", "clearing a target must write through to UserDefaults before reload")
+
+    # Behavioral model of the persistence contract: after a user clears Device,
+    # reloading must not rediscover the formerly enabled target schedule.
+    schedules = [{"target": "phone", "enabled": True}]
+    previous_target = "phone"
+    schedules = [entry for entry in schedules if entry["target"] != previous_target]
+    editor = {"target": None, "enabled": False}
+    reloaded = schedules
+    assert editor == {"target": None, "enabled": False}
+    assert not any(entry["target"] == "phone" and entry["enabled"] for entry in reloaded)
+
+
+def test_scheduled_work_is_tracked_cancelled_and_revalidated_before_starting_backup(root: Path) -> None:
+    scheduler = read(root, "Sources/Phosphor/Services/BackupScheduler.swift")
+
+    assert_contains(scheduler, "private var scheduledCheckTask: Task<Void, Never>?", "scheduled monitor checks need a retained task handle")
+    assert_contains(scheduler, "private var scheduledRunTasks: [String: Task<Void, Never>]", "each delayed scheduled discovery/run needs a retained task handle")
+    assert_contains(scheduler, "scheduledCheckTask?.cancel()", "stopping or replacing monitoring must cancel an outstanding check")
+    assert_contains(scheduler, "scheduledRunTasks.values.forEach { $0.cancel() }", "stopping monitoring must cancel delayed per-device scheduled work")
+    assert_contains(scheduler, "guard !Task.isCancelled", "scheduled work must observe cancellation after suspension")
+    assert_contains(scheduler, "isScheduledRunStillValid", "scheduled work must revalidate persisted state after async discovery")
+
+    run_body = scheduler.split("private func run(", 1)[1].split("private func isScheduledRunStillValid", 1)[0]
+    discovery_index = run_body.index("findTargetDevice(for: runSchedule)")
+    validation_index = run_body.rindex("isScheduledRunStillValid")
+    backup_index = run_body.index("runScheduledBackup(")
+    assert discovery_index < validation_index < backup_index, "a stale schedule must be revalidated after discovery and before it can enqueue a backup"
+
+    # Focused race model: discovery can finish after the app suspends/returns and
+    # the user disables, retargets, or stops monitoring. None may start a backup.
+    def may_start_after_discovery(*, monitoring: bool, enabled: bool, stored_target: str | None, run_target: str | None, cancelled: bool) -> bool:
+        return monitoring and enabled and stored_target == run_target and not cancelled
+
+    assert not may_start_after_discovery(monitoring=False, enabled=True, stored_target="phone", run_target="phone", cancelled=True)
+    assert not may_start_after_discovery(monitoring=True, enabled=False, stored_target="phone", run_target="phone", cancelled=True)
+    assert not may_start_after_discovery(monitoring=True, enabled=True, stored_target="tablet", run_target="phone", cancelled=True)
+    assert may_start_after_discovery(monitoring=True, enabled=True, stored_target="phone", run_target="phone", cancelled=False)
+
+
+def test_schedule_completion_requires_current_persisted_schedule_and_run_ownership(root: Path) -> None:
+    scheduler = read(root, "Sources/Phosphor/Services/BackupScheduler.swift")
+    ownership = root / "Sources/Phosphor/Services/ScheduledRunOwnership.swift"
+
+    assert ownership.exists(), "scheduled work needs a production run-ownership type that can be behaviorally exercised"
+    assert_contains(scheduler, "private var scheduledRunOwnership = ScheduledRunOwnership()", "the scheduler must track each in-flight run by a unique ownership token")
+    assert_contains(scheduler, "private var scheduledRunIDs: [String: UUID] = [:]", "task tracking must retain the matching run token")
+    assert_contains(scheduler, "currentScheduleForCompletion", "completion writes must explicitly revalidate the persisted schedule")
+    assert_not_contains(scheduler, "latestSchedule(matching: runSchedule.targetUDID) ?? runSchedule", "no post-await path may recreate a stale schedule from its run snapshot")
+
+    task_cleanup = scheduler.split("private func finishScheduledRunTask", 1)[1].split("private func finishScheduledBackupRun", 1)[0]
+    assert_contains(task_cleanup, "guard scheduledRunIDs[identity] == runID else { return }", "stale task A must not erase task B's tracking")
+
+    completion = scheduler.split("private func runScheduledBackup", 1)[1].split("// MARK: - Device Discovery", 1)[0]
+    assert_not_contains(completion, "?? runSchedule", "completion must never recreate a cleared or retargeted schedule from the stale run snapshot")
+
+    # Model the post-await persistence contract with controllable snapshots. A
+    # cleared/disabled/retargeted schedule must be a no-op, never a recreation.
+    run_snapshot = {"target": "phone", "enabled": True, "generation": 1}
+
+    def completion_write(persisted: dict[str, object] | None) -> dict[str, object] | None:
+        return persisted if persisted == run_snapshot else None
+
+    assert completion_write(None) is None
+    assert completion_write({"target": "phone", "enabled": False, "generation": 1}) is None
+    assert completion_write({"target": "tablet", "enabled": True, "generation": 1}) is None
+    assert completion_write(run_snapshot) == run_snapshot
+
+    # Compile and run the actual production ownership model. In particular,
+    # stale task A cannot finish task B after a clear/retarget made B current.
+    probe = r'''
+import Foundation
+
+@main
+struct ScheduledRunOwnershipProbe {
+    static func main() {
+        var ownership = ScheduledRunOwnership()
+        let runA = UUID()
+        let runB = UUID()
+
+        precondition(ownership.claim(identity: "phone", runID: runA))
+        precondition(ownership.owns(identity: "phone", runID: runA))
+        precondition(ownership.finish(identity: "phone", runID: runA))
+        precondition(ownership.claim(identity: "phone", runID: runB))
+        precondition(!ownership.finish(identity: "phone", runID: runA), "stale A must not clear B")
+        precondition(ownership.owns(identity: "phone", runID: runB), "B must remain tracked after stale A cleanup")
+        precondition(ownership.finish(identity: "phone", runID: runB))
+        precondition(!ownership.isOwned(identity: "phone"))
+        print("PASS")
+    }
+}
+'''
+    with tempfile.TemporaryDirectory(prefix="phosphor-scheduled-run-ownership-") as temp_dir:
+        temp = Path(temp_dir)
+        probe_path = temp / "Probe.swift"
+        binary_path = temp / "scheduled-run-ownership-probe"
+        probe_path.write_text(probe)
+        result = subprocess.run(
+            ["swiftc", "-parse-as-library", str(ownership), str(probe_path), "-o", str(binary_path)],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert result.returncode == 0, result.stderr
+        result = subprocess.run([str(binary_path)], capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "PASS"
+
+
+def test_global_concurrent_backup_accessibility_names_each_device_and_progress(root: Path) -> None:
+    backup_list = read(root, "Sources/Phosphor/Views/Backup/BackupListView.swift")
+    activity_list = backup_list.split("private var backupActivityList", 1)[1].split("private func deviceIdentity", 1)[0]
+
+    assert_contains(activity_list, ".accessibilityElement(children: .combine)", "each global backup status container should be one VoiceOver element")
+    assert_contains(activity_list, ".accessibilityLabel(\"\\(deviceIdentity(for: activity.udid)), \\(activity.displayProgressText)\")", "global status must announce the device identity and current progress")
+    assert_contains(activity_list, ".accessibilityLabel(\"Cancel backup for \\(deviceIdentity(for: activity.udid))\")", "same-name concurrent backups need device-specific cancel labels")

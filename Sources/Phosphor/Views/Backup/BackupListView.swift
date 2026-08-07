@@ -410,11 +410,14 @@ struct BackupListView: View {
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("\(deviceIdentity(for: activity.udid)), \(activity.displayProgressText)")
                         Spacer()
                         Button("Cancel") {
                             backupVM.cancelBackup(udid: activity.udid)
                         }
                         .controlSize(.small)
+                        .accessibilityLabel("Cancel backup for \(deviceIdentity(for: activity.udid))")
                     }
                     if case .running = activity.state {
                         ProgressView(

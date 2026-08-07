@@ -54,10 +54,14 @@ final class BackupScheduler: ObservableObject {
     }
 
     private var timer: Timer?
+    private var scheduledCheckTask: Task<Void, Never>?
+    private var scheduledRunTasks: [String: Task<Void, Never>] = [:]
+    private var scheduledRunSchedules: [String: Schedule] = [:]
+    private var scheduledRunIDs: [String: UUID] = [:]
+    private var scheduledRunOwnership = ScheduledRunOwnership()
     private var scheduleChangeCancellable: AnyCancellable?
     private var isMonitoring = false
     private var isSynchronizingSchedule = false
-    private var runningScheduledUDIDs: Set<String> = []
     private weak var backupViewModel: BackupViewModel?
     private let defaults = UserDefaults.standard
     private let scheduleKey = "phosphor.backup.schedule"
@@ -97,7 +101,18 @@ final class BackupScheduler: ObservableObject {
 
     func selectSchedule(targetUDID: String?, targetName: String?) {
         isSynchronizingSchedule = true
+        defer { isSynchronizingSchedule = false }
         schedules = latestPersistedSchedules()
+
+        if targetUDID == nil {
+            let previousTargetUDID = schedule.targetUDID
+            schedules.removeAll { $0.targetUDID == previousTargetUDID }
+            schedule = Schedule()
+            saveSchedules()
+            cancelInvalidScheduledWork()
+            return
+        }
+
         if let existing = schedules.first(where: { $0.targetUDID == targetUDID }) {
             schedule = existing
         } else if let targetUDID,
@@ -110,12 +125,10 @@ final class BackupScheduler: ObservableObject {
             saveSchedules()
         } else {
             schedule = Schedule(targetUDID: targetUDID, targetName: targetName)
-            if targetUDID != nil {
-                schedules.append(schedule)
-                saveSchedules()
-            }
+            schedules.append(schedule)
+            saveSchedules()
         }
-        isSynchronizingSchedule = false
+        cancelInvalidScheduledWork()
     }
 
     // MARK: - Timer Control
@@ -126,7 +139,7 @@ final class BackupScheduler: ObservableObject {
         reloadFromDefaults()
         configureMonitoring()
         if schedules.contains(where: \.enabled) {
-            Task { await checkAndRun() }
+            startScheduledCheck()
             updateNextRunDate()
         }
     }
@@ -134,11 +147,20 @@ final class BackupScheduler: ObservableObject {
     private func configureMonitoring() {
         timer?.invalidate()
         timer = nil
-        guard isMonitoring else { return }
-        guard schedules.contains(where: \.enabled) else { return }
+        scheduledCheckTask?.cancel()
+        scheduledCheckTask = nil
+        guard isMonitoring else {
+            cancelScheduledWork()
+            return
+        }
+        cancelInvalidScheduledWork()
+        guard schedules.contains(where: \.enabled) else {
+            cancelScheduledWork()
+            return
+        }
         timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
-                await self?.checkAndRun()
+                self?.startScheduledCheck()
             }
         }
     }
@@ -147,6 +169,72 @@ final class BackupScheduler: ObservableObject {
         isMonitoring = false
         timer?.invalidate()
         timer = nil
+        cancelScheduledWork()
+    }
+
+    private func startScheduledCheck() {
+        scheduledCheckTask?.cancel()
+        scheduledCheckTask = Task { @MainActor [weak self] in
+            await self?.checkAndRun()
+        }
+    }
+
+    private func startScheduledRun(_ dueSchedule: Schedule) {
+        let scheduleIdentity = dueSchedule.targetUDID ?? "legacy"
+        guard scheduledRunTasks[scheduleIdentity] == nil,
+              isScheduleCurrent(dueSchedule, requiresActiveMonitoring: true) else { return }
+
+        let runID = UUID()
+        guard scheduledRunOwnership.claim(identity: scheduleIdentity, runID: runID) else { return }
+
+        scheduledRunSchedules[scheduleIdentity] = dueSchedule
+        scheduledRunIDs[scheduleIdentity] = runID
+        scheduledRunTasks[scheduleIdentity] = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.run(
+                schedule: dueSchedule,
+                advanceAfterDiscoveryFailure: true,
+                requiresActiveMonitoring: true,
+                runID: runID
+            )
+            self.finishScheduledRunTask(identity: scheduleIdentity, runID: runID)
+        }
+    }
+
+    private func cancelScheduledWork() {
+        scheduledCheckTask?.cancel()
+        scheduledCheckTask = nil
+        scheduledRunTasks.values.forEach { $0.cancel() }
+        scheduledRunTasks.removeAll()
+        scheduledRunSchedules.removeAll()
+        scheduledRunIDs.removeAll()
+        scheduledRunOwnership.removeAll()
+        isRunningScheduledBackup = false
+    }
+
+    private func cancelInvalidScheduledWork() {
+        let invalidScheduleIdentities = scheduledRunSchedules.compactMap { scheduleIdentity, scheduledRun in
+            isScheduleCurrent(scheduledRun, requiresActiveMonitoring: true) ? nil : scheduleIdentity
+        }
+        for scheduleIdentity in invalidScheduleIdentities {
+            guard let runID = scheduledRunIDs[scheduleIdentity] else { continue }
+            scheduledRunTasks[scheduleIdentity]?.cancel()
+            finishScheduledRunTask(identity: scheduleIdentity, runID: runID)
+            finishScheduledBackupRun(identity: scheduleIdentity, runID: runID)
+        }
+        isRunningScheduledBackup = !scheduledRunOwnership.isEmpty
+    }
+
+    private func finishScheduledRunTask(identity: String, runID: UUID) {
+        guard scheduledRunIDs[identity] == runID else { return }
+        scheduledRunTasks.removeValue(forKey: identity)
+        scheduledRunSchedules.removeValue(forKey: identity)
+        scheduledRunIDs.removeValue(forKey: identity)
+    }
+
+    private func finishScheduledBackupRun(identity: String, runID: UUID) {
+        guard scheduledRunOwnership.finish(identity: identity, runID: runID) else { return }
+        isRunningScheduledBackup = !scheduledRunOwnership.isEmpty
     }
 
     func reloadFromDefaults() {
@@ -169,11 +257,14 @@ final class BackupScheduler: ObservableObject {
                 schedule = refreshed
                 isSynchronizingSchedule = false
             }
+            cancelInvalidScheduledWork()
         }
     }
 
     func checkAndRun() async {
+        guard isMonitoring, !Task.isCancelled else { return }
         reloadFromDefaults()
+        guard isMonitoring, !Task.isCancelled else { return }
         var dueSchedules: [Schedule] = []
         for stored in schedules where stored.enabled {
             var candidate = stored
@@ -183,7 +274,7 @@ final class BackupScheduler: ObservableObject {
             }
             if let nextRun = candidate.nextRunDate,
                Date() >= nextRun,
-               !runningScheduledUDIDs.contains(candidate.targetUDID ?? "legacy") {
+               !scheduledRunOwnership.isOwned(identity: candidate.targetUDID ?? "legacy") {
                 dueSchedules.append(candidate)
             }
         }
@@ -191,26 +282,52 @@ final class BackupScheduler: ObservableObject {
         await withTaskGroup(of: Void.self) { group in
             for dueSchedule in dueSchedules {
                 group.addTask { @MainActor [weak self] in
-                    await self?.run(schedule: dueSchedule, advanceAfterDiscoveryFailure: true)
+                    self?.startScheduledRun(dueSchedule)
                 }
             }
         }
     }
 
     func runNow() async {
-        await run(schedule: schedule, advanceAfterDiscoveryFailure: false)
+        let scheduleIdentity = schedule.targetUDID ?? "legacy"
+        let runID = UUID()
+        guard scheduledRunOwnership.claim(identity: scheduleIdentity, runID: runID) else { return }
+        await run(
+            schedule: schedule,
+            advanceAfterDiscoveryFailure: false,
+            requiresActiveMonitoring: false,
+            runID: runID
+        )
     }
 
-    private func run(schedule runSchedule: Schedule, advanceAfterDiscoveryFailure: Bool) async {
+    private func run(
+        schedule runSchedule: Schedule,
+        advanceAfterDiscoveryFailure: Bool,
+        requiresActiveMonitoring: Bool,
+        runID: UUID
+    ) async {
         let scheduleIdentity = runSchedule.targetUDID ?? "legacy"
-        guard !runningScheduledUDIDs.contains(scheduleIdentity) else { return }
-        runningScheduledUDIDs.insert(scheduleIdentity)
+        defer { finishScheduledBackupRun(identity: scheduleIdentity, runID: runID) }
+        guard isScheduledRunStillValid(
+            runSchedule,
+            requiresActiveMonitoring: requiresActiveMonitoring,
+            runID: runID
+        ) else { return }
         isRunningScheduledBackup = true
 
         let discovery = await findTargetDevice(for: runSchedule)
+        guard isScheduledRunStillValid(
+            runSchedule,
+            requiresActiveMonitoring: requiresActiveMonitoring,
+            runID: runID
+        ) else { return }
         guard let target = discovery.target else {
             let failure = discovery.failure ?? "No device available for backup"
-            var updated = latestSchedule(matching: runSchedule.targetUDID) ?? runSchedule
+            guard var updated = currentScheduleForCompletion(
+                runSchedule,
+                requiresActiveMonitoring: requiresActiveMonitoring,
+                runID: runID
+            ) else { return }
             updated.lastResult = failure
             if advanceAfterDiscoveryFailure {
                 updated.lastRunDate = Date()
@@ -218,18 +335,62 @@ final class BackupScheduler: ObservableObject {
             }
             storeSchedule(updated, replacingTargetUDID: runSchedule.targetUDID)
             addLog(failure, success: false)
-            runningScheduledUDIDs.remove(scheduleIdentity)
-            isRunningScheduledBackup = !runningScheduledUDIDs.isEmpty
             return
         }
-        await runScheduledBackup(schedule: runSchedule, udid: target.udid, preferNetwork: target.preferNetwork)
-        runningScheduledUDIDs.remove(scheduleIdentity)
-        isRunningScheduledBackup = !runningScheduledUDIDs.isEmpty
+        await runScheduledBackup(
+            schedule: runSchedule,
+            udid: target.udid,
+            preferNetwork: target.preferNetwork,
+            requiresActiveMonitoring: requiresActiveMonitoring,
+            runID: runID
+        )
+    }
+
+    private func isScheduledRunStillValid(
+        _ runSchedule: Schedule,
+        requiresActiveMonitoring: Bool,
+        runID: UUID
+    ) -> Bool {
+        let scheduleIdentity = runSchedule.targetUDID ?? "legacy"
+        guard !Task.isCancelled,
+              scheduledRunOwnership.owns(identity: scheduleIdentity, runID: runID) else { return false }
+        return isScheduleCurrent(runSchedule, requiresActiveMonitoring: requiresActiveMonitoring)
+    }
+
+    private func currentScheduleForCompletion(
+        _ runSchedule: Schedule,
+        requiresActiveMonitoring: Bool,
+        runID: UUID
+    ) -> Schedule? {
+        guard isScheduledRunStillValid(
+            runSchedule,
+            requiresActiveMonitoring: requiresActiveMonitoring,
+            runID: runID
+        ), let persisted = latestSchedule(matching: runSchedule.targetUDID), persisted == runSchedule else {
+            return nil
+        }
+        return persisted
+    }
+
+    private func isScheduleCurrent(
+        _ runSchedule: Schedule,
+        requiresActiveMonitoring: Bool
+    ) -> Bool {
+        guard !requiresActiveMonitoring || isMonitoring,
+              let persisted = latestSchedule(matching: runSchedule.targetUDID),
+              persisted.enabled else { return false }
+        return persisted == runSchedule
     }
 
     // MARK: - Backup Execution
 
-    private func runScheduledBackup(schedule runSchedule: Schedule, udid: String, preferNetwork: Bool) async {
+    private func runScheduledBackup(
+        schedule runSchedule: Schedule,
+        udid: String,
+        preferNetwork: Bool,
+        requiresActiveMonitoring: Bool,
+        runID: UUID
+    ) async {
         scheduledBackupProgress = "Starting scheduled backup..."
         addLog("Scheduled backup started for \(runSchedule.targetName ?? "device \(udid.prefix(8))...")", success: true)
 
@@ -240,7 +401,11 @@ final class BackupScheduler: ObservableObject {
 
         guard let backupViewModel else {
             let failure = "The shared backup queue is unavailable"
-            var updated = latestSchedule(matching: runSchedule.targetUDID) ?? runSchedule
+            guard var updated = currentScheduleForCompletion(
+                runSchedule,
+                requiresActiveMonitoring: requiresActiveMonitoring,
+                runID: runID
+            ) else { return }
             updated.lastRunDate = Date()
             updated.lastResult = failure
             updated.nextRunDate = nextRunDate(for: updated)
@@ -254,7 +419,11 @@ final class BackupScheduler: ObservableObject {
         let success = activity?.state == .completed
         let resultMessage = activity?.errorMessage ?? activity?.progressText ?? "Failed"
 
-        var updated = latestSchedule(matching: runSchedule.targetUDID) ?? runSchedule
+        guard var updated = currentScheduleForCompletion(
+            runSchedule,
+            requiresActiveMonitoring: requiresActiveMonitoring,
+            runID: runID
+        ) else { return }
         updated.lastRunDate = Date()
         updated.lastResult = success ? "Completed" : resultMessage
         updated.nextRunDate = nextRunDate(for: updated)
@@ -424,6 +593,7 @@ final class BackupScheduler: ObservableObject {
         let latest = latestSchedule(matching: previous.targetUDID) ?? previous
         let merged = mergeEditedFields(previous: previous, edited: schedule, into: latest)
         storeSchedule(merged, replacingTargetUDID: previous.targetUDID)
+        cancelInvalidScheduledWork()
     }
 
     /// Apply only fields changed by this editor onto the latest persisted value.
