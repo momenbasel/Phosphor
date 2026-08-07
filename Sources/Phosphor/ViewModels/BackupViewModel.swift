@@ -277,8 +277,10 @@ final class BackupViewModel: ObservableObject {
 
         let path = backup.path
         do {
-            try await Task.detached(priority: .userInitiated) {
-                try BackupUnlockStore.shared.unlock(backupPath: path, password: password)
+            try await Task.detached(priority: .userInitiated) { () throws -> Void in
+                // Keep the decryptor in BackupUnlockStore. Returning it from this
+                // detached task would cross the MainActor boundary with a non-Sendable value.
+                _ = try BackupUnlockStore.shared.unlock(backupPath: path, password: password)
             }.value
         } catch {
             unlockError = error.localizedDescription

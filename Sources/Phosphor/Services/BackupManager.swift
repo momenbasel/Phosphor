@@ -53,8 +53,8 @@ final class BackupManager: ObservableObject {
         case incomplete(path: String)
     }
 
-    /// Active backup process for cancellation.
-    private var activeProcess: Process?
+    /// Active managed backup session leader for cancellation.
+    private var activeProcess: Shell.ManagedProcess?
     private var activeOperationID: UUID?
     private var cancelledOperationIDs: Set<UUID> = []
 
@@ -1022,10 +1022,8 @@ final class BackupManager: ObservableObject {
     /// Toggle backup encryption without leaking the password through the process
     /// argument list. idevicebackup2 reads the password from the BACKUP_PASSWORD
     /// environment variable, which - unlike an argv value - is not printed by
-    /// `ps -axww` (issue #39), so it is tried first. pymobiledevice3 only accepts
-    /// the password as a positional CLI argument, so the fallback below runs when
-    /// the idevicebackup2 attempt fails for any reason and briefly exposes the
-    /// secret to other local processes; the common success path never does.
+    /// `ps -axww`. pymobiledevice3 accepts these passwords only as positional CLI
+    /// arguments, so a failed secure invocation deliberately fails closed.
     private func setBackupEncryption(udid: String, enabled: Bool, password: String) async -> Bool {
         let mode = enabled ? "on" : "off"
         let result = await Shell.runAsync(
@@ -1033,14 +1031,16 @@ final class BackupManager: ObservableObject {
             arguments: ["-u", udid, "encryption", mode],
             extraEnvironment: ["BACKUP_PASSWORD": password]
         )
-        if result.succeeded { return true }
-        return await PyMobileDevice.setEncryption(enabled: enabled, password: password, udid: udid)
+        guard result.succeeded else {
+            lastError = "Could not change backup encryption without exposing the password on the command line. Ensure idevicebackup2 is installed and try again."
+            return false
+        }
+        return true
     }
 
-    /// Change the backup password. Passwords are passed to idevicebackup2 via the
-    /// BACKUP_PASSWORD / BACKUP_PASSWORD_NEW environment variables so they never
-    /// appear in the argument list (issue #39); the pymobiledevice3 argv path runs
-    /// only if that attempt fails and briefly exposes the secret via argv.
+    /// Change the backup password using idevicebackup2's environment-variable
+    /// interface. pymobiledevice3 only accepts both passwords in argv, so a
+    /// failure here is reported rather than falling back to an unsafe command.
     func changeEncryptionPassword(udid: String, oldPassword: String, newPassword: String) async -> Bool {
         let result = await Shell.runAsync(
             "idevicebackup2",
@@ -1050,8 +1050,11 @@ final class BackupManager: ObservableObject {
                 "BACKUP_PASSWORD_NEW": newPassword,
             ]
         )
-        if result.succeeded { return true }
-        return await PyMobileDevice.changeEncryptionPassword(oldPassword: oldPassword, newPassword: newPassword, udid: udid)
+        guard result.succeeded else {
+            lastError = "Could not change the backup password without exposing it on the command line. Ensure idevicebackup2 is installed and try again."
+            return false
+        }
+        return true
     }
 
     func isEncryptionEnabled(udid: String) async -> Bool {
