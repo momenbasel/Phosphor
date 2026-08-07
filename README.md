@@ -9,7 +9,7 @@
 <h1 align="center">Phosphor</h1>
 
 <p align="center">
-  <strong>Free and open-source iOS device manager for macOS.</strong><br>
+  <strong>Native iPhone, iPad, and iPod touch backup and data-management tools for macOS.</strong><br>
   <a href="https://github.com/momenbasel/Phosphor/releases/latest">Download</a> -
   <a href="https://momenbasel.github.io/Phosphor/">Website</a> -
   <a href="#features">Features</a> -
@@ -26,7 +26,7 @@
 
 ---
 
-Phosphor gives you complete control over your iPhone, iPad, and iPod touch without proprietary software, iCloud lock-in, or subscriptions. Built natively with SwiftUI and powered by [pymobiledevice3](https://github.com/doronz88/pymobiledevice3) with [libimobiledevice](https://libimobiledevice.org/) as fallback. Supports iOS 17-26+.
+Phosphor is a free and open-source macOS app for backing up iPhone, iPad, and iPod touch devices, browsing and restoring backup contents, exporting messages and photos, and managing apps—without subscriptions or iCloud lock-in. It is built natively with SwiftUI and powered by [pymobiledevice3](https://github.com/doronz88/pymobiledevice3), with [libimobiledevice](https://libimobiledevice.org/) as a fallback. Supports iOS 17-26+.
 
 ---
 
