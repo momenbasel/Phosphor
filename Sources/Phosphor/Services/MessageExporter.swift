@@ -570,20 +570,85 @@ final class MessageExporter {
         return count
     }
 
+    /// Export every conversation into its own folder with every supported
+    /// transcript format and one shared folder containing the original files.
+    func exportAllChatsAllFormats(
+        to parentDirectory: String,
+        options: MessageExportOptions = MessageExportOptions(),
+        onProgress: ((Int, Int, String) throws -> Void)? = nil,
+        cancellationCheck: (() throws -> Void)? = nil
+    ) throws -> MessageExportBundleWriter.Result {
+        let chats = try getChats()
+        let fileManager = FileManager.default
+        var bundleOptions = options
+        bundleOptions.includeAttachments = true
+
+        return try MessageExportBundleWriter.write(
+            in: URL(fileURLWithPath: parentDirectory, isDirectory: true)
+        ) { rootDirectory in
+            var count = 0
+            for chat in chats {
+                try cancellationCheck?()
+                try onProgress?(count, chats.count, chat.title)
+
+                let folderFilename = chat.exportFilename(format: .html, includeChatID: true)
+                let folderName = (folderFilename as NSString).deletingPathExtension
+                let conversationDirectory = rootDirectory.appendingPathComponent(folderName, isDirectory: true)
+                try fileManager.createDirectory(at: conversationDirectory, withIntermediateDirectories: true)
+
+                let messages = bundleOptions.apply(to: try getMessages(chatId: chat.id))
+                let attachmentsDirectory = conversationDirectory.appendingPathComponent("Attachments", isDirectory: true)
+                let attachmentMap = try stageOriginalAttachments(
+                    messages: messages,
+                    attachmentDirectory: attachmentsDirectory,
+                    includeAttachments: true,
+                    cancellationCheck: cancellationCheck
+                )
+                if attachmentMap.isEmpty {
+                    try fileManager.createDirectory(at: attachmentsDirectory, withIntermediateDirectories: true)
+                }
+
+                for format in MessageExportFormat.allCases {
+                    try cancellationCheck?()
+                    let filename = chat.exportFilename(format: format, includeChatID: false)
+                    let path = conversationDirectory.appendingPathComponent(filename).path
+                    try exportMessages(
+                        messages,
+                        chatTitle: chat.title,
+                        format: format,
+                        to: path,
+                        options: bundleOptions,
+                        attachmentMap: attachmentMap,
+                        cancellationCheck: cancellationCheck
+                    )
+                }
+                count += 1
+            }
+            try onProgress?(count, chats.count, "Complete")
+            return count
+        }
+    }
+
     func exportMessages(
         _ messages: [Message],
         chatTitle: String,
         format: MessageExportFormat,
         to path: String,
         options: MessageExportOptions = MessageExportOptions(),
+        attachmentMap providedAttachmentMap: [String: String]? = nil,
         cancellationCheck: (() throws -> Void)? = nil
     ) throws {
-        let attachmentMap = try stageOriginalAttachments(
-            messages: messages,
-            exportPath: path,
-            includeAttachments: options.includeAttachments,
-            cancellationCheck: cancellationCheck
-        )
+        let attachmentMap: [String: String]
+        if let providedAttachmentMap {
+            attachmentMap = providedAttachmentMap
+        } else {
+            attachmentMap = try stageOriginalAttachments(
+                messages: messages,
+                exportPath: path,
+                includeAttachments: options.includeAttachments,
+                cancellationCheck: cancellationCheck
+            )
+        }
         switch format {
         case .csv:
             try exportCSV(messages: messages, chatTitle: chatTitle, to: path, cancellationCheck: cancellationCheck)
@@ -758,31 +823,59 @@ final class MessageExporter {
         includeAttachments: Bool,
         cancellationCheck: (() throws -> Void)? = nil
     ) throws -> [String: String] {
-        var seenFilenames: Set<String> = []
-        var items: [MessageAttachmentExporter.Item] = []
-
-        if includeAttachments {
-            for message in messages {
-                try cancellationCheck?()
-                for attachment in message.attachments where !attachment.isPluginPayload {
-                    guard let filename = attachment.filename,
-                          !filename.isEmpty,
-                          seenFilenames.insert(filename).inserted,
-                          let sourcePath = resolveAttachmentDiskPath(filename: filename) else { continue }
-                    items.append(.init(
-                        key: filename,
-                        displayName: attachment.displayName,
-                        sourcePath: sourcePath
-                    ))
-                }
-            }
-        }
-
+        let items = try originalAttachmentItems(
+            messages: messages,
+            includeAttachments: includeAttachments,
+            cancellationCheck: cancellationCheck
+        )
         return try MessageAttachmentExporter.export(
             items,
             beside: exportPath,
             cancellationCheck: cancellationCheck
         )
+    }
+
+    private func stageOriginalAttachments(
+        messages: [Message],
+        attachmentDirectory: URL,
+        includeAttachments: Bool,
+        cancellationCheck: (() throws -> Void)? = nil
+    ) throws -> [String: String] {
+        let items = try originalAttachmentItems(
+            messages: messages,
+            includeAttachments: includeAttachments,
+            cancellationCheck: cancellationCheck
+        )
+        return try MessageAttachmentExporter.export(
+            items,
+            to: attachmentDirectory,
+            cancellationCheck: cancellationCheck
+        )
+    }
+
+    private func originalAttachmentItems(
+        messages: [Message],
+        includeAttachments: Bool,
+        cancellationCheck: (() throws -> Void)? = nil
+    ) throws -> [MessageAttachmentExporter.Item] {
+        guard includeAttachments else { return [] }
+        var seenFilenames: Set<String> = []
+        var items: [MessageAttachmentExporter.Item] = []
+        for message in messages {
+            try cancellationCheck?()
+            for attachment in message.attachments where !attachment.isPluginPayload {
+                guard let filename = attachment.filename,
+                      !filename.isEmpty,
+                      seenFilenames.insert(filename).inserted,
+                      let sourcePath = resolveAttachmentDiskPath(filename: filename) else { continue }
+                items.append(.init(
+                    key: filename,
+                    displayName: attachment.displayName,
+                    sourcePath: sourcePath
+                ))
+            }
+        }
+        return items
     }
 
     private func exportHTML(

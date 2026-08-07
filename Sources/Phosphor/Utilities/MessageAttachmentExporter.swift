@@ -24,7 +24,34 @@ enum MessageAttachmentExporter {
             ? "\(baseName)_attachments"
             : "\(baseName)-\(formatSuffix)_attachments"
         let sidecarURL = parentURL.appendingPathComponent(sidecarName, isDirectory: true)
-        let stagingURL = parentURL.appendingPathComponent(".\(sidecarName).staging-\(UUID().uuidString)", isDirectory: true)
+        let exportedPaths = try export(items, to: sidecarURL, cancellationCheck: cancellationCheck)
+
+        // Older Phosphor HTML exports used `<base>_attachments`. Remove that
+        // stale sidecar only after the new format-isolated export succeeds.
+        if formatSuffix == "html" {
+            let legacySidecarURL = parentURL.appendingPathComponent("\(baseName)_attachments", isDirectory: true)
+            if legacySidecarURL != sidecarURL {
+                try? fileManager.removeItem(at: legacySidecarURL)
+            }
+        }
+
+        return exportedPaths
+    }
+
+    /// Export to a caller-selected folder. Multi-format bundles use this to
+    /// share one `Attachments` directory across every transcript in a chat.
+    static func export(
+        _ items: [Item],
+        to directoryURL: URL,
+        cancellationCheck: (() throws -> Void)? = nil
+    ) throws -> [String: String] {
+        let fileManager = FileManager.default
+        let parentURL = directoryURL.deletingLastPathComponent()
+        let directoryName = directoryURL.lastPathComponent
+        let stagingURL = parentURL.appendingPathComponent(
+            ".\(directoryName).staging-\(UUID().uuidString)",
+            isDirectory: true
+        )
         defer {
             try? fileManager.removeItem(at: stagingURL)
         }
@@ -42,27 +69,18 @@ enum MessageAttachmentExporter {
             let uniqueName = availableFilename(baseName, in: stagingURL, fileManager: fileManager)
             let destinationURL = stagingURL.appendingPathComponent(uniqueName)
             try fileManager.copyItem(at: URL(fileURLWithPath: item.sourcePath), to: destinationURL)
-            exportedPaths[item.key] = "\(sidecarName)/\(uniqueName)"
+            exportedPaths[item.key] = "\(directoryName)/\(uniqueName)"
         }
         try cancellationCheck?()
 
         if items.isEmpty {
-            if fileManager.fileExists(atPath: sidecarURL.path) {
-                try fileManager.removeItem(at: sidecarURL)
+            if fileManager.fileExists(atPath: directoryURL.path) {
+                try fileManager.removeItem(at: directoryURL)
             }
-        } else if fileManager.fileExists(atPath: sidecarURL.path) {
-            _ = try fileManager.replaceItemAt(sidecarURL, withItemAt: stagingURL)
+        } else if fileManager.fileExists(atPath: directoryURL.path) {
+            _ = try fileManager.replaceItemAt(directoryURL, withItemAt: stagingURL)
         } else {
-            try fileManager.moveItem(at: stagingURL, to: sidecarURL)
-        }
-
-        // Older Phosphor HTML exports used `<base>_attachments`. Remove that
-        // stale sidecar only after the new format-isolated export succeeds.
-        if formatSuffix == "html" {
-            let legacySidecarURL = parentURL.appendingPathComponent("\(baseName)_attachments", isDirectory: true)
-            if legacySidecarURL != sidecarURL {
-                try? fileManager.removeItem(at: legacySidecarURL)
-            }
+            try fileManager.moveItem(at: stagingURL, to: directoryURL)
         }
 
         return exportedPaths

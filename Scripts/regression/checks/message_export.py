@@ -628,6 +628,99 @@ def test_original_attachment_option_applies_to_every_message_export_format(root:
     )
 
 
+def test_all_formats_message_bundle_is_atomic_and_collision_safe(root: Path) -> None:
+    helper = root / "Sources/Phosphor/Utilities/MessageExportBundleWriter.swift"
+    assert helper.exists(), "all-formats exports should use a dedicated atomic bundle writer"
+
+    probe = r'''
+import Foundation
+
+@main
+struct MessageExportBundleProbe {
+    static func main() throws {
+        let parent = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
+        let fileManager = FileManager.default
+
+        let first = try MessageExportBundleWriter.write(in: parent) { root in
+            let conversation = root.appendingPathComponent("Jane Doe-chat-42", isDirectory: true)
+            try fileManager.createDirectory(at: conversation, withIntermediateDirectories: true)
+            try Data("pdf".utf8).write(to: conversation.appendingPathComponent("Jane Doe.pdf"))
+            return 1
+        }
+        guard first.count == 1,
+              first.directory.lastPathComponent == "Messages Export",
+              fileManager.fileExists(atPath: first.directory.appendingPathComponent("Jane Doe-chat-42/Jane Doe.pdf").path) else {
+            fputs("first bundle did not produce the expected export folder\n", stderr)
+            exit(1)
+        }
+
+        let second = try MessageExportBundleWriter.write(in: parent) { root in
+            try Data("second".utf8).write(to: root.appendingPathComponent("marker.txt"))
+            return 1
+        }
+        guard second.directory.lastPathComponent == "Messages Export 2",
+              fileManager.fileExists(atPath: first.directory.path),
+              fileManager.fileExists(atPath: second.directory.path) else {
+            fputs("bundle naming overwrote a prior completed export\n", stderr)
+            exit(2)
+        }
+
+        do {
+            _ = try MessageExportBundleWriter.write(in: parent) { root in
+                try Data("partial".utf8).write(to: root.appendingPathComponent("partial.txt"))
+                throw CancellationError()
+            }
+            fputs("cancelled bundle unexpectedly succeeded\n", stderr)
+            exit(3)
+        } catch is CancellationError {
+            let names = try fileManager.contentsOfDirectory(atPath: parent.path)
+            guard !names.contains("Messages Export 3"),
+                  !names.contains(where: { $0.contains("staging-") }) else {
+                fputs("cancelled bundle left visible or staged partial output\n", stderr)
+                exit(4)
+            }
+        }
+    }
+}
+'''
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp = Path(temp_dir)
+        probe_path = temp / "Probe.swift"
+        probe_path.write_text(probe)
+        executable = temp / "message-export-bundle-probe"
+        compile_result = subprocess.run(
+            ["swiftc", "-parse-as-library", str(helper), str(probe_path), "-o", str(executable)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert compile_result.returncode == 0, compile_result.stderr
+        result = subprocess.run([str(executable), str(temp)], capture_output=True, text=True, timeout=10)
+        assert result.returncode == 0, result.stderr
+
+
+def test_all_formats_message_bundle_has_one_folder_per_conversation(root: Path) -> None:
+    exporter = read(root, "Sources/Phosphor/Services/MessageExporter.swift")
+    view_model = read(root, "Sources/Phosphor/ViewModels/MessageViewModel.swift")
+    view = read(root, "Sources/Phosphor/Views/Messages/MessageListView.swift")
+
+    bundle = re.search(
+        r"func exportAllChatsAllFormats\(.*?\) throws -> MessageExportBundleWriter.Result \{(?P<body>.*?)\n    \}",
+        exporter,
+        re.S,
+    )
+    assert bundle is not None, "MessageExporter should expose an all-formats bundle export"
+    body = bundle.group("body")
+    assert_contains(body, "MessageExportFormat.allCases", "each conversation should be written in every supported format")
+    assert_contains(body, "includeChatID: true", "conversation folders should retain collision-safe chat IDs")
+    assert_contains(body, 'appendingPathComponent("Attachments"', "each conversation should contain one shared Attachments folder")
+    assert_contains(body, "attachmentMap: attachmentMap", "HTML should link to the shared conversation attachment folder")
+    assert_contains(view_model, "startExportAllChatsAllFormats", "the background export view model should expose the bundle action")
+    assert_contains(view, 'Button("All Formats + Attachments")', "Export All should offer the complete conversation bundle")
+    assert_contains(view, "exportAllConversationsAllFormats", "the all-formats menu option should open its folder picker")
+
+
 def test_message_view_clears_stale_loaded_backup_and_preserves_readiness(root: Path) -> None:
     view_model = read(root, "Sources/Phosphor/ViewModels/MessageViewModel.swift")
     assert_contains(view_model, "func clear()", "MessageViewModel should expose a clear path for stale backup state")
@@ -733,9 +826,13 @@ def test_message_export_writers_check_cancellation_inside_long_loops(root: Path)
         match = re.search(rf"private func {func_name}.*?(?=\n    private func|\n    ///|\Z)", src, re.S)
         assert match is not None, f"{func_name} not found"
         assert_contains(match.group(0), "try cancellationCheck?()", f"{func_name} should stop promptly during large single-chat exports")
-    stage = re.search(r"private func stageOriginalAttachments.*?(?=\n    private func|\n    ///|\Z)", src, re.S)
-    assert stage is not None, "stageOriginalAttachments should exist"
-    assert_contains(stage.group(0), "try cancellationCheck?()", "attachment resolution should be cancellable")
+    attachment_items = re.search(r"private func originalAttachmentItems.*?(?=\n    private func|\n    ///|\Z)", src, re.S)
+    assert attachment_items is not None, "originalAttachmentItems should exist"
+    assert_contains(
+        attachment_items.group(0),
+        "try cancellationCheck?()",
+        "attachment resolution should be cancellable",
+    )
     helper = read(root, "Sources/Phosphor/Utilities/MessageAttachmentExporter.swift")
     assert_contains(helper, "try cancellationCheck?()", "original attachment copying should be cancellable between files")
 

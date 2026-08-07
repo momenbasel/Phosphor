@@ -200,6 +200,10 @@ struct MessageListView: View {
                     exportAllConversations(format: format)
                 }
             }
+            Divider()
+            Button("All Formats + Attachments") {
+                exportAllConversationsAllFormats()
+            }
         }
         .menuStyle(.borderlessButton)
         .font(.system(size: 11, weight: .medium))
@@ -521,6 +525,25 @@ struct MessageListView: View {
                 customStart: customStartDate,
                 customEnd: customEndDate,
                 includeAttachments: includeAttachments
+            )
+        }
+    }
+
+    private func exportAllConversationsAllFormats() {
+        guard loadedBackupIsCurrent else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.prompt = "Create Export"
+        panel.message = "Choose where Phosphor should create a Messages Export folder containing every conversation, all supported formats, and original attachments."
+
+        if panel.runModal() == .OK, let url = panel.url {
+            messageVM.startExportAllChatsAllFormats(
+                to: url.path,
+                dateFilter: dateFilter,
+                customStart: customStartDate,
+                customEnd: customEndDate
             )
         }
     }
