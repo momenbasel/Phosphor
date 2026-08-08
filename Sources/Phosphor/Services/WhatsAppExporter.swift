@@ -285,6 +285,7 @@ final class WhatsAppExporter {
             PDFTranscriptWriter.Entry(
                 title: msg.isFromMe ? "Me" : (msg.senderJid ?? "Unknown"),
                 subtitle: msg.formattedDate,
+                timestamp: msg.date,
                 body: msg.displayText,
                 isFromMe: msg.isFromMe
             )
