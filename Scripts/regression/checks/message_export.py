@@ -5,6 +5,7 @@ import re
 import sqlite3
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 
@@ -126,6 +127,84 @@ struct GenerationPublicationProbe {
         assert compile_result.returncode == 0, compile_result.stderr
         result = subprocess.run([str(executable), str(temp)], capture_output=True, text=True, timeout=20)
         assert result.returncode == 0, f"generation publication probe exited {result.returncode}: {result.stderr}"
+
+
+def test_same_destination_exports_serialize_sidecar_publication(root: Path) -> None:
+    transaction_path = root / "Sources/Phosphor/Utilities/MessageExportTransaction.swift"
+    transaction = transaction_path.read_text()
+    attachment_exporter = root / "Sources/Phosphor/Utilities/MessageAttachmentExporter.swift"
+
+    assert_contains(
+        transaction,
+        "withDestinationLock",
+        "same-destination exports must serialize generation cleanup after transcript publication",
+    )
+    assert_contains(
+        transaction, "flock(",
+        "the publication lock must also protect separate Phosphor processes",
+    )
+    assert_contains(
+        transaction,
+        "withDestinationLock(for: finalTranscriptURL)",
+        "the complete prepare, publish, and cleanup transaction must run under the destination lock",
+    )
+
+    worker = r'''
+import Foundation
+
+@main
+struct ConcurrentPublicationWorker {
+    static func main() throws {
+        let root = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
+        let marker = CommandLine.arguments[2]
+        let fileManager = FileManager.default
+        let final = root.appendingPathComponent("conversation.html")
+        let source = root.appendingPathComponent("source-\(marker).jpg")
+        try Data(marker.utf8).write(to: source)
+        let item = MessageAttachmentExporter.Item(key: "image", displayName: "image.jpg", sourcePath: source.path)
+
+        try MessageExportTransaction.write(to: final, prepareAttachments: {
+            let generation = try MessageAttachmentExporter.prepareGeneration([item], beside: final.path)
+            if marker == "A" {
+                try Data().write(to: root.appendingPathComponent("A-sidecar-ready"))
+            }
+            return generation
+        }) { staged, paths in
+            if marker == "A" { Thread.sleep(forTimeInterval: 0.45) }
+            try Data("\(marker):\(paths["image"]!)".utf8).write(to: staged)
+        }
+
+        guard fileManager.fileExists(atPath: final.path) else { exit(1) }
+    }
+}
+'''
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp = Path(temp_dir)
+        worker_path = temp / "ConcurrentPublicationWorker.swift"
+        worker_path.write_text(worker)
+        executable = temp / "concurrent-publication-worker"
+        compile_result = subprocess.run(
+            ["swiftc", "-parse-as-library", str(attachment_exporter), str(transaction_path), str(worker_path), "-o", str(executable)],
+            capture_output=True, text=True, timeout=60,
+        )
+        assert compile_result.returncode == 0, compile_result.stderr
+
+        first = subprocess.Popen([str(executable), str(temp), "A"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        ready = temp / "A-sidecar-ready"
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert ready.exists(), "first worker did not publish its sidecar generation"
+
+        second = subprocess.run([str(executable), str(temp), "B"], capture_output=True, text=True, timeout=10)
+        first_stdout, first_stderr = first.communicate(timeout=10)
+        assert first.returncode == 0, first_stderr or first_stdout
+        assert second.returncode == 0, second.stderr or second.stdout
+
+        transcript = (temp / "conversation.html").read_text()
+        marker, relative_path = transcript.split(":", maxsplit=1)
+        assert marker == "B", "the later same-destination export must win after serialized publication"
+        assert (temp / relative_path).is_file(), "the completed transcript must retain the sidecar generation it references"
 
 
 def test_message_pdf_export_is_registered_and_uses_native_pdf_writer(root: Path) -> None:
