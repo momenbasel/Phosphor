@@ -28,6 +28,18 @@
 
 Phosphor gives you complete control over your iPhone, iPad, and iPod touch without proprietary software, iCloud lock-in, or subscriptions. Built natively with SwiftUI and powered by [pymobiledevice3](https://github.com/doronz88/pymobiledevice3) with [libimobiledevice](https://libimobiledevice.org/) as fallback. Supports iOS 17-26+.
 
+## Recent highlights
+
+The current release includes several recent improvements from merged pull requests:
+
+- **PDF message exports** that preserve the conversational layout, inline replies, and iMessage context ([#42](https://github.com/momenbasel/Phosphor/pull/42)).
+- **Finder Wi-Fi sync controls** from the device view, so a paired USB device can be prepared for wireless use without leaving Phosphor ([#43](https://github.com/momenbasel/Phosphor/pull/43)).
+- **A Readiness Center** that explains missing dependencies and backup recovery steps instead of leaving users with opaque failures ([#34](https://github.com/momenbasel/Phosphor/pull/34)).
+- **Native encrypted-backup browsing**, including a password prompt, macOS Keychain option, and AES/PBKDF2-based decryption without a Python decryptor.
+- **Safer, faster device operations**: lower-overhead polling, correct restore source/target handling, preserved timeout failures, and contained app-data extraction ([#47](https://github.com/momenbasel/Phosphor/pull/47), [#48](https://github.com/momenbasel/Phosphor/pull/48), [#49](https://github.com/momenbasel/Phosphor/pull/49), [#50](https://github.com/momenbasel/Phosphor/pull/50)).
+
+> **Note:** The [active development PRs](#active-development) section below is intentionally separate from the shipped feature list. Open pull requests are not release promises and may overlap or change during review.
+
 ---
 
 ## Why Phosphor?
@@ -40,7 +52,7 @@ Apple's Finder integration is all-or-nothing. Proprietary tools like iMazing cos
 | Incremental backup | No | Yes | Yes |
 | Browse backup contents | No | Yes | Yes |
 | Selective file restore | No | Yes | Yes |
-| Export iMessages to CSV/HTML | No | Yes | Yes |
+| Export iMessages to CSV/HTML/PDF | No | Yes | Yes |
 | Export WhatsApp messages | No | Yes | Yes |
 | Photo extraction (no iCloud) | No | Yes | Yes |
 | App data extraction | No | Yes | Yes |
@@ -70,6 +82,7 @@ Apple's Finder integration is all-or-nothing. Proprietary tools like iMazing cos
 - Automatic detection of connected iOS devices via USB
 - Device info: model, iOS version, serial, UDID, IMEI, Wi-Fi/Bluetooth MAC
 - Pair/unpair devices
+- Enable Finder Wi-Fi sync for a trusted USB-connected device
 - Restart, shutdown, sleep commands
 - Take device screenshots
 
@@ -87,9 +100,10 @@ Apple's Finder integration is all-or-nothing. Proprietary tools like iMazing cos
 - Browse all iMessage and SMS conversations from backups
 - View messages in a native chat-bubble interface
 - Search across all messages
-- Export conversations to **CSV**, **HTML**, **Plain Text**, or **JSON**
+- Export conversations to **CSV**, **HTML**, **Plain Text**, **JSON**, or **PDF**
 - Export all conversations at once
 - HTML export styled like native iMessage (blue/gray bubbles)
+- PDF exports keep a readable conversation layout, reactions, and inline-reply context
 
 ### Photos & Videos
 - Browse Camera Roll from backup without restoring
@@ -131,6 +145,7 @@ Apple's Finder integration is all-or-nothing. Proprietary tools like iMazing cos
 - Extract all Watch-related data from backup
 
 ### Diagnostics
+- Readiness Center for dependency checks, backup recovery guidance, and redacted diagnostics
 - Battery: current charge, charging status, health percentage, design vs. actual capacity (mAh), cycle count, temperature
 - Storage: total capacity, usage breakdown (Apps, Photos, Media, Other), available space
 - Visual storage bar similar to macOS About This Mac
@@ -240,6 +255,25 @@ The `Manifest.db` contains a `Files` table with columns:
 - `flags` - 1=file, 2=directory, 4=symlink
 
 Phosphor parses this to provide file-system-like browsing without modifying the backup.
+
+## Active development
+
+The following pull requests are open at the time this README was updated. They describe work under review rather than functionality guaranteed in the latest release. Some changes intentionally overlap; each PR should be reviewed and merged on its own merits.
+
+| Area | Pull request | What it proposes |
+|---|---|---|
+| Updates | [#53](https://github.com/momenbasel/Phosphor/pull/53) | A secure built-in update checker. |
+| Operation safety | [#54](https://github.com/momenbasel/Phosphor/pull/54) | Prevent overlapping backup and restore operations. |
+| Backup browsing | [#55](https://github.com/momenbasel/Phosphor/pull/55) | Home-screen snapshot view, asynchronous backup browsing, and file previews. |
+| Localization | [#56](https://github.com/momenbasel/Phosphor/pull/56) | Package and load Simplified Chinese localization strings. |
+| Backup visibility / platform support | [#57](https://github.com/momenbasel/Phosphor/pull/57) | App-wide backup status and iOS 27 support. |
+| Message exports | [#58](https://github.com/momenbasel/Phosphor/pull/58) | Improved message exports and attachment preservation. |
+| Background reliability | [#59](https://github.com/momenbasel/Phosphor/pull/59) | More reliable background backup behavior. |
+| Multiple devices | [#60](https://github.com/momenbasel/Phosphor/pull/60) | Safe concurrent multi-device backups. |
+| Backup locations | [#61](https://github.com/momenbasel/Phosphor/pull/61) | Network-aware backup locations. |
+| Wi-Fi discovery | [#62](https://github.com/momenbasel/Phosphor/pull/62) | Stabilized Wi-Fi device discovery. |
+| Reliability hardening | [#63](https://github.com/momenbasel/Phosphor/pull/63) | Safer destructive operations and process cleanup. |
+| Export / responsiveness | [#65](https://github.com/momenbasel/Phosphor/pull/65) | Atomic message export publication, persistent export and extraction controls, cancellable background work, and streamed MBOX attachments. |
 
 ## Roadmap
 
