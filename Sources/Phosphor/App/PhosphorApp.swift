@@ -36,6 +36,7 @@ struct PhosphorApp: App {
     @NSApplicationDelegateAdaptor(PhosphorAppDelegate.self) private var appDelegate
     @StateObject private var deviceVM = DeviceViewModel()
     @StateObject private var backupVM = BackupViewModel()
+    @StateObject private var backupOperations = BackupOperationCoordinator.shared
     @StateObject private var messageVM = MessageViewModel()
     @StateObject private var scheduler = BackupScheduler()
     @AppStorage("phosphor.hasCompletedOnboarding") private var hasCompletedOnboarding = false
@@ -77,7 +78,7 @@ struct PhosphorApp: App {
                 Button("Backup Now") {
                     startBackupNow()
                 }
-                .disabled(deviceVM.selectedDevice == nil || backupVM.isCreating)
+                .disabled(deviceVM.selectedDevice == nil || backupOperations.isRunning)
 
                 Button("Open Backup Folder") {
                     openBackupFolder()
@@ -137,7 +138,7 @@ struct PhosphorApp: App {
                     startBackupNow()
                 }
                 .keyboardShortcut("b", modifiers: .command)
-                .disabled(deviceVM.selectedDevice == nil || backupVM.isCreating)
+                .disabled(deviceVM.selectedDevice == nil || backupOperations.isRunning)
 
                 Button("Open Backup Folder") {
                     openBackupFolder()
@@ -163,7 +164,7 @@ struct PhosphorApp: App {
     }
 
     private func startBackupNow() {
-        guard let device = deviceVM.selectedDevice, !backupVM.isCreating else { return }
+        guard let device = deviceVM.selectedDevice, !backupOperations.isRunning else { return }
         if device.connectionType == .wifi && !BackupManager.hasExistingBackup(for: device.id) {
             guard confirmFirstFullWiFiBackup(for: device) else { return }
         }
