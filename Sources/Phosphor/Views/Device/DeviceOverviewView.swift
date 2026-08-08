@@ -383,8 +383,8 @@ struct DeviceOverviewView: View {
                     Task { await deviceVM.takeScreenshot() }
                 }
                 ActionButton(
-                    icon: backupVM.isCreating ? "hourglass" : backupActionIcon(for: device),
-                    label: backupVM.isCreating ? "Backing Up..." : backupActionLabel(for: device),
+                    icon: backupVM.isBackupActive(for: device.id) ? "hourglass" : backupActionIcon(for: device),
+                    label: backupVM.isBackupActive(for: device.id) ? "Backing Up..." : backupActionLabel(for: device),
                     color: .brandAccent
                 ) {
                     startBackup(for: device)

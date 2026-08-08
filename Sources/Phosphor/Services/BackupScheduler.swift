@@ -193,7 +193,6 @@ final class BackupScheduler: ObservableObject {
             guard let self else { return }
             await self.run(
                 schedule: dueSchedule,
-                advanceAfterDiscoveryFailure: true,
                 requiresActiveMonitoring: true,
                 runID: runID
             )
@@ -205,11 +204,10 @@ final class BackupScheduler: ObservableObject {
         scheduledCheckTask?.cancel()
         scheduledCheckTask = nil
         scheduledRunTasks.values.forEach { $0.cancel() }
-        scheduledRunTasks.removeAll()
-        scheduledRunSchedules.removeAll()
-        scheduledRunIDs.removeAll()
-        scheduledRunOwnership.removeAll()
-        isRunningScheduledBackup = false
+        // Keep task/run ownership until each cancelled queue request reaches a
+        // terminal state. Releasing it here can let a replacement schedule join
+        // the stale per-device request before its cancellation handler runs.
+        isRunningScheduledBackup = !scheduledRunOwnership.isEmpty
     }
 
     private func cancelInvalidScheduledWork() {
@@ -217,10 +215,7 @@ final class BackupScheduler: ObservableObject {
             isScheduleCurrent(scheduledRun, requiresActiveMonitoring: true) ? nil : scheduleIdentity
         }
         for scheduleIdentity in invalidScheduleIdentities {
-            guard let runID = scheduledRunIDs[scheduleIdentity] else { continue }
             scheduledRunTasks[scheduleIdentity]?.cancel()
-            finishScheduledRunTask(identity: scheduleIdentity, runID: runID)
-            finishScheduledBackupRun(identity: scheduleIdentity, runID: runID)
         }
         isRunningScheduledBackup = !scheduledRunOwnership.isEmpty
     }
@@ -294,7 +289,6 @@ final class BackupScheduler: ObservableObject {
         guard scheduledRunOwnership.claim(identity: scheduleIdentity, runID: runID) else { return }
         await run(
             schedule: schedule,
-            advanceAfterDiscoveryFailure: false,
             requiresActiveMonitoring: false,
             runID: runID
         )
@@ -302,7 +296,6 @@ final class BackupScheduler: ObservableObject {
 
     private func run(
         schedule runSchedule: Schedule,
-        advanceAfterDiscoveryFailure: Bool,
         requiresActiveMonitoring: Bool,
         runID: UUID
     ) async {
@@ -328,13 +321,12 @@ final class BackupScheduler: ObservableObject {
                 requiresActiveMonitoring: requiresActiveMonitoring,
                 runID: runID
             ) else { return }
-            updated.lastResult = failure
-            if advanceAfterDiscoveryFailure {
-                updated.lastRunDate = Date()
-                updated.nextRunDate = nextRunDate(for: updated)
-            }
+            // Keep a missed target due. The monitor will retry on its next tick
+            // instead of skipping a Wi-Fi device until the next daily interval
+            // after one transient discovery miss.
+            updated.lastResult = "Waiting to retry: \(failure)"
             storeSchedule(updated, replacingTargetUDID: runSchedule.targetUDID)
-            addLog(failure, success: false)
+            addLog("Waiting to retry: \(failure)", success: false)
             return
         }
         await runScheduledBackup(
@@ -447,35 +439,10 @@ final class BackupScheduler: ObservableObject {
             ? pyEntries.filter { $0.connectionType != "USB" }
             : pyEntries
 
-        // Check specific target first.
-        if let target = runSchedule.targetUDID {
-            if let entry = eligiblePyEntries.first(where: { $0.udid == target }) {
-                return (TargetDevice(udid: target, preferNetwork: entry.connectionType != "USB"), nil)
-            }
-
-            if runSchedule.wifiOnly {
-                let networkDevices = await PyMobileDevice.listNetworkDevices()
-                if networkDevices.contains(target) { return (TargetDevice(udid: target, preferNetwork: true), nil) }
-            }
-
-            // Fallback: libimobiledevice. Use the network-only query when the schedule
-            // explicitly requests Wi-Fi backups so USB devices do not accidentally match.
-            let fallbackArgs = runSchedule.wifiOnly ? ["-n"] : ["-l"]
-            let result = await Shell.runAsync("idevice_id", arguments: fallbackArgs)
-            if result.succeeded {
-                let devices = result.output.components(separatedBy: "\n").filter { !$0.isEmpty }
-                if devices.contains(target) { return (TargetDevice(udid: target, preferNetwork: runSchedule.wifiOnly), nil) }
-            }
-            let failure = runSchedule.wifiOnly
-                ? "The scheduled device is not available over Wi-Fi"
-                : "The scheduled device is not connected"
-            return (nil, failure)
-        }
-
-        // Legacy schedules may not have a target yet. Preserve the convenient
-        // single-device behavior, but collect every applicable backend first so
-        // a partial primary result cannot hide a second phone or tablet that is
-        // visible only through a fallback.
+        // Collect every applicable backend before resolving. This both keeps
+        // legacy nil-target schedules fail-closed and lets an exact any-transport
+        // target prefer a USB route found by a fallback over a network-only
+        // observation from another backend.
         var discoveredCandidates = eligiblePyEntries.map {
             ScheduledBackupTargetResolver.Candidate(
                 udid: $0.udid,
@@ -490,15 +457,7 @@ final class BackupScheduler: ObservableObject {
             })
         }
 
-        // Fallback: libimobiledevice.
-        let fallbackArgs = runSchedule.wifiOnly ? ["-n"] : ["-l"]
-        let result = await Shell.runAsync("idevice_id", arguments: fallbackArgs)
-        if result.succeeded {
-            let devices = result.output.components(separatedBy: "\n").filter { !$0.isEmpty }
-            discoveredCandidates.append(contentsOf: devices.map {
-                ScheduledBackupTargetResolver.Candidate(udid: $0, preferNetwork: runSchedule.wifiOnly)
-            })
-        }
+        discoveredCandidates.append(contentsOf: await libimobiledeviceCandidates(wifiOnly: runSchedule.wifiOnly))
 
         switch resolveTarget(from: discoveredCandidates, targetUDID: runSchedule.targetUDID) {
         case .target(let target):
@@ -516,6 +475,35 @@ final class BackupScheduler: ObservableObject {
             ? "The scheduled device is not available over Wi-Fi"
             : "The scheduled device is not connected"
         return (nil, failure)
+    }
+
+    private func libimobiledeviceCandidates(
+        wifiOnly: Bool
+    ) async -> [ScheduledBackupTargetResolver.Candidate] {
+        if wifiOnly {
+            let network = await Shell.runAsync("idevice_id", arguments: ["-n"], timeout: 5)
+            guard network.succeeded else { return [] }
+            return network.output.components(separatedBy: "\n")
+                .filter { !$0.isEmpty }
+                .map { ScheduledBackupTargetResolver.Candidate(udid: $0, preferNetwork: true) }
+        }
+
+        async let usbResult = Shell.runAsync("idevice_id", arguments: ["-l"], timeout: 5)
+        async let networkResult = Shell.runAsync("idevice_id", arguments: ["-n"], timeout: 5)
+        let usb = await usbResult
+        let network = await networkResult
+        var candidates: [ScheduledBackupTargetResolver.Candidate] = []
+        if usb.succeeded {
+            candidates += usb.output.components(separatedBy: "\n")
+                .filter { !$0.isEmpty }
+                .map { ScheduledBackupTargetResolver.Candidate(udid: $0, preferNetwork: false) }
+        }
+        if network.succeeded {
+            candidates += network.output.components(separatedBy: "\n")
+                .filter { !$0.isEmpty }
+                .map { ScheduledBackupTargetResolver.Candidate(udid: $0, preferNetwork: true) }
+        }
+        return candidates
     }
 
     private func resolveTarget(

@@ -180,7 +180,9 @@ def test_wifi_schedules_use_network_discovery_and_network_backup_flag(root: Path
     scheduler = read(root, "Sources/Phosphor/Services/BackupScheduler.swift")
     assert_contains(scheduler, "pyEntries.filter { $0.connectionType != \"USB\" }", "Wi-Fi-only schedules should filter out USB pymobiledevice entries")
     assert_contains(scheduler, "PyMobileDevice.listNetworkDevices()", "Wi-Fi-only schedules should probe network devices explicitly")
-    assert_contains(scheduler, 'let fallbackArgs = runSchedule.wifiOnly ? ["-n"] : ["-l"]', "Wi-Fi-only fallback should use idevice_id -n")
+    assert_contains(scheduler, "libimobiledeviceCandidates(wifiOnly:", "scheduled fallback should classify both USB and network candidates")
+    assert_contains(scheduler, 'arguments: ["-n"], timeout: 5', "scheduled fallback should query timeout-bounded network discovery")
+    assert_contains(scheduler, 'arguments: ["-l"], timeout: 5', "any-transport schedules should still prefer an available USB route")
     assert_contains(scheduler, "createBackup(udid: udid, incremental: incremental, preferNetwork: preferNetwork)", "all scheduled backups should preserve incremental and network preferences through the shared queue")
     assert_contains(scheduler, "runSchedule.incrementalOnly && BackupManager.hasExistingBackup(for: udid)", "Scheduled incremental mode should run the required first full backup when metadata is missing")
     assert_contains(scheduler, "running required first full backup", "Scheduled first-full fallback should be logged clearly")
@@ -265,15 +267,14 @@ require(Resolver.resolve(candidates: [phone, phoneUSB], targetUDID: nil) == .tar
 
 def test_legacy_schedule_resolves_the_complete_discovery_union(root: Path) -> None:
     scheduler = read(root, "Sources/Phosphor/Services/BackupScheduler.swift")
-    no_target = scheduler.split("// Legacy schedules may not have a target yet.", 1)[1]
-    discovery = no_target.split("// MARK: - Scheduling Math", 1)[0]
+    discovery = "var discoveredCandidates" + scheduler.split("var discoveredCandidates", 1)[1].split("// MARK: - Scheduling Math", 1)[0]
 
     assert_contains(discovery, "var discoveredCandidates", "legacy target discovery should accumulate candidates across backends")
     assert_contains(discovery, "discoveredCandidates.append(contentsOf:", "every applicable discovery backend should contribute to one candidate union")
     assert_contains(discovery, "resolveTarget(from: discoveredCandidates, targetUDID: runSchedule.targetUDID)", "legacy target resolution must happen once against the complete candidate union")
     resolve_call = "resolveTarget(from: discoveredCandidates, targetUDID: runSchedule.targetUDID)"
     assert discovery.rindex(resolve_call) > discovery.index("PyMobileDevice.listNetworkDevices()"), "network discovery must finish before resolving a legacy target"
-    assert discovery.rindex(resolve_call) > discovery.index('Shell.runAsync("idevice_id"'), "libimobiledevice fallback must finish before resolving a legacy target"
+    assert discovery.rindex(resolve_call) > discovery.index("await libimobiledeviceCandidates"), "libimobiledevice fallback must finish before resolving a legacy target"
 
     # A single primary candidate plus a distinct fallback candidate is ambiguous.
     # This is the cross-backend scenario that previously selected the primary early.
@@ -289,6 +290,17 @@ precondition(
         targetUDID: nil
     ) == .selectionRequired
 )
+
+let single = ScheduledBackupTargetResolver.resolve(candidates: [
+    .init(udid: "phone-a", preferNetwork: true)
+], targetUDID: nil)
+precondition(single == .target(.init(udid: "phone-a", preferNetwork: true)))
+
+let usbPreferred = ScheduledBackupTargetResolver.resolve(candidates: [
+    .init(udid: "phone-a", preferNetwork: true),
+    .init(udid: "phone-a", preferNetwork: false)
+], targetUDID: "phone-a")
+precondition(usbPreferred == .target(.init(udid: "phone-a", preferNetwork: false)))
 '''
     with tempfile.TemporaryDirectory(prefix="phosphor-schedule-union-") as temp_dir:
         temp = Path(temp_dir)
@@ -358,11 +370,63 @@ def test_backup_view_model_tracks_and_cancels_jobs_per_device(root: Path) -> Non
     assert_contains(view_model, "manager.cancelBackup()", "cancelling one device must not terminate another device's process")
     assert_contains(view_model, "backupJobTasks[udid]?.cancel()", "a promoted job must remain cancellable before its BackupManager exists")
     assert_contains(view_model, "backupJobTasks[nextUDID] = task", "promotion must register task ownership before the job can start")
+    assert_contains(view_model, "withTaskCancellationHandler", "cancelling a scheduled task must propagate into its queue request")
+    assert_contains(view_model, "BackupRequestTracker", "deduplicated callers need request ownership before cancellation can affect a shared job")
     assert_contains(view_model, "let encrypted: Bool", "queued backup requests must retain encryption intent")
     assert_contains(view_model, "func activity(for udid: String)", "device views need device-scoped progress")
     create = view_model.split("func createBackup(udid: String", 1)[1].split("private func", 1)[0]
     assert "guard !isCreating" not in create, "a global creation guard would block a second device"
     assert_contains(create, "jobQueue.enqueue(udid: udid)", "backup requests should enter the bounded per-device queue")
+
+
+def test_backup_request_cancellation_respects_deduplicated_callers(root: Path) -> None:
+    tracker_source = root / "Sources/Phosphor/Utilities/BackupRequestTracker.swift"
+    assert tracker_source.exists(), "queue cancellation needs a behaviorally testable request-ownership model"
+    probe = r'''
+import Foundation
+
+@main
+struct BackupRequestTrackerProbe {
+    static func main() {
+        var tracker = BackupRequestTracker()
+        let owner = UUID()
+        let waiter = UUID()
+
+        tracker.registerOwner(owner, udid: "phone")
+        precondition(tracker.cancel(owner, udid: "phone") == .cancelJob)
+        tracker.finish(udid: "phone")
+
+        tracker.registerOwner(owner, udid: "phone")
+        tracker.registerWaiter(waiter, udid: "phone")
+        precondition(tracker.cancel(owner, udid: "phone") == .detachRequest)
+        precondition(tracker.cancel(waiter, udid: "phone") == .cancelJob)
+        tracker.finish(udid: "phone")
+
+        tracker.registerOwner(owner, udid: "phone")
+        tracker.registerWaiter(waiter, udid: "phone")
+        precondition(tracker.cancel(waiter, udid: "phone") == .detachRequest)
+        precondition(tracker.cancel(owner, udid: "phone") == .cancelJob)
+        precondition(tracker.cancel(UUID(), udid: "phone") == .notFound)
+        print("PASS")
+    }
+}
+'''
+    with tempfile.TemporaryDirectory(prefix="phosphor-backup-request-tracker-") as temp_dir:
+        temp = Path(temp_dir)
+        probe_path = temp / "Probe.swift"
+        binary_path = temp / "backup-request-tracker-probe"
+        probe_path.write_text(probe)
+        result = subprocess.run(
+            ["swiftc", "-parse-as-library", str(tracker_source), str(probe_path), "-o", str(binary_path)],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert result.returncode == 0, result.stderr
+        result = subprocess.run([str(binary_path)], capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "PASS"
 
 
 def test_backup_surfaces_show_stable_device_identity(root: Path) -> None:
@@ -497,6 +561,7 @@ def test_multi_device_backup_activity_is_visible_and_device_scoped(root: Path) -
     assert_contains(backup_list, "deviceIdentity(for: activity.udid)", "same-name devices need a visible UDID discriminator while backing up")
     assert_contains(backup_list, "backupVM.cancelBackup(udid: activity.udid)", "each activity row needs its own cancel action")
     assert_contains(overview, "backupVM.activity(for: device.id)", "a device card must not show another device's progress")
+    assert_contains(overview, 'backupVM.isBackupActive(for: device.id) ? "Backing Up..."', "a device card must not show another device's global backup label")
     assert_contains(overview, ".disabled(backupVM.isBackupActive(for: device.id))", "only the busy device's backup button should be disabled")
     assert "backupVM.isCreating" not in app.split('Button("New Backup")', 1)[1].split('Button("Refresh Backups")', 1)[0], "Cmd-B should remain available when another device is backing up"
 
@@ -571,7 +636,8 @@ def test_backup_failures_have_recovery_actions_and_collapsed_details(root: Path)
 
     vm = read(root, "Sources/Phosphor/ViewModels/BackupViewModel.swift")
     assert_contains(vm, "backupIssue", "BackupViewModel should surface structured backup issues separately from success alerts")
-    assert_contains(vm, "retryLastBackup", "BackupViewModel should support recommended retry action")
+    assert_contains(vm, "retryBackup(for issue", "BackupViewModel should retry the device captured by the failed issue")
+    assert_contains(vm, "failedBackupRequests[failure.id] = request", "concurrent failures must retain each device's exact transport/encryption request")
     assert_contains(vm, "deleteIncompleteBackupAndRunFull", "BackupViewModel should implement incomplete-backup recovery")
     assert_contains(vm, "runFullBackup(for issue", "Recovery actions should use the failed issue context, not the currently selected device")
     assert_contains(vm, "expectedPath: path", "Recovery deletion should use the exact path from the failed issue")
@@ -699,6 +765,7 @@ def test_clearing_a_schedule_target_persists_a_disabled_clear_state(root: Path) 
 
 def test_scheduled_work_is_tracked_cancelled_and_revalidated_before_starting_backup(root: Path) -> None:
     scheduler = read(root, "Sources/Phosphor/Services/BackupScheduler.swift")
+    view_model = read(root, "Sources/Phosphor/ViewModels/BackupViewModel.swift")
 
     assert_contains(scheduler, "private var scheduledCheckTask: Task<Void, Never>?", "scheduled monitor checks need a retained task handle")
     assert_contains(scheduler, "private var scheduledRunTasks: [String: Task<Void, Never>]", "each delayed scheduled discovery/run needs a retained task handle")
@@ -706,6 +773,12 @@ def test_scheduled_work_is_tracked_cancelled_and_revalidated_before_starting_bac
     assert_contains(scheduler, "scheduledRunTasks.values.forEach { $0.cancel() }", "stopping monitoring must cancel delayed per-device scheduled work")
     assert_contains(scheduler, "guard !Task.isCancelled", "scheduled work must observe cancellation after suspension")
     assert_contains(scheduler, "isScheduledRunStillValid", "scheduled work must revalidate persisted state after async discovery")
+    assert_contains(view_model, "cancelBackupRequest(udid: udid, requestID: request.id)", "task cancellation must remove the exact scheduled queue request")
+    assert_contains(view_model, "requestTracker.cancel(requestID", "scheduled cancellation must not bluntly cancel a manual caller sharing the same UDID")
+    cancel_work = scheduler.split("private func cancelScheduledWork", 1)[1].split("private func cancelInvalidScheduledWork", 1)[0]
+    invalid_work = scheduler.split("private func cancelInvalidScheduledWork", 1)[1].split("private func finishScheduledRunTask", 1)[0]
+    assert_not_contains(cancel_work, "scheduledRunOwnership.removeAll()", "stop-monitoring cancellation must retain ownership until queue cancellation is terminal")
+    assert_not_contains(invalid_work, "finishScheduledBackupRun", "retargeting must not release run ownership before the exact queue request is cancelled")
 
     run_body = scheduler.split("private func run(", 1)[1].split("private func isScheduledRunStillValid", 1)[0]
     discovery_index = run_body.index("findTargetDevice(for: runSchedule)")
@@ -722,6 +795,17 @@ def test_scheduled_work_is_tracked_cancelled_and_revalidated_before_starting_bac
     assert not may_start_after_discovery(monitoring=True, enabled=False, stored_target="phone", run_target="phone", cancelled=True)
     assert not may_start_after_discovery(monitoring=True, enabled=True, stored_target="tablet", run_target="phone", cancelled=True)
     assert may_start_after_discovery(monitoring=True, enabled=True, stored_target="phone", run_target="phone", cancelled=False)
+
+
+def test_due_schedule_retries_after_transient_device_discovery_miss(root: Path) -> None:
+    scheduler = read(root, "Sources/Phosphor/Services/BackupScheduler.swift")
+    run_body = scheduler.split("private func run(", 1)[1].split("private func isScheduledRunStillValid", 1)[0]
+    missing_target = run_body.split("guard let target = discovery.target else", 1)[1].split("await runScheduledBackup", 1)[0]
+
+    assert_contains(missing_target, "Waiting to retry:", "a transient Wi-Fi miss should remain visibly pending")
+    assert_not_contains(missing_target, "lastRunDate =", "a discovery miss is not a completed scheduled attempt")
+    assert_not_contains(missing_target, "nextRunDate =", "a discovery miss must remain due for the next monitor tick")
+    assert_not_contains(scheduler, "advanceAfterDiscoveryFailure", "automatic and Run Now discovery misses should share retry-safe semantics")
 
 
 def test_schedule_completion_requires_current_persisted_schedule_and_run_ownership(root: Path) -> None:

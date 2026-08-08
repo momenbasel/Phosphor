@@ -297,6 +297,9 @@ def test_restore_captures_target_and_uses_backup_parent_with_source_udid(root: P
 
     clone = read(root, "Sources/Phosphor/Services/DeviceCloneService.swift")
     assert "backup: latestBackup" in clone and "targetUDID: destinationUDID" in clone, "clone restore must keep source backup and destination device distinct"
+    assert "previousFingerprints" in clone, "clone must capture a pre-backup snapshot before choosing restore input"
+    assert "freshSourceBackups" in clone, "clone must reject unchanged stale backups even when their directory is canonical"
+    assert "backupFreshnessDate" in clone, "clone must select the freshest verified changed backup when multiple source snapshots exist"
 
 
 def test_cancellation_token_model_prevents_cancelled_primary_from_starting_fallback(root: Path) -> None:

@@ -350,7 +350,7 @@ struct BackupListView: View {
             backupVM.backupIssue = nil
             NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
         case .retry:
-            Task { await backupVM.retryLastBackup() }
+            Task { await backupVM.retryBackup(for: issue) }
         case .none:
             backupVM.backupIssue = nil
         }
