@@ -849,6 +849,7 @@ final class MessageExporter {
             return PDFTranscriptWriter.Entry(
                 title: msg.senderLabel,
                 subtitle: msg.formattedDate,
+                timestamp: msg.date,
                 body: body,
                 isFromMe: msg.isFromMe,
                 reactions: reactionBadges,

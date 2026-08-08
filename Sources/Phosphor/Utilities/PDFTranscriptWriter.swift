@@ -19,6 +19,7 @@ enum PDFTranscriptWriter {
     struct Entry {
         let title: String
         let subtitle: String
+        var timestamp: Date = .distantPast
         let body: String
         let isFromMe: Bool
         var reactions: [String] = []
@@ -59,12 +60,14 @@ enum PDFTranscriptWriter {
         var y: CGFloat = margin
         var pageNumber = 0
         let showIncomingSenderLabels = Set(entries.filter { !$0.isFromMe && !$0.title.isEmpty }.map { $0.title }).count > 1
-        var messagesSinceTimestamp = 99
+        let calendar = Calendar.current
+        var previousMessageTimestamp: Date?
 
         struct BubbleCard {
             let text: NSAttributedString
             let fill: CGColor
             let accent: CGColor?
+            let url: URL?
             let image: CGImage?
             let imageHeight: CGFloat
             let height: CGFloat
@@ -103,18 +106,22 @@ enum PDFTranscriptWriter {
             y += metaHeight + 18
         }
 
-        func drawTimestampIfNeeded(_ value: String) {
-            guard !value.isEmpty else { return }
-            // Real Messages uses occasional centered time separators, not a log
-            // timestamp above every bubble. Keep the first timestamp, then space
-            // later separators out so the page reads like a conversation.
-            guard messagesSinceTimestamp >= 8 else { return }
-            let meta = attributed(value, font: .systemFont(ofSize: 8.5), color: secondaryTextColor, alignment: .center)
+        func drawTimestampIfNeeded(for entry: Entry) {
+            defer { previousMessageTimestamp = entry.timestamp }
+            guard !entry.subtitle.isEmpty else { return }
+            let shouldDraw: Bool
+            if let previousMessageTimestamp {
+                shouldDraw = !calendar.isDate(entry.timestamp, inSameDayAs: previousMessageTimestamp)
+                    || entry.timestamp.timeIntervalSince(previousMessageTimestamp) >= timestampSeparatorGap
+            } else {
+                shouldDraw = true
+            }
+            guard shouldDraw else { return }
+            let meta = attributed(entry.subtitle, font: .systemFont(ofSize: 8.5), color: secondaryTextColor, alignment: .center)
             let metaHeight = measuredHeight(meta, width: contentWidth)
             ensureSpace(metaHeight + 18)
             draw(meta, in: CGRect(x: margin, y: y, width: contentWidth, height: metaHeight), context: context, pageHeight: pageHeight)
             y += metaHeight + 7
-            messagesSinceTimestamp = 0
         }
 
         func drawRoundedRect(x: CGFloat, topY: CGFloat, width: CGFloat, height: CGFloat, radius: CGFloat, fill: CGColor) {
@@ -125,13 +132,14 @@ enum PDFTranscriptWriter {
             context.fillPath()
         }
 
-        func makeCard(_ raw: String, width: CGFloat, isFromMe: Bool, accent: CGColor? = nil) -> BubbleCard {
+        func makeCard(_ raw: String, width: CGFloat, isFromMe: Bool, accent: CGColor? = nil, url: URL? = nil) -> BubbleCard {
             let text = attributed(raw, font: .systemFont(ofSize: 9.5), color: isFromMe ? outgoingTextColor : primaryTextColor)
             let height = measuredHeight(text, width: width - 18) + 9
             return BubbleCard(
                 text: text,
                 fill: isFromMe ? outgoingInlineCardColor : incomingInlineCardColor,
                 accent: accent,
+                url: url,
                 image: nil,
                 imageHeight: 0,
                 height: height
@@ -147,6 +155,7 @@ enum PDFTranscriptWriter {
                     text: text,
                     fill: isFromMe ? outgoingInlineCardColor : incomingInlineCardColor,
                     accent: nil,
+                    url: nil,
                     image: nil,
                     imageHeight: 0,
                     height: captionHeight
@@ -160,6 +169,7 @@ enum PDFTranscriptWriter {
                 text: text,
                 fill: isFromMe ? outgoingInlineCardColor : incomingInlineCardColor,
                 accent: nil,
+                url: nil,
                 image: image,
                 imageHeight: imageHeight,
                 height: imageHeight + captionHeight + 4
@@ -171,8 +181,8 @@ enum PDFTranscriptWriter {
             if let inlineReply = entry.inlineReply, !inlineReply.isEmpty {
                 out.append(makeCard("↩︎ Inline reply: \(inlineReply)", width: width, isFromMe: entry.isFromMe, accent: entry.isFromMe ? outgoingTextColor.cgColor : replyAccentColor))
             }
-            if let link = entry.linkURL, !link.isEmpty {
-                out.append(makeCard("🔗 \(link)", width: width, isFromMe: entry.isFromMe))
+            if let link = entry.linkURL, let url = validHTTPURL(link) {
+                out.append(makeCard("🔗 \(link)", width: width, isFromMe: entry.isFromMe, url: url))
             }
             out.append(contentsOf: entry.attachments.map { makeAttachmentCard($0, width: width, isFromMe: entry.isFromMe) })
             return out
@@ -180,6 +190,12 @@ enum PDFTranscriptWriter {
 
         func drawCard(_ card: BubbleCard, x: CGFloat, topY: CGFloat, width: CGFloat) {
             drawRoundedRect(x: x, topY: topY, width: width, height: card.height, radius: 11, fill: card.fill)
+            if let url = card.url {
+                // CGContext uses PDF page coordinates (bottom-left origin), while
+                // rendering below accepts top-left coordinates.
+                let annotationRect = CGRect(x: x, y: pageHeight - topY - card.height, width: width, height: card.height)
+                context.setURL(url as CFURL, for: annotationRect)
+            }
             if let accent = card.accent {
                 context.setFillColor(accent)
                 context.fill(CGRect(x: x + 7, y: pageHeight - topY - card.height + 6, width: 2, height: max(4, card.height - 12)))
@@ -278,7 +294,7 @@ enum PDFTranscriptWriter {
         }
 
         func drawMessage(_ entry: Entry) throws {
-            drawTimestampIfNeeded(entry.subtitle)
+            drawTimestampIfNeeded(for: entry)
 
             if !entry.isFromMe, showIncomingSenderLabels, !entry.title.isEmpty {
                 let sender = attributed(entry.title, font: .systemFont(ofSize: 9, weight: .medium), color: secondaryTextColor)
@@ -341,7 +357,6 @@ enum PDFTranscriptWriter {
             } while offset < text.length
 
             drawStatus(entry.status, bubbleX: bubbleX, bubbleWidth: bubbleWidth, isFromMe: entry.isFromMe)
-            messagesSinceTimestamp += 1
             y += 6
         }
 
@@ -368,6 +383,17 @@ enum PDFTranscriptWriter {
     private static let reactionBadgeColor = NSColor.white.cgColor
     private static let reactionBadgeBorderColor = NSColor(calibratedWhite: 0.82, alpha: 1).cgColor
     private static let replyAccentColor = NSColor(calibratedWhite: 0.62, alpha: 1).cgColor
+    private static let timestampSeparatorGap: TimeInterval = 30 * 60
+
+    private static func validHTTPURL(_ raw: String) -> URL? {
+        guard let url = URL(string: raw),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              url.host?.isEmpty == false else {
+            return nil
+        }
+        return url
+    }
 
     /// Decode a bounded first-frame thumbnail instead of materializing a full-size
     /// backup-controlled image in memory. ImageIO also applies HEIC/JPEG orientation.
