@@ -398,8 +398,27 @@ struct BackupRequestTrackerProbe {
 
         tracker.registerOwner(owner, udid: "phone")
         tracker.registerWaiter(waiter, udid: "phone")
-        precondition(tracker.cancel(owner, udid: "phone") == .detachRequest)
+        var ownerCompletions: [String: UUID] = ["phone": owner]
+        var ownerResumeCount = 0
+        var jobCancelCount = 0
+        for _ in 0..<2 {
+            switch tracker.cancel(owner, udid: "phone") {
+            case .detachRequest:
+                if ownerCompletions["phone"] == owner {
+                    ownerCompletions.removeValue(forKey: "phone")
+                    ownerResumeCount += 1
+                }
+            case .cancelJob:
+                jobCancelCount += 1
+            case .notFound:
+                break
+            }
+        }
+        precondition(ownerResumeCount == 1, "a detached owner continuation must resume exactly once")
+        precondition(jobCancelCount == 0, "the shared job must continue while a waiter authorizes it")
         precondition(tracker.cancel(waiter, udid: "phone") == .cancelJob)
+        jobCancelCount += 1
+        precondition(jobCancelCount == 1)
         tracker.finish(udid: "phone")
 
         tracker.registerOwner(owner, udid: "phone")
@@ -775,6 +794,14 @@ def test_scheduled_work_is_tracked_cancelled_and_revalidated_before_starting_bac
     assert_contains(scheduler, "isScheduledRunStillValid", "scheduled work must revalidate persisted state after async discovery")
     assert_contains(view_model, "cancelBackupRequest(udid: udid, requestID: request.id)", "task cancellation must remove the exact scheduled queue request")
     assert_contains(view_model, "requestTracker.cancel(requestID", "scheduled cancellation must not bluntly cancel a manual caller sharing the same UDID")
+    started_owner = view_model.split("case .started:", 1)[1].split("} onCancel:", 1)[0]
+    continuation_index = started_owner.index("backupCompletionContinuations[udid] = continuation")
+    task_index = started_owner.index("let task = Task")
+    assert continuation_index < task_index, "the started owner must install its detachable completion before launching shared work"
+    assert_contains(started_owner, "backupJobTasks[udid] = task", "the independently running shared job must remain tracked for cancellation")
+    assert_not_contains(started_owner, "await runBackupJob(udid: udid)", "the started request must not remain structurally attached to a manual-backed shared job")
+    detach_path = view_model.split("case .detachRequest:", 1)[1].split("case .notFound:", 1)[0]
+    assert_contains(detach_path, "backupCompletionContinuations.removeValue(forKey: udid)?.resume()", "owner detachment must remove and resume its continuation exactly once")
     cancel_work = scheduler.split("private func cancelScheduledWork", 1)[1].split("private func cancelInvalidScheduledWork", 1)[0]
     invalid_work = scheduler.split("private func cancelInvalidScheduledWork", 1)[1].split("private func finishScheduledRunTask", 1)[0]
     assert_not_contains(cancel_work, "scheduledRunOwnership.removeAll()", "stop-monitoring cancellation must retain ownership until queue cancellation is terminal")

@@ -213,7 +213,21 @@ final class BackupViewModel: ObservableObject {
                     errorMessage: nil
                 )
                 refreshLegacyProgressState()
-                await runBackupJob(udid: udid)
+                await withCheckedContinuation { continuation in
+                    // Every caller owns a detachable completion path, including
+                    // the request that starts the shared job. Keep the physical
+                    // backup in its own task so cancelling this request can return
+                    // immediately when another coalesced caller still authorizes it.
+                    backupCompletionContinuations[udid] = continuation
+                    let task = Task { [weak self] in
+                        guard let self else { return }
+                        await self.runBackupJob(udid: udid)
+                    }
+                    backupJobTasks[udid] = task
+                    if Task.isCancelled {
+                        cancelBackupRequest(udid: udid, requestID: request.id)
+                    }
+                }
             }
         } onCancel: {
             Task { @MainActor [weak self] in
