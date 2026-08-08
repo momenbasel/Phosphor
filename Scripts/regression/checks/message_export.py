@@ -939,6 +939,12 @@ struct MessageExportBundleRaceProbe {
         let mode = CommandLine.arguments[2]
         let ready = URL(fileURLWithPath: CommandLine.arguments[3])
         let release = URL(fileURLWithPath: CommandLine.arguments[4])
+        let secondStarted = URL(fileURLWithPath: CommandLine.arguments[5])
+        let secondEnteredPopulate = URL(fileURLWithPath: CommandLine.arguments[6])
+
+        if mode == "run" {
+            try Data().write(to: secondStarted)
+        }
 
         let result = try MessageExportBundleWriter.write(in: parent, directoryName: "Conversation") { root in
             if mode == "hold" {
@@ -946,6 +952,8 @@ struct MessageExportBundleRaceProbe {
                 while !FileManager.default.fileExists(atPath: release.path) {
                     Thread.sleep(forTimeInterval: 0.01)
                 }
+            } else {
+                try Data().write(to: secondEnteredPopulate)
             }
             try Data(mode.utf8).write(to: root.appendingPathComponent("marker.txt"))
             return 1
@@ -971,8 +979,10 @@ struct MessageExportBundleRaceProbe {
         parent = temp / "exports"
         ready = temp / "ready"
         release = temp / "release"
+        second_started = temp / "second-started"
+        second_entered_populate = temp / "second-entered-populate"
         first = subprocess.Popen(
-            [str(executable), str(parent), "hold", str(ready), str(release)],
+            [str(executable), str(parent), "hold", str(ready), str(release), str(second_started), str(second_entered_populate)],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -984,16 +994,23 @@ struct MessageExportBundleRaceProbe {
             assert ready.exists(), "first PDF bundle did not reach its staged write"
 
             second = subprocess.Popen(
-                [str(executable), str(parent), "run", str(ready), str(release)],
+                [str(executable), str(parent), "run", str(ready), str(release), str(second_started), str(second_entered_populate)],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
             )
+            deadline = time.monotonic() + 5
+            while not second_started.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert second_started.exists(), "second PDF bundle process did not reach the writer"
+            time.sleep(0.25)
+            assert not second_entered_populate.exists(), "second PDF bundle entered name selection before the first export released its lock"
             release.write_text("go")
             first_out, first_err = first.communicate(timeout=10)
             second_out, second_err = second.communicate(timeout=10)
             assert first.returncode == 0, first_err
             assert second.returncode == 0, second_err
+            assert second_entered_populate.exists(), "second PDF bundle never populated after the first export released its lock"
             assert {first_out.strip(), second_out.strip()} == {"Conversation", "Conversation 2"}
             assert (parent / "Conversation" / "marker.txt").exists()
             assert (parent / "Conversation 2" / "marker.txt").exists()
