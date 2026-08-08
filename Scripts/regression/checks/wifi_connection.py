@@ -24,6 +24,43 @@ def test_pymobiledevice_usbmux_discovery_is_timeout_bounded(root: Path) -> None:
     )
 
 
+def test_usbmux_connection_type_does_not_invent_transport(root: Path) -> None:
+    source = root / "Sources/Phosphor/Utilities/UsbmuxConnectionType.swift"
+    pymobiledevice = (root / "Sources/Phosphor/Utilities/PyMobileDevice.swift").read_text()
+    probe = r'''
+import Foundation
+
+@main
+struct Probe {
+    static func main() {
+        precondition(UsbmuxConnectionType.normalize(nil, default: "Unknown") == "Unknown")
+        precondition(UsbmuxConnectionType.normalize("Unknown", default: "Unknown") == "Unknown")
+        precondition(UsbmuxConnectionType.normalize("USB", default: "Unknown") == "USB")
+        precondition(UsbmuxConnectionType.normalize("1", default: "Unknown") == "USB")
+        precondition(UsbmuxConnectionType.normalize("Network", default: "Unknown") == "Network")
+        precondition(UsbmuxConnectionType.normalize("Wi-Fi", default: "Unknown") == "Network")
+        precondition(UsbmuxConnectionType.normalize("2", default: "Unknown") == "Network")
+    }
+}
+'''
+    with tempfile.TemporaryDirectory() as tmp:
+        probe_path = Path(tmp) / "probe.swift"
+        binary_path = Path(tmp) / "probe"
+        probe_path.write_text(probe)
+        result = subprocess.run(
+            ["swiftc", "-parse-as-library", str(source), str(probe_path), "-o", str(binary_path)],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert result.returncode == 0, result.stderr
+        result = subprocess.run([str(binary_path)], capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, result.stderr
+
+    assert "UsbmuxConnectionType.normalize" in pymobiledevice
+
+
 def test_compatibility_cache_distinguishes_probe_failure_from_empty_scan(root: Path) -> None:
     source = root / "Sources/Phosphor/Utilities/AuthoritativeSnapshotCache.swift"
     probe = r'''
@@ -44,7 +81,14 @@ struct Probe {
 
         var ageBounded = AuthoritativeSnapshotCache<String>(maxStaleAge: 30, maxNonAuthoritativeMerges: 10)
         precondition(ageBounded.merge(current: [(id: "wifi-a", value: "A")], authoritative: true, now: start) == ["A"])
-        precondition(ageBounded.merge(current: [], authoritative: false, now: start.addingTimeInterval(31)).isEmpty)
+        precondition(ageBounded.retainedValues(now: start.addingTimeInterval(31)).isEmpty)
+
+        var skippedPolls = AuthoritativeSnapshotCache<String>(maxStaleAge: 30, maxNonAuthoritativeMerges: 1)
+        precondition(skippedPolls.merge(current: [(id: "wifi-a", value: "A")], authoritative: true, now: start) == ["A"])
+        for _ in 0..<100 {
+            precondition(skippedPolls.retainedValues(now: start.addingTimeInterval(10)) == ["A"])
+        }
+        precondition(skippedPolls.merge(current: [], authoritative: false, now: start.addingTimeInterval(20)) == ["A"])
     }
 }
 '''
@@ -115,6 +159,7 @@ def test_non_authoritative_fallback_cannot_fabricate_usb_transport(root: Path) -
     manager = (root / "Sources/Phosphor/Services/DeviceManager.swift").read_text()
 
     assert 'defaultConnectionType: "Unknown"' in pymobiledevice
+    assert "UsbmuxConnectionType.normalize" in pymobiledevice
     assert '$0.connectionType == "USB" || $0.connectionType == "Network"' in manager
     assert 'discoveredEntries.filter { $0.connectionType == "USB" }' in manager
     assert "retainedCompatibilityDeviceIDs.contains(entry.udid)" in manager
@@ -122,12 +167,11 @@ def test_non_authoritative_fallback_cannot_fabricate_usb_transport(root: Path) -
     assert "(!forceRefresh || compatibilityProbeFailed)" not in manager
     assert "current: []," in manager and "now: discoveryCompletedAt" in manager
     skipped_probe = manager.split("} else {\n            // Skipping an expensive probe", 1)[1].split("let visibleUDIDs", 1)[0]
-    assert "compatibilityOnlyDeviceCache.values" in skipped_probe
+    assert "compatibilityOnlyDeviceCache.retainedValues(now: scanStartedAt)" in skipped_probe
     assert "compatibilityOnlyDeviceCache.merge" not in skipped_probe, (
         "routine lightweight polls must not consume the stale-entry failure budget"
     )
     assert "compatibilityDiscoveryRetry.consecutiveFailures == 0" in manager
-
 
 def test_network_device_grace_cache_absorbs_one_missed_poll(root: Path) -> None:
     source = root / "Sources/Phosphor/Utilities/NetworkDeviceGraceCache.swift"

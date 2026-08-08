@@ -385,9 +385,10 @@ enum PyMobileDevice {
                         ?? entry["SerialNumber"] as? String else { continue }
                 let connType = (entry["ConnectionType"] as? String)
                     ?? (entry["Properties"] as? [String: Any])?["ConnectionType"] as? String
-                    ?? defaultConnectionType
-                let isUSB = connType.lowercased().contains("usb") || connType == "1"
-                let type = isUSB ? "USB" : "Network"
+                let type = UsbmuxConnectionType.normalize(
+                    connType,
+                    default: defaultConnectionType
+                )
 
                 if byUdid[udid] == nil { orderedUdids.append(udid) }
                 if byUdid[udid]?.connectionType != "USB" || type == "USB" {

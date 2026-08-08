@@ -132,7 +132,7 @@ final class DeviceManager: ObservableObject {
             // Skipping an expensive probe during its normal interval/backoff is
             // not another failed discovery. Do not consume the cache's failure
             // budget on every lightweight UI poll.
-            let retainedEntries = compatibilityOnlyDeviceCache.values
+            let retainedEntries = compatibilityOnlyDeviceCache.retainedValues(now: scanStartedAt)
             if compatibilityDiscoveryRetry.consecutiveFailures > 0 {
                 retainedCompatibilityDeviceIDs = Set(retainedEntries.map(\.udid))
                     .subtracting(lightweightScan.entries.map(\.udid))

@@ -24,6 +24,18 @@ struct AuthoritativeSnapshotCache<Value> {
         orderedIDs.compactMap { valuesByID[$0] }
     }
 
+    /// Returns the retained snapshot without counting a skipped routine poll as
+    /// another failed discovery. Expired entries are removed immediately even
+    /// while the expensive compatibility probe is in backoff.
+    mutating func retainedValues(now: Date = Date()) -> [Value] {
+        guard let lastAuthoritativeSnapshotAt,
+              now.timeIntervalSince(lastAuthoritativeSnapshotAt) <= maxStaleAge else {
+            reset()
+            return []
+        }
+        return values
+    }
+
     mutating func merge(
         current: [(id: String, value: Value)],
         authoritative: Bool,
