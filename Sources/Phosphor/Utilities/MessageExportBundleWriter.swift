@@ -28,18 +28,48 @@ enum MessageExportBundleWriter {
                 ".\(finalDirectory.lastPathComponent).staging-\(UUID().uuidString)",
                 isDirectory: true
             )
-            var stagingExists = true
-            defer {
-                if stagingExists {
-                    try? fileManager.removeItem(at: stagingDirectory)
-                }
-            }
-
             try fileManager.createDirectory(at: stagingDirectory, withIntermediateDirectories: true)
-            let count = try populate(stagingDirectory)
-            try fileManager.moveItem(at: stagingDirectory, to: finalDirectory)
-            stagingExists = false
-            return Result(count: count, directory: finalDirectory)
+            do {
+                let count = try populate(stagingDirectory)
+                // A successful same-parent move is the publication commit point:
+                // the staging pathname no longer exists and must not be inspected
+                // or removed after this succeeds.
+                try fileManager.moveItem(at: stagingDirectory, to: finalDirectory)
+                return Result(count: count, directory: finalDirectory)
+            } catch {
+                let exportError = error
+                do {
+                    try removeCurrentStagingDirectoryIfPresent(
+                        stagingDirectory,
+                        fileManager: fileManager
+                    )
+                } catch let cleanupFailure {
+                    throw stagingCleanupError(
+                        path: stagingDirectory.path,
+                        exportError: exportError,
+                        cleanupFailure: cleanupFailure
+                    )
+                }
+                throw exportError
+            }
+        }
+    }
+
+    private static func removeCurrentStagingDirectoryIfPresent(
+        _ stagingDirectory: URL,
+        fileManager: FileManager
+    ) throws {
+        guard fileManager.fileExists(atPath: stagingDirectory.path) else { return }
+        try fileManager.removeItem(at: stagingDirectory)
+        guard !fileManager.fileExists(atPath: stagingDirectory.path) else {
+            throw NSError(
+                domain: "Phosphor.MessageExportBundleWriter",
+                code: 2,
+                userInfo: [
+                    NSLocalizedDescriptionKey: "Phosphor could not verify removal of its active message-export staging folder.",
+                    NSFilePathErrorKey: stagingDirectory.path
+                ]
+            )
         }
     }
 
@@ -74,6 +104,23 @@ enum MessageExportBundleWriter {
         guard flock(descriptor, LOCK_EX) == 0 else { throw posixError() }
         defer { _ = flock(descriptor, LOCK_UN) }
         return try operation()
+    }
+
+    private static func stagingCleanupError(
+        path: String,
+        exportError: Error,
+        cleanupFailure: Error
+    ) -> NSError {
+        NSError(
+            domain: "Phosphor.MessageExportBundleWriter",
+            code: 1,
+            userInfo: [
+                NSLocalizedDescriptionKey: "Message export failed and Phosphor could not remove its staging folder. The completed exports were not changed.",
+                NSFilePathErrorKey: path,
+                NSUnderlyingErrorKey: cleanupFailure,
+                "PhosphorExportError": exportError.localizedDescription
+            ]
+        )
     }
 
     private static func posixError() -> NSError {

@@ -907,6 +907,26 @@ struct MessageExportBundleProbe {
                 exit(4)
             }
         }
+
+        // Stale lookalikes from a hard crash are ambiguous user data and must
+        // never be recursively deleted merely because their names match.
+        let ambiguous = parent.appendingPathComponent(
+            ".Messages Export.staging-11111111-1111-4111-8111-111111111111",
+            isDirectory: true
+        )
+        try fileManager.createDirectory(at: ambiguous, withIntermediateDirectories: true)
+        try Data("must survive".utf8).write(to: ambiguous.appendingPathComponent("user-data.txt"))
+        let third = try MessageExportBundleWriter.write(in: parent) { root in
+            try Data("third".utf8).write(to: root.appendingPathComponent("marker.txt"))
+            return 1
+        }
+        let postSuccessNames = try fileManager.contentsOfDirectory(atPath: parent.path)
+        guard third.directory.lastPathComponent == "Messages Export 3",
+              fileManager.fileExists(atPath: ambiguous.appendingPathComponent("user-data.txt").path),
+              !postSuccessNames.contains(where: { $0.hasPrefix(".Messages Export 3.staging-") }) else {
+            fputs("successful publication deleted ambiguous data or left active staging\n", stderr)
+            exit(5)
+        }
     }
 }
 '''
@@ -925,6 +945,13 @@ struct MessageExportBundleProbe {
         assert compile_result.returncode == 0, compile_result.stderr
         result = subprocess.run([str(executable), str(temp)], capture_output=True, text=True, timeout=10)
         assert result.returncode == 0, result.stderr
+
+    source = helper.read_text()
+    assert "removeCurrentStagingDirectoryIfPresent" in source, "handled failures must explicitly remove and verify active staging"
+    assert "stagingCleanupError" in source, "cleanup failures must be visible instead of silently discarded"
+    assert "successful same-parent move is the publication commit point" in source, "successful publication must return without touching the vacated staging pathname"
+    assert "removeStaleStagingDirectories" not in source, "ambiguous crash leftovers must not be recursively auto-deleted from user-selected folders"
+    assert "try? fileManager.removeItem(at: stagingDirectory)" not in source, "active staging cleanup failure must not be silently ignored"
 
 
 def test_single_pdf_bundle_serializes_same_parent_across_processes(root: Path) -> None:
