@@ -927,6 +927,83 @@ struct MessageExportBundleProbe {
         assert result.returncode == 0, result.stderr
 
 
+def test_single_pdf_bundle_serializes_same_parent_across_processes(root: Path) -> None:
+    helper = root / "Sources/Phosphor/Utilities/MessageExportBundleWriter.swift"
+    probe = r'''
+import Foundation
+
+@main
+struct MessageExportBundleRaceProbe {
+    static func main() throws {
+        let parent = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
+        let mode = CommandLine.arguments[2]
+        let ready = URL(fileURLWithPath: CommandLine.arguments[3])
+        let release = URL(fileURLWithPath: CommandLine.arguments[4])
+
+        let result = try MessageExportBundleWriter.write(in: parent, directoryName: "Conversation") { root in
+            if mode == "hold" {
+                try Data().write(to: ready)
+                while !FileManager.default.fileExists(atPath: release.path) {
+                    Thread.sleep(forTimeInterval: 0.01)
+                }
+            }
+            try Data(mode.utf8).write(to: root.appendingPathComponent("marker.txt"))
+            return 1
+        }
+        print(result.directory.lastPathComponent)
+    }
+}
+'''
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp = Path(temp_dir)
+        probe_path = temp / "RaceProbe.swift"
+        probe_path.write_text(probe)
+        executable = temp / "message-export-bundle-race-probe"
+        compile_result = subprocess.run(
+            ["swiftc", "-parse-as-library", str(helper), str(probe_path), "-o", str(executable)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert compile_result.returncode == 0, compile_result.stderr
+
+        parent = temp / "exports"
+        ready = temp / "ready"
+        release = temp / "release"
+        first = subprocess.Popen(
+            [str(executable), str(parent), "hold", str(ready), str(release)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            deadline = time.monotonic() + 5
+            while not ready.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert ready.exists(), "first PDF bundle did not reach its staged write"
+
+            second = subprocess.Popen(
+                [str(executable), str(parent), "run", str(ready), str(release)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            release.write_text("go")
+            first_out, first_err = first.communicate(timeout=10)
+            second_out, second_err = second.communicate(timeout=10)
+            assert first.returncode == 0, first_err
+            assert second.returncode == 0, second_err
+            assert {first_out.strip(), second_out.strip()} == {"Conversation", "Conversation 2"}
+            assert (parent / "Conversation" / "marker.txt").exists()
+            assert (parent / "Conversation 2" / "marker.txt").exists()
+        finally:
+            if first.poll() is None:
+                release.write_text("cleanup")
+                first.terminate()
+                first.wait(timeout=5)
+
+
 def test_all_formats_message_bundle_has_one_folder_per_conversation(root: Path) -> None:
     exporter = read(root, "Sources/Phosphor/Services/MessageExporter.swift")
     view_model = read(root, "Sources/Phosphor/ViewModels/MessageViewModel.swift")
