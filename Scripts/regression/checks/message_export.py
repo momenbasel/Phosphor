@@ -16,6 +16,21 @@ def assert_contains(text: str, needle: str, message: str) -> None:
     assert needle in text, message
 
 
+def test_single_pdf_export_is_a_self_contained_folder(root: Path) -> None:
+    exporter = read(root, "Sources/Phosphor/Services/MessageExporter.swift")
+    view_model = read(root, "Sources/Phosphor/ViewModels/MessageViewModel.swift")
+    view = read(root, "Sources/Phosphor/Views/Messages/MessageListView.swift")
+    bundle_writer = read(root, "Sources/Phosphor/Utilities/MessageExportBundleWriter.swift")
+
+    assert_contains(exporter, "func exportChatPDFBundle(", "MessageExporter needs a dedicated single-conversation PDF bundle API")
+    assert_contains(exporter, "appendingPathComponent(\"Attachments\"", "A single PDF bundle must contain an Attachments folder")
+    assert_contains(exporter, "format: .pdf", "A single PDF bundle must generate a PDF transcript")
+    assert_contains(view_model, "func startExportChatPDFBundle(", "The view model needs a background PDF-bundle export route")
+    assert_contains(view, "exportSingleChatPDFBundle()", "The PDF menu action must use the bundle route")
+    assert_contains(view, "Choose where Phosphor should create a folder", "PDF bundle UI must ask for the parent folder, not a lone PDF filename")
+    assert_contains(bundle_writer, "directoryName:", "Bundle writer must allow a collision-safe per-conversation directory name")
+
+
 def test_message_exports_publish_generation_sidecars_without_crash_mismatch(root: Path) -> None:
     src = read(root, "Sources/Phosphor/Services/MessageExporter.swift")
     transaction = root / "Sources/Phosphor/Utilities/MessageExportTransaction.swift"

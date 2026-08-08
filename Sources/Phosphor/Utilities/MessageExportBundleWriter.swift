@@ -11,12 +11,17 @@ enum MessageExportBundleWriter {
 
     static func write(
         in parentDirectory: URL,
+        directoryName: String = "Messages Export",
         populate: (URL) throws -> Int
     ) throws -> Result {
         let fileManager = FileManager.default
         try fileManager.createDirectory(at: parentDirectory, withIntermediateDirectories: true)
 
-        let finalDirectory = availableDirectory(in: parentDirectory, fileManager: fileManager)
+        let finalDirectory = availableDirectory(
+            named: directoryName,
+            in: parentDirectory,
+            fileManager: fileManager
+        )
         let stagingDirectory = parentDirectory.appendingPathComponent(
             ".\(finalDirectory.lastPathComponent).staging-\(UUID().uuidString)",
             isDirectory: true
@@ -36,13 +41,14 @@ enum MessageExportBundleWriter {
     }
 
     private static func availableDirectory(
+        named directoryName: String,
         in parentDirectory: URL,
         fileManager: FileManager
     ) -> URL {
-        var name = "Messages Export"
+        var name = directoryName
         var suffix = 2
         while fileManager.fileExists(atPath: parentDirectory.appendingPathComponent(name).path) {
-            name = "Messages Export \(suffix)"
+            name = "\(directoryName) \(suffix)"
             suffix += 1
         }
         return parentDirectory.appendingPathComponent(name, isDirectory: true)

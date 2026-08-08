@@ -545,6 +545,52 @@ final class MessageExporter {
         try exportMessages(messages, chatTitle: chatTitle, format: format, to: path, options: options, cancellationCheck: cancellationCheck)
     }
 
+    /// Export one conversation as a self-contained PDF bundle with the readable
+    /// originals in `Attachments`. The bundle writer keeps the entire folder
+    /// private until the transcript and attachment copy have both completed.
+    func exportChatPDFBundle(
+        chat: MessageChat,
+        messages: [Message],
+        to parentDirectory: String,
+        options: MessageExportOptions = MessageExportOptions(),
+        cancellationCheck: (() throws -> Void)? = nil
+    ) throws -> MessageExportBundleWriter.Result {
+        let fileManager = FileManager.default
+        var bundleOptions = options
+        bundleOptions.includeAttachments = true
+        let pdfFilename = chat.exportFilename(format: .pdf, includeChatID: false)
+        let directoryName = (pdfFilename as NSString).deletingPathExtension
+        let filteredMessages = bundleOptions.apply(to: messages)
+
+        return try MessageExportBundleWriter.write(
+            in: URL(fileURLWithPath: parentDirectory, isDirectory: true),
+            directoryName: directoryName
+        ) { conversationDirectory in
+            try cancellationCheck?()
+            let attachmentsDirectory = conversationDirectory.appendingPathComponent("Attachments", isDirectory: true)
+            let attachmentMap = try stageOriginalAttachments(
+                messages: filteredMessages,
+                attachmentDirectory: attachmentsDirectory,
+                includeAttachments: true,
+                cancellationCheck: cancellationCheck
+            )
+            if attachmentMap.isEmpty {
+                try fileManager.createDirectory(at: attachmentsDirectory, withIntermediateDirectories: true)
+            }
+
+            try exportMessages(
+                filteredMessages,
+                chatTitle: chat.title,
+                format: .pdf,
+                to: conversationDirectory.appendingPathComponent(pdfFilename).path,
+                options: bundleOptions,
+                attachmentMap: attachmentMap,
+                cancellationCheck: cancellationCheck
+            )
+            return 1
+        }
+    }
+
     /// Export all conversations.
     func exportAllChats(
         format: MessageExportFormat,

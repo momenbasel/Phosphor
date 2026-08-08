@@ -487,8 +487,32 @@ struct MessageListView: View {
     /// extension (HTML/JSON/MBOX). SwiftUI's `.fileExporter` hard-codes a
     /// single `UTType` per modifier and was rewriting `.html` to `.txt`
     /// (issue #17).
+    private func exportSingleChatPDFBundle() {
+        guard loadedBackupIsCurrent else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.prompt = "Create PDF Bundle"
+        panel.message = "Choose where Phosphor should create a folder containing this conversation PDF and its original attachments."
+
+        if panel.runModal() == .OK, let url = panel.url {
+            messageVM.startExportChatPDFBundle(
+                to: url.path,
+                dateFilter: dateFilter,
+                customStart: customStartDate,
+                customEnd: customEndDate,
+                visibleMessages: displayedMessages
+            )
+        }
+    }
+
     private func exportSingleChat(format: MessageExportFormat) {
         guard loadedBackupIsCurrent, let chat = messageVM.selectedChat else { return }
+        if format == .pdf {
+            exportSingleChatPDFBundle()
+            return
+        }
         let panel = NSSavePanel()
         panel.title = "Export Conversation"
         panel.nameFieldStringValue = chat.exportFilename(format: format, includeChatID: false)
