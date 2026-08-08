@@ -39,6 +39,7 @@ struct PhosphorApp: App {
     @StateObject private var messageVM = MessageViewModel()
     @StateObject private var scheduler = BackupScheduler()
     @AppStorage("phosphor.hasCompletedOnboarding") private var hasCompletedOnboarding = false
+    @State private var selectedSection: SidebarSection? = .devices
 
     init() {
         // Pre-1.0.4 users defaulted to Apple's MobileSync directory implicitly.
@@ -49,7 +50,7 @@ struct PhosphorApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(selectedSection: $selectedSection)
                 .environmentObject(deviceVM)
                 .environmentObject(backupVM)
                 .environmentObject(messageVM)
@@ -72,6 +73,45 @@ struct PhosphorApp: App {
         .windowToolbarStyle(.unified(showsTitle: true))
         .defaultSize(width: 1100, height: 720)
         .commands {
+            CommandMenu("Quick Actions") {
+                Button("Backup Now") {
+                    startBackupNow()
+                }
+                .disabled(deviceVM.selectedDevice == nil || backupVM.isCreating)
+
+                Button("Open Backup Folder") {
+                    openBackupFolder()
+                }
+
+                Divider()
+
+                Button("Refresh Devices") {
+                    Task { await deviceVM.refresh() }
+                }
+
+                Button("Refresh Backups") {
+                    backupVM.loadBackups()
+                }
+
+                Divider()
+
+                Button("Show Backups") {
+                    selectedSection = .backups
+                }
+
+                Button("Show Messages") {
+                    selectedSection = .messages
+                }
+
+                Button("Show Photos") {
+                    selectedSection = .photos
+                }
+
+                Button("Show Files") {
+                    selectedSection = .files
+                }
+            }
+
             CommandMenu("Device") {
                 Button("Refresh Devices") {
                     Task { await deviceVM.refresh() }
@@ -93,21 +133,15 @@ struct PhosphorApp: App {
             }
 
             CommandMenu("Backup") {
-                Button("New Backup") {
-                    guard let device = deviceVM.selectedDevice else { return }
-                    if device.connectionType == .wifi && !BackupManager.hasExistingBackup(for: device.id) {
-                        guard confirmFirstFullWiFiBackup(for: device) else { return }
-                    }
-                    Task {
-                        await backupVM.createBackup(
-                            udid: device.id,
-                            incremental: false,
-                            preferNetwork: device.connectionType == .wifi
-                        )
-                    }
+                Button("Backup Now") {
+                    startBackupNow()
                 }
                 .keyboardShortcut("b", modifiers: .command)
-                .disabled(deviceVM.selectedDevice == nil)
+                .disabled(deviceVM.selectedDevice == nil || backupVM.isCreating)
+
+                Button("Open Backup Folder") {
+                    openBackupFolder()
+                }
 
                 Button("Refresh Backups") {
                     backupVM.loadBackups()
@@ -126,6 +160,25 @@ struct PhosphorApp: App {
             get: { !hasCompletedOnboarding },
             set: { if !$0 { hasCompletedOnboarding = true } }
         )
+    }
+
+    private func startBackupNow() {
+        guard let device = deviceVM.selectedDevice, !backupVM.isCreating else { return }
+        if device.connectionType == .wifi && !BackupManager.hasExistingBackup(for: device.id) {
+            guard confirmFirstFullWiFiBackup(for: device) else { return }
+        }
+        selectedSection = .backups
+        Task {
+            await backupVM.createBackup(
+                udid: device.id,
+                incremental: false,
+                preferNetwork: device.connectionType == .wifi
+            )
+        }
+    }
+
+    private func openBackupFolder() {
+        NSWorkspace.shared.open(URL(fileURLWithPath: BackupManager.activeBackupDir, isDirectory: true))
     }
 
     private func confirmFirstFullWiFiBackup(for device: DeviceInfo) -> Bool {

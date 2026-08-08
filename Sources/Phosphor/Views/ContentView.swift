@@ -6,8 +6,8 @@ struct ContentView: View {
     @EnvironmentObject var deviceVM: DeviceViewModel
     @EnvironmentObject var backupVM: BackupViewModel
     @EnvironmentObject var messageVM: MessageViewModel
+    @Binding var selectedSection: SidebarSection?
 
-    @State private var selectedSection: SidebarSection? = .devices
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var tunnelRunning = true
     @State private var tunnelStarting = false
@@ -326,7 +326,7 @@ struct WelcomeView: View {
 
 #if canImport(PreviewsMacros)
 #Preview {
-    ContentView()
+    ContentView(selectedSection: .constant(.devices))
         .environmentObject(DeviceViewModel())
         .environmentObject(BackupViewModel())
         .environmentObject(MessageViewModel())
