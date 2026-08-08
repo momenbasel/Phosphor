@@ -36,6 +36,7 @@ struct PhosphorApp: App {
     @NSApplicationDelegateAdaptor(PhosphorAppDelegate.self) private var appDelegate
     @StateObject private var deviceVM = DeviceViewModel()
     @StateObject private var backupVM = BackupViewModel()
+    @StateObject private var messageVM = MessageViewModel()
     @StateObject private var scheduler = BackupScheduler()
     @AppStorage("phosphor.hasCompletedOnboarding") private var hasCompletedOnboarding = false
 
@@ -51,6 +52,7 @@ struct PhosphorApp: App {
             ContentView()
                 .environmentObject(deviceVM)
                 .environmentObject(backupVM)
+                .environmentObject(messageVM)
                 .frame(minWidth: 960, minHeight: 640)
                 .onAppear {
                     Task {

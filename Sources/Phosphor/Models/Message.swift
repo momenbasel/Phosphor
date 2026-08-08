@@ -27,7 +27,7 @@ struct MessageChat: Identifiable, Hashable {
             .replacingOccurrences(of: ":", with: "-")
         let contactName = String(sanitized.prefix(80))
         let baseName = contactName.isEmpty ? "Conversation" : contactName
-        let chatIDSuffix = includeChatID ? "-chat-\(id)" : ""
+        let chatIDSuffix = includeChatID ? "-\(id)" : ""
         return "\(baseName)\(chatIDSuffix).\(format.fileExtension)"
     }
 }

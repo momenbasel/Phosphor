@@ -5,6 +5,7 @@ struct ContentView: View {
 
     @EnvironmentObject var deviceVM: DeviceViewModel
     @EnvironmentObject var backupVM: BackupViewModel
+    @EnvironmentObject var messageVM: MessageViewModel
 
     @State private var selectedSection: SidebarSection? = .devices
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
@@ -23,6 +24,7 @@ struct ContentView: View {
                 }
                 detailView
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if messageVM.isExporting { messageExportProgressView }
             }
         }
         .navigationTitle("Phosphor")
@@ -105,6 +107,26 @@ struct ContentView: View {
         .padding(.horizontal, 16)
         .padding(.top, 12)
         .padding(.bottom, 4)
+    }
+
+    private var messageExportProgressView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(messageVM.exportProgressText)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer()
+                Button("Cancel") { messageVM.cancelExport() }
+                    .controlSize(.small)
+            }
+            ProgressView(value: messageVM.exportProgress, total: 1.0)
+                .progressViewStyle(.linear)
+                .tint(.brandAccent)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .background(Color.brandAccent.opacity(0.06))
     }
 
     private func checkTunnel() async {
@@ -307,5 +329,6 @@ struct WelcomeView: View {
     ContentView()
         .environmentObject(DeviceViewModel())
         .environmentObject(BackupViewModel())
+        .environmentObject(MessageViewModel())
 }
 #endif

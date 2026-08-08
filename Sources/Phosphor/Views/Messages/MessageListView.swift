@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 struct MessageListView: View {
 
     @EnvironmentObject var backupVM: BackupViewModel
-    @StateObject private var messageVM = MessageViewModel()
+    @EnvironmentObject var messageVM: MessageViewModel
     @State private var showExportSheet = false
     @State private var exportFormat: MessageExportFormat = .html
     @State private var searchText = ""
@@ -32,9 +32,6 @@ struct MessageListView: View {
         }
         .onChange(of: backupVM.backups.map(\.path)) { _, _ in
             reconcileLoadedBackupWithAvailableBackups()
-        }
-        .overlay(alignment: .bottom) {
-            if messageVM.isExporting { exportProgressBar }
         }
         .alert("Messages", isPresented: $messageVM.showAlert) {
             Button("OK") {}
@@ -315,22 +312,6 @@ struct MessageListView: View {
         .background(Color(.controlBackgroundColor).opacity(0.35))
     }
 
-    private var exportProgressBar: some View {
-        HStack(spacing: 12) {
-            ProgressView(value: messageVM.exportProgress)
-                .frame(width: 180)
-            Text(messageVM.exportProgressText)
-                .font(.system(size: 12))
-                .lineLimit(1)
-            Spacer()
-            Button("Cancel") { messageVM.cancelExport() }
-                .controlSize(.small)
-        }
-        .padding(12)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .padding()
-    }
 
     // MARK: - Message Detail
 

@@ -535,7 +535,7 @@ def test_bulk_message_exports_use_collision_safe_filenames(root: Path) -> None:
     )
 
 
-def test_pdf_export_filenames_preserve_resolved_contact_name(root: Path) -> None:
+def test_message_export_filenames_preserve_names_without_chat_label(root: Path) -> None:
     model = root / "Sources/Phosphor/Models/Message.swift"
     exporter = read(root, "Sources/Phosphor/Services/MessageExporter.swift")
     view = read(root, "Sources/Phosphor/Views/Messages/MessageListView.swift")
@@ -576,8 +576,8 @@ struct ContactFilenameProbe {
             isGroupChat: false
         )
         guard chat.exportFilename(format: .pdf, includeChatID: false) == "Jane Doe.pdf",
-              chat.exportFilename(format: .pdf, includeChatID: true) == "Jane Doe-chat-42.pdf" else {
-            fputs("PDF export filename did not preserve the resolved contact name\n", stderr)
+              chat.exportFilename(format: .pdf, includeChatID: true) == "Jane Doe-42.pdf" else {
+            fputs("Export filename did not preserve the resolved contact name without adding Chat\n", stderr)
             exit(1)
         }
     }
@@ -597,6 +597,46 @@ struct ContactFilenameProbe {
         assert result.returncode == 0, result.stderr
         run = subprocess.run([str(executable)], capture_output=True, text=True, timeout=10)
         assert run.returncode == 0, run.stderr
+
+
+def test_message_export_progress_survives_messages_navigation(root: Path) -> None:
+    app = read(root, "Sources/Phosphor/App/PhosphorApp.swift")
+    content = read(root, "Sources/Phosphor/Views/ContentView.swift")
+    messages = read(root, "Sources/Phosphor/Views/Messages/MessageListView.swift")
+
+    assert_contains(
+        app,
+        "@StateObject private var messageVM = MessageViewModel()",
+        "the export task must outlive the Messages screen",
+    )
+    assert_contains(
+        app,
+        ".environmentObject(messageVM)",
+        "the app must provide one shared message export state to every section",
+    )
+    assert_contains(
+        content,
+        "@EnvironmentObject var messageVM: MessageViewModel",
+        "the root content view must observe shared message export progress",
+    )
+    assert_contains(
+        content,
+        "if messageVM.isExporting { messageExportProgressView }",
+        "the export progress bar must stay visible while navigating away from Messages",
+    )
+    assert_contains(
+        content,
+        "Button(\"Cancel\") { messageVM.cancelExport() }",
+        "the persistent export progress bar must retain cancellation",
+    )
+    assert_contains(
+        messages,
+        "@EnvironmentObject var messageVM: MessageViewModel",
+        "Messages must consume the shared export state instead of recreating it",
+    )
+    assert "@StateObject private var messageVM = MessageViewModel()" not in messages, (
+        "recreating the Messages view must not make an active export progress bar disappear"
+    )
 
 
 def test_background_message_exports_keep_loaded_contact_directory(root: Path) -> None:
@@ -829,14 +869,14 @@ struct MessageExportBundleProbe {
         let fileManager = FileManager.default
 
         let first = try MessageExportBundleWriter.write(in: parent) { root in
-            let conversation = root.appendingPathComponent("Jane Doe-chat-42", isDirectory: true)
+            let conversation = root.appendingPathComponent("Jane Doe-42", isDirectory: true)
             try fileManager.createDirectory(at: conversation, withIntermediateDirectories: true)
             try Data("pdf".utf8).write(to: conversation.appendingPathComponent("Jane Doe.pdf"))
             return 1
         }
         guard first.count == 1,
               first.directory.lastPathComponent == "Messages Export",
-              fileManager.fileExists(atPath: first.directory.appendingPathComponent("Jane Doe-chat-42/Jane Doe.pdf").path) else {
+              fileManager.fileExists(atPath: first.directory.appendingPathComponent("Jane Doe-42/Jane Doe.pdf").path) else {
             fputs("first bundle did not produce the expected export folder\n", stderr)
             exit(1)
         }
