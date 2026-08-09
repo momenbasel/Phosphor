@@ -38,6 +38,7 @@ struct PhosphorApp: App {
     @StateObject private var backupVM = BackupViewModel()
     @StateObject private var backupOperations = BackupOperationCoordinator.shared
     @StateObject private var messageVM = MessageViewModel()
+    @StateObject private var whatsAppVM = WhatsAppViewModel()
     @StateObject private var scheduler = BackupScheduler()
     @AppStorage("phosphor.hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @State private var selectedSection: SidebarSection? = .devices
@@ -55,6 +56,7 @@ struct PhosphorApp: App {
                 .environmentObject(deviceVM)
                 .environmentObject(backupVM)
                 .environmentObject(messageVM)
+                .environmentObject(whatsAppVM)
                 .frame(minWidth: 960, minHeight: 640)
                 .onAppear {
                     Task {
