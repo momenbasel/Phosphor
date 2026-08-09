@@ -111,6 +111,71 @@ final class ContactsExtractor {
         return contacts
     }
 
+    /// Search contacts in SQLite before materializing rows. The result and
+    /// phone/email fan-out are bounded by `limit` so unified search cannot load
+    /// an entire address book for one query.
+    func searchContacts(_ query: String, limit: Int = 250) throws -> [Contact] {
+        let knownHash = "31bb7ba8914766d4ba40d6dfb6113c8b614be442"
+        var dbPath = manifest.isDecrypting ? "" : "\(backupPath)/\(knownHash.prefix(2))/\(knownHash)"
+        if !FileManager.default.fileExists(atPath: dbPath) {
+            guard let entry = try manifest.files(matching: "%AddressBook.sqlitedb").first(where: { $0.domain == "HomeDomain" }) else {
+                throw NSError(domain: "Phosphor", code: 404, userInfo: [NSLocalizedDescriptionKey: "AddressBook database not found in backup"])
+            }
+            dbPath = try manifest.readablePath(for: entry)
+        }
+
+        let db = try SQLiteReader(path: dbPath)
+        guard try db.tableNames().contains("ABPerson") else {
+            throw NSError(domain: "Phosphor", code: 500, userInfo: [NSLocalizedDescriptionKey: "Invalid AddressBook database"])
+        }
+
+        let boundedLimit = max(1, min(limit, 1_000))
+        let pattern = "%\(query)%"
+        let persons = try db.query("""
+            SELECT DISTINCT p.ROWID, p.First, p.Last, p.Organization, p.CreationDate
+            FROM ABPerson p
+            LEFT JOIN ABMultiValue mv ON mv.record_id = p.ROWID AND mv.property IN (3, 4)
+            WHERE p.First LIKE ? COLLATE NOCASE
+               OR p.Last LIKE ? COLLATE NOCASE
+               OR p.Organization LIKE ? COLLATE NOCASE
+               OR mv.value LIKE ? COLLATE NOCASE
+            ORDER BY COALESCE(p.First, '') || COALESCE(p.Last, '') || COALESCE(p.Organization, '')
+            LIMIT \(boundedLimit)
+        """, params: [pattern, pattern, pattern, pattern])
+
+        let ids = persons.compactMap { $0["ROWID"] as? Int }
+        guard !ids.isEmpty else { return [] }
+        let idList = ids.map(String.init).joined(separator: ",")
+        let phoneRows = try db.query("SELECT record_id, value FROM ABMultiValue WHERE property = 3 AND record_id IN (\(idList)) ORDER BY record_id")
+        let emailRows = try db.query("SELECT record_id, value FROM ABMultiValue WHERE property = 4 AND record_id IN (\(idList)) ORDER BY record_id")
+
+        var phones: [Int: [String]] = [:]
+        for row in phoneRows {
+            if let id = row["record_id"] as? Int, let value = row["value"] as? String {
+                phones[id, default: []].append(value)
+            }
+        }
+        var emails: [Int: [String]] = [:]
+        for row in emailRows {
+            if let id = row["record_id"] as? Int, let value = row["value"] as? String {
+                emails[id, default: []].append(value)
+            }
+        }
+
+        return persons.compactMap { row in
+            guard let id = row["ROWID"] as? Int else { return nil }
+            return Contact(
+                id: id,
+                firstName: (row["First"] as? String) ?? "",
+                lastName: (row["Last"] as? String) ?? "",
+                organization: (row["Organization"] as? String) ?? "",
+                phoneNumbers: phones[id] ?? [],
+                emails: emails[id] ?? [],
+                createdDate: (row["CreationDate"] as? Double).map { Date(timeIntervalSinceReferenceDate: $0) }
+            )
+        }
+    }
+
     /// Get contact count without loading all data.
     func getContactCount() throws -> Int {
         let knownHash = "31bb7ba8914766d4ba40d6dfb6113c8b614be442"

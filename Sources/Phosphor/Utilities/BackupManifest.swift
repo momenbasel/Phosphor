@@ -247,9 +247,10 @@ final class BackupManifest {
     }
 
     /// Search files by name.
-    func search(_ query: String) throws -> [FileEntry] {
+    func search(_ query: String, limit: Int = 500) throws -> [FileEntry] {
+        let boundedLimit = max(1, min(limit, 5_000))
         let rows = try db.query(
-            "SELECT fileID, domain, relativePath, flags FROM Files WHERE relativePath LIKE ? ORDER BY relativePath LIMIT 500",
+            "SELECT fileID, domain, relativePath, flags FROM Files WHERE relativePath LIKE ? ORDER BY relativePath LIMIT \(boundedLimit)",
             params: ["%\(query)%"]
         )
         return rows.compactMap(parseFileEntry)
