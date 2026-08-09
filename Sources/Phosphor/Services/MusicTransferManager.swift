@@ -11,7 +11,7 @@ final class MusicTransferManager: ObservableObject {
     @Published var transferProgress: Double = 0
     @Published var lastError: String?
 
-    struct MusicTrack: Identifiable, Hashable {
+    struct MusicTrack: Identifiable, Hashable, Sendable {
         let id: String
         let filename: String
         let relativePath: String
@@ -125,30 +125,99 @@ final class MusicTransferManager: ObservableObject {
 
     // MARK: - Extract from Backup
 
-    func extractTracks(_ selectedTracks: [MusicTrack], from backupPath: String, to destination: String) async -> Int {
+    struct ExtractionOutcome: Sendable {
+        let extracted: Int
+        let total: Int
+        let processed: Int
+        let cancelled: Bool
+        let lastError: String?
+    }
+
+    func extractTracks(
+        _ selectedTracks: [MusicTrack],
+        from backupPath: String,
+        to destination: String
+    ) async -> ExtractionOutcome {
+        lastError = nil
+        transferProgress = 0
+        let worker = Task.detached(priority: .userInitiated) {
+            Self.performExtraction(selectedTracks, from: backupPath, to: destination)
+        }
+        let outcome = await withTaskCancellationHandler {
+            await worker.value
+        } onCancel: {
+            worker.cancel()
+        }
+        lastError = outcome.lastError
+        if outcome.total > 0 {
+            transferProgress = Double(outcome.processed) / Double(outcome.total)
+        }
+        return outcome
+    }
+
+    private nonisolated static func performExtraction(
+        _ selectedTracks: [MusicTrack],
+        from backupPath: String,
+        to destination: String
+    ) -> ExtractionOutcome {
         let fm = FileManager.default
-        try? fm.createDirectory(atPath: destination, withIntermediateDirectories: true)
+        do {
+            try fm.createDirectory(atPath: destination, withIntermediateDirectories: true)
+        } catch {
+            return ExtractionOutcome(
+                extracted: 0, total: selectedTracks.count, processed: 0, cancelled: false,
+                lastError: "Could not prepare the destination folder: \(error.localizedDescription)"
+            )
+        }
 
         do {
+            try Task.checkCancellation()
             let manifest = try BackupManifest(backupPath: backupPath)
+            let destinationURL = URL(fileURLWithPath: destination, isDirectory: true)
             var extracted = 0
+            var processed = 0
+            var lastFailure: String?
 
-            for (index, track) in selectedTracks.enumerated() {
+            for track in selectedTracks {
                 let entry = BackupManifest.FileEntry(
                     id: track.id, domain: track.domain, relativePath: track.relativePath,
                     flags: 1, size: track.size
                 )
-                let destPath = (destination as NSString).appendingPathComponent(track.filename)
                 do {
-                    try manifest.extractFile(entry, to: destPath)
+                    try Task.checkCancellation()
+                    _ = try CollisionSafeFilePublisher.publish(
+                        preferredFilename: track.filename,
+                        in: destinationURL
+                    ) { staging in
+                        try Task.checkCancellation()
+                        try manifest.extractFile(entry, to: staging.path)
+                        try Task.checkCancellation()
+                    }
                     extracted += 1
-                } catch {}
-                transferProgress = Double(index + 1) / Double(selectedTracks.count)
+                } catch is CancellationError {
+                    return ExtractionOutcome(
+                        extracted: extracted, total: selectedTracks.count, processed: processed,
+                        cancelled: true, lastError: "Music extraction was cancelled."
+                    )
+                } catch {
+                    lastFailure = "Failed to extract \(track.filename): \(error.localizedDescription)"
+                }
+                processed += 1
             }
-            return extracted
+            return ExtractionOutcome(
+                extracted: extracted, total: selectedTracks.count, processed: processed,
+                cancelled: false, lastError: lastFailure
+            )
+        } catch is CancellationError {
+            return ExtractionOutcome(
+                extracted: 0, total: selectedTracks.count, processed: 0,
+                cancelled: true, lastError: "Music extraction was cancelled."
+            )
         } catch {
-            lastError = error.localizedDescription
-            return 0
+            return ExtractionOutcome(
+                extracted: 0, total: selectedTracks.count, processed: 0,
+                cancelled: false, lastError: error.localizedDescription
+            )
         }
     }
 
