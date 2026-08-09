@@ -1,6 +1,8 @@
 import Foundation
 #if canImport(SQLite3)
 import SQLite3
+
+private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 #endif
 
 /// Lightweight SQLite wrapper for reading iOS backup databases.
@@ -13,12 +15,14 @@ final class SQLiteReader {
         case openFailed(String)
         case queryFailed(String)
         case prepareFailed(String)
+        case bindFailed(String)
 
         var errorDescription: String? {
             switch self {
             case .openFailed(let msg): return "SQLite open failed: \(msg)"
             case .queryFailed(let msg): return "SQLite query failed: \(msg)"
             case .prepareFailed(let msg): return "SQLite prepare failed: \(msg)"
+            case .bindFailed(let msg): return "SQLite bind failed: \(msg)"
             }
         }
     }
@@ -70,13 +74,24 @@ final class SQLiteReader {
 
         // Bind parameters
         for (index, param) in params.enumerated() {
-            sqlite3_bind_text(statement, Int32(index + 1), (param as NSString).utf8String, -1, nil)
+            let bindResult = param.withCString { pointer in
+                sqlite3_bind_text(statement, Int32(index + 1), pointer, -1, SQLITE_TRANSIENT)
+            }
+            guard bindResult == SQLITE_OK else {
+                throw SQLiteError.bindFailed(String(cString: sqlite3_errmsg(db)))
+            }
         }
 
         var rows: [[String: Any?]] = []
         let columnCount = sqlite3_column_count(statement)
 
-        while sqlite3_step(statement) == SQLITE_ROW {
+        while true {
+            let stepResult = sqlite3_step(statement)
+            if stepResult == SQLITE_DONE { break }
+            guard stepResult == SQLITE_ROW else {
+                throw SQLiteError.queryFailed(String(cString: sqlite3_errmsg(db)))
+            }
+
             var row: [String: Any?] = [:]
             for i in 0..<columnCount {
                 let name = String(cString: sqlite3_column_name(statement, i))
