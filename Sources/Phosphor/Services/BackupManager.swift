@@ -481,6 +481,15 @@ final class BackupManager: ObservableObject {
         preferNetwork: Bool = false,
         onProgress: @escaping (String) -> Void
     ) async -> Bool {
+        guard let coordinatorToken = BackupOperationCoordinator.shared.beginBackup() else {
+            let message = "Wait for the active backup comparison to finish, then try the backup again."
+            backupProgress = "Backup paused"
+            lastError = message
+            onProgress(message)
+            return false
+        }
+        defer { BackupOperationCoordinator.shared.endBackup(coordinatorToken) }
+
         isCreatingBackup = true
         let operationID = beginCancellableOperation()
         backupProgress = "Starting backup..."
@@ -696,6 +705,15 @@ final class BackupManager: ObservableObject {
         preferNetwork: Bool = false,
         onProgress: @escaping (String) -> Void
     ) async -> Bool {
+        guard let coordinatorToken = BackupOperationCoordinator.shared.beginBackup() else {
+            let message = "Wait for the active backup comparison to finish, then try the backup again."
+            backupProgress = "Backup paused"
+            lastError = message
+            onProgress(message)
+            return false
+        }
+        defer { BackupOperationCoordinator.shared.endBackup(coordinatorToken) }
+
         isCreatingBackup = true
         let operationID = beginCancellableOperation()
         backupProgress = "Starting incremental backup..."

@@ -13,6 +13,7 @@ struct BackupTimeMachineView: View {
     @State private var pendingRestore: RestoreRequest?
     @State private var restoreProgress: String?
     @State private var isRestoring = false
+    @State private var showComparison = false
     @State private var starPositions: [StarParticle] = generateStars(count: 120)
 
     private struct RestoreRequest {
@@ -89,6 +90,10 @@ struct BackupTimeMachineView: View {
         } message: { request in
             Text("Restore \(request.targetName) from \(request.backup.dateString)? The device will restart, and this cannot be undone.")
         }
+        .sheet(isPresented: $showComparison) {
+            BackupComparisonView(initiallySelected: selectedBackup)
+                .environmentObject(backupVM)
+        }
     }
 
     private var restoreConfirmationPresented: Binding<Bool> {
@@ -96,6 +101,11 @@ struct BackupTimeMachineView: View {
             get: { pendingRestore != nil },
             set: { if !$0 { pendingRestore = nil } }
         )
+    }
+
+    private var selectedBackup: BackupInfo? {
+        guard backupVM.backups.indices.contains(selectedIndex) else { return nil }
+        return backupVM.backups[selectedIndex]
     }
 
     // MARK: - Star Field
@@ -212,6 +222,14 @@ struct BackupTimeMachineView: View {
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                         .tint(.white)
+
+                        Button("Compare Backups") {
+                            showComparison = true
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .tint(.white)
+                        .disabled(backupVM.isCreating || backupVM.backups.filter { $0.udid == backup.udid }.count < 2)
                     }
                     .padding(.top, 4)
                 }
@@ -270,6 +288,18 @@ struct BackupTimeMachineView: View {
 
             // Navigation arrows
             HStack {
+                Button {
+                    backupVM.loadBackups()
+                    selectedIndex = min(selectedIndex, max(0, backupVM.backups.count - 1))
+                } label: {
+                    Image(systemName: "arrow.clockwise.circle.fill")
+                        .font(.system(size: 24))
+                        .foregroundStyle(.white.opacity(0.8))
+                }
+                .buttonStyle(.plain)
+                .help("Refresh Backups")
+                .disabled(backupVM.isCreating)
+
                 Button {
                     withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
                         selectedIndex = max(0, selectedIndex - 1)
