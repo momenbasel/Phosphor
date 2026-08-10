@@ -50,7 +50,16 @@ enum Shell {
             throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
         }
         defer { posix_spawnattr_destroy(&attributes) }
-        guard posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETSID)) == 0 else {
+        // CLOEXEC_DEFAULT is not optional here. Without it the child inherits
+        // every descriptor the app has open, including the write ends of OTHER
+        // in-flight Shell commands' stdout pipes. The parent closes only its own
+        // copy, so readDataToEndOfFile never sees EOF and that unrelated command
+        // returns exit code 0 with empty output. Measured before the flag was
+        // added: 40 of 60 concurrent commands lost stdout entirely. The two
+        // posix_spawn_file_actions_adddup2 calls below still work under it -
+        // that is the documented pairing.
+        let spawnFlags = Int16(POSIX_SPAWN_SETSID | POSIX_SPAWN_CLOEXEC_DEFAULT)
+        guard posix_spawnattr_setflags(&attributes, spawnFlags) == 0 else {
             throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
         }
 
@@ -276,6 +285,11 @@ enum Shell {
         }
 
         func cleanupComplete() -> Bool {
+            // Reap first: the leader may have exited already and be sitting as a
+            // zombie, which kill(-pgid, 0) still reports as a live group member.
+            // Polling without reaping meant the grace window could never be
+            // satisfied and SIGTERM always escalated to SIGKILL.
+            Shell.reapIfExited(rootProcessID)
             if let processGroupID {
                 return !Shell.processGroupExists(processGroupID)
             }
@@ -336,6 +350,32 @@ enum Shell {
         return errno == EPERM
     }
 
+    /// Reap the leader if it has already exited. `kill(-pgid, 0)` succeeds for a
+    /// zombie, so without this an exited-but-unreaped child counts as "still
+    /// alive" for the whole grace window and every termination escalates to
+    /// SIGKILL - including cancelling a backup or restore mid-write, which is
+    /// the one place in this app where a forced kill costs the user data.
+    @discardableResult
+    private static func reapIfExited(_ pid: pid_t) -> Bool {
+        guard pid > 0 else { return true }
+        var status: Int32 = 0
+        let waited = waitpid(pid, &status, WNOHANG)
+        if waited == pid { return true }
+        return waited < 0 && errno == ECHILD
+    }
+
+    /// Reap the leader, but never block a Task forever waiting for a child that
+    /// will not die. Returns true if the child was reaped inside the window.
+    @discardableResult
+    private static func reapWithinDeadline(_ pid: pid_t, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while true {
+            if reapIfExited(pid) { return true }
+            if Date() >= deadline { return false }
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+    }
+
     private static func terminateProcessTree(_ tree: ProcessTree, signal: Int32) {
         tree.terminate(with: signal)
     }
@@ -361,9 +401,26 @@ enum Shell {
     /// A timeout cannot leave a TERM-ignoring process group alive long enough to
     /// fork an escaped worker. Give cooperative commands a very short grace, then
     /// kill the *entire* dedicated group (not just the original leader).
-    private static func terminateTimedOutTree(_ tree: ProcessTree) async {
+    /// Grace given to a one-shot probe (`ideviceinfo`, `pymobiledevice3 list`).
+    /// Killing one of these early costs nothing, and a slow timeout here is felt
+    /// on every poll, so keep it short.
+    static let probeTerminationGrace: TimeInterval = 0.25
+
+    /// Grace given to a streaming command. `runStreaming` is what drives
+    /// idevicebackup2 and pymobiledevice3 backup/restore, which flush and close
+    /// the snapshot they are part-way through writing when they take SIGTERM.
+    /// The 50ms this replaced meant they never got there, so a timeout or a
+    /// user cancel amputated the backup. Now that cleanupComplete() reaps, a
+    /// child that exits promptly still returns in milliseconds - this is only
+    /// the ceiling for one that needs the time.
+    static let streamTerminationGrace: TimeInterval = 2.0
+
+    private static func terminateTimedOutTree(
+        _ tree: ProcessTree,
+        grace: TimeInterval = probeTerminationGrace
+    ) async {
         terminateProcessTree(tree, signal: SIGTERM)
-        if !(await waitForProcessTreeCleanup(tree, timeout: 0.05)) {
+        if !(await waitForProcessTreeCleanup(tree, timeout: grace)) {
             terminateProcessTree(tree, signal: SIGKILL)
             _ = await waitForProcessTreeCleanup(tree, timeout: 1)
         }
@@ -371,7 +428,7 @@ enum Shell {
 
     private static func terminateTimedOutTreeSynchronously(_ tree: ProcessTree) {
         terminateProcessTree(tree, signal: SIGTERM)
-        if !waitForProcessTreeCleanupSynchronously(tree, timeout: 0.05) {
+        if !waitForProcessTreeCleanupSynchronously(tree, timeout: 2.0) {
             terminateProcessTree(tree, signal: SIGKILL)
             _ = waitForProcessTreeCleanupSynchronously(tree, timeout: 1)
         }
@@ -519,10 +576,17 @@ enum Shell {
                 try? await Task.sleep(nanoseconds: nanoseconds)
                 guard !Task.isCancelled, state.markTimedOut() else { return }
                 await terminateTimedOutTree(processTree)
-                // The process-exit source deliberately yields to the timeout winner,
-                // so that winner must also reap the session leader exactly once.
-                var status: Int32 = 0
-                _ = waitpid(process.processIdentifier, &status, 0)
+                // The process-exit source deliberately yields to the timeout
+                // winner, so that winner must also reap the session leader.
+                // Non-blocking: a leader wedged uninterruptibly in a USB or
+                // lockdownd ioctl (flaky cable, stalled network destination -
+                // exactly what timeouts are for) does not accept SIGKILL until
+                // the kernel returns, and a blocking waitpid here parked the
+                // Task forever. finish() then never ran, so the continuation in
+                // BackupManager never resumed and the UI sat on "Backing up..."
+                // with no timeout and no cancel. Reap if we can, give up if we
+                // cannot, but always complete.
+                reapWithinDeadline(process.processIdentifier, timeout: 1.0)
                 finish(exitCode: -1)
             }
             state.attachWatchdog(watchdogTask)
@@ -607,10 +671,11 @@ enum Shell {
                 try? await Task.sleep(nanoseconds: nanoseconds)
                 guard !Task.isCancelled, state.markTimedOut() else { return }
                 DispatchQueue.main.async { onError("Command timed out after \(Int(timeout))s") }
-                await terminateTimedOutTree(processTree)
+                await terminateTimedOutTree(processTree, grace: streamTerminationGrace)
                 // The exit handler does not reap once timeout owns completion.
-                var status: Int32 = 0
-                _ = waitpid(process.processIdentifier, &status, 0)
+                // Bounded for the same reason as the runAsync watchdog: an
+                // unkillable child must not strand the streaming completion.
+                reapWithinDeadline(process.processIdentifier, timeout: 1.0)
                 guard !Task.isCancelled else { return }
                 finish(exitCode: -1)
             }
@@ -626,7 +691,11 @@ enum Shell {
         let processTree = ProcessTree(rootProcessID: process.processIdentifier)
         Task {
             terminateProcessTree(processTree, signal: SIGTERM)
-            if !(await waitForProcessTreeCleanup(processTree, timeout: 0.25)) {
+            // This is the user pressing Cancel on a backup or restore, so give
+            // idevicebackup2 the same flush window a timeout does. Killing it
+            // 250ms in leaves a half-written snapshot that the next run has to
+            // repair. A child that exits promptly still returns immediately.
+            if !(await waitForProcessTreeCleanup(processTree, timeout: streamTerminationGrace)) {
                 terminateProcessTree(processTree, signal: SIGKILL)
                 _ = await waitForProcessTreeCleanup(processTree, timeout: 1)
             }
