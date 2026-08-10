@@ -49,6 +49,31 @@ enum CollisionSafeFilePublisher {
             }
             let code = errno
             if code == EEXIST { continue }
+            if code == ENOTSUP || code == EINVAL {
+                // renamex_np is APFS/HFS+ only. exFAT, MS-DOS and SMB return
+                // ENOTSUP, which is the normal case for extracting music to a
+                // USB stick or a NAS share - the whole point of the feature.
+                // Reserve the name with an exclusive create (which those
+                // filesystems do support) and rename over our own reservation,
+                // the same fallback FlatPhotoExportReservation uses.
+                let reserved = candidate.path.withCString { path in
+                    Darwin.open(path, O_CREAT | O_EXCL | O_WRONLY, 0o644)
+                }
+                if reserved < 0 {
+                    if errno == EEXIST { continue }
+                    throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+                }
+                close(reserved)
+                do {
+                    try fm.removeItem(at: candidate)
+                    try fm.moveItem(at: staging, to: candidate)
+                } catch {
+                    try? fm.removeItem(at: candidate)
+                    throw error
+                }
+                published = true
+                return candidate
+            }
             throw POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)
         }
         throw POSIXError(.EEXIST)

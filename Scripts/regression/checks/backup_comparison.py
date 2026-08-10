@@ -203,8 +203,16 @@ struct Probe {
         let backup = coordinator.beginBackup()!
         print("BACKUP_BLOCKS_COMPARE|\(coordinator.beginComparison() == nil)")
         coordinator.endBackup(backup)
+
+        // A comparison must never cost the user a backup. It is a read-only
+        // pass over two archived snapshots and is restartable; a scheduled
+        // backup is not, and BackupScheduler advances lastRunDate even when the
+        // run fails, so a refused backup silently skips a whole cycle.
         let comparison = coordinator.beginComparison()!
-        print("COMPARE_BLOCKS_BACKUP|\(coordinator.beginBackup() == nil)")
+        let preempting = coordinator.beginBackup()
+        print("BACKUP_PREEMPTS_COMPARE|\(preempting != nil)")
+        print("COMPARISON_INVALIDATED|\(!coordinator.comparisonIsValid(comparison))")
+        coordinator.endBackup(preempting!)
         coordinator.endComparison(comparison)
         print("RELEASED|\(coordinator.beginBackup() != nil)")
     }
@@ -226,5 +234,6 @@ struct Probe {
 
     assert result.returncode == 0, result.stderr
     assert "BACKUP_BLOCKS_COMPARE|true" in result.stdout
-    assert "COMPARE_BLOCKS_BACKUP|true" in result.stdout
+    assert "BACKUP_PREEMPTS_COMPARE|true" in result.stdout
+    assert "COMPARISON_INVALIDATED|true" in result.stdout
     assert "RELEASED|true" in result.stdout

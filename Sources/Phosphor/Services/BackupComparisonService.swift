@@ -42,9 +42,22 @@ enum BackupComparisonService {
         let newerManifest = try BackupManifest(backupPath: newer.path)
         let olderCursor = try olderManifest.makeComparisonCursor()
         let newerCursor = try newerManifest.makeComparisonCursor()
+        // A backup starting mid-diff invalidates this comparison rather than
+        // being refused by it - the backup is the operation that matters and
+        // the diff is restartable. Notice that here and stop.
         return try BackupComparisonEngine.compareOrdered(
-            nextOlder: { try olderCursor.next() },
-            nextNewer: { try newerCursor.next() }
+            nextOlder: {
+                guard BackupOperationCoordinator.shared.comparisonIsValid(operationToken) else {
+                    throw BackupComparisonError.backupInProgress
+                }
+                return try olderCursor.next()
+            },
+            nextNewer: {
+                guard BackupOperationCoordinator.shared.comparisonIsValid(operationToken) else {
+                    throw BackupComparisonError.backupInProgress
+                }
+                return try newerCursor.next()
+            }
         )
     }
 

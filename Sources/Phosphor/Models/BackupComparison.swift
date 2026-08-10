@@ -35,11 +35,17 @@ struct BackupComparisonRecord: Hashable, Sendable {
     var cursorOrderKey: String { "\(fileID)\u{1F}\(domain)\u{1F}\(relativePath)" }
 
     fileprivate func hasSameMetadata(as other: BackupComparisonRecord) -> Bool {
+        // Deliberately does NOT compare metadataDigest. That digest covers the
+        // raw MBFile blob, which on an encrypted backup carries a freshly
+        // generated per-file wrapped AES key every time iOS archives the file.
+        // Since iOS pins encryption on at the device level, comparing it
+        // reported virtually every file as "Metadata Changed" even when
+        // content, size and mtime were identical, making the diff useless.
+        // flags, size and modifiedTime carry the real signal.
         metadataComplete && other.metadataComplete
             && flags == other.flags
             && size == other.size
             && modifiedTime == other.modifiedTime
-            && metadataDigest == other.metadataDigest
     }
 }
 

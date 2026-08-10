@@ -23,17 +23,27 @@ final class BackupOperationCoordinator: @unchecked Sendable {
         return !backupTokens.isEmpty
     }
 
+    /// Writers always win. A comparison is a read-only pass over two archived
+    /// snapshots and is restartable, so refusing a backup because one is open
+    /// traded a real backup for a diff: the scheduled run failed instantly,
+    /// BackupScheduler still advanced lastRunDate, and a weekly schedule went a
+    /// full extra week with no backup. Starting a backup now invalidates any
+    /// in-flight comparison, which notices and stops.
     func beginBackup() -> UUID? {
         lock.lock()
-        guard comparisonTokens.isEmpty else {
-            lock.unlock()
-            return nil
-        }
+        comparisonTokens.removeAll()
         let token = UUID()
         backupTokens.insert(token)
         lock.unlock()
         postStateChanged()
         return token
+    }
+
+    /// False once a writer has invalidated this comparison.
+    func comparisonIsValid(_ token: UUID) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return comparisonTokens.contains(token)
     }
 
     func endBackup(_ token: UUID) {

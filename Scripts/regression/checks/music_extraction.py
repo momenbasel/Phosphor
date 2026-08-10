@@ -111,6 +111,12 @@ def test_music_extraction_uses_collision_safe_atomic_publication(root: Path) -> 
     assert "Task.detached" in manager and "withTaskCancellationHandler" in manager
     assert "try Task.checkCancellation()" in manager, "cancellation during a copy must prevent final publication"
     assert "renamex_np" in helper and "RENAME_EXCL" in helper
-    assert "Darwin.open" not in helper, "publication must not expose a zero-byte final reservation"
+    # renamex_np is APFS/HFS+ only; exFAT, MS-DOS and SMB return ENOTSUP, which
+    # is the normal case for extracting to a USB stick or NAS share. The
+    # O_CREAT|O_EXCL reservation is the fallback for exactly those volumes, so
+    # it may appear - but only behind that errno check, never as the primary
+    # path, which would expose a zero-byte final name.
+    assert "renamex_np" in helper, "the fast path must stay an atomic exclusive rename"
+    assert "code == ENOTSUP" in helper, "a filesystem without renamex_np must fall back, not fail the extract"
     assert "extractionTask" in view and ".cancel()" in view
     assert "Music Extraction" in view and "extracted" in view

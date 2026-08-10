@@ -316,9 +316,18 @@ final class BackupManifest {
 
         fileprivate init(databasePath: String) throws {
             var opened: OpaquePointer?
+            // Same immutable URI SQLiteReader uses (commit af8f24b). A plain
+            // read-only connection to a Manifest.db left in WAL mode without
+            // live -wal/-shm sidecars - any backup that was copied, restored
+            // from an archive, or checkpointed and closed cleanly - fails with
+            // "unable to open database file", because a read-only connection
+            // may not create the -shm it needs. immutable=1 also stops us
+            // writing sidecars next to the user's backup.
+            let encoded = databasePath
+                .addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? databasePath
             let openStatus = sqlite3_open_v2(
-                databasePath, &opened,
-                SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX,
+                "file:\(encoded)?mode=ro&immutable=1", &opened,
+                SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX | SQLITE_OPEN_URI,
                 nil
             )
             guard openStatus == SQLITE_OK, let opened else {

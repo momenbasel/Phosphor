@@ -34,7 +34,12 @@ struct MusicView: View {
                 Task { await musicManager.loadMusicFromBackup(backupPath: backup.path) }
             }
         }
-        .onDisappear { extractionTask?.cancel() }
+        // Deliberately no .onDisappear cancel. ContentView.detailView swaps this
+        // view out whenever the sidebar selection changes, so cancelling here
+        // aborted a running extraction the moment the user clicked another
+        // section - hundreds of files in, with the result alert bound to @State
+        // on a view that no longer exists, so nothing told them. Only the
+        // explicit Cancel Extraction button cancels.
         .alert("Music Extraction", isPresented: $showExtractionResult) {
             Button("OK", role: .cancel) {}
         } message: {
