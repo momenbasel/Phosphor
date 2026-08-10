@@ -14,6 +14,9 @@ import Foundation
 final class WhatsAppExporter {
 
     private let db: SQLiteReader
+    private let manifest: BackupManifest?
+    private var mediaPathCache: [String: String] = [:]
+    private var missingMediaPaths: Set<String> = []
 
     struct WAChat: Identifiable, Hashable {
         let id: Int
@@ -26,10 +29,19 @@ final class WhatsAppExporter {
 
         var displayName: String {
             if !partnerName.isEmpty { return partnerName }
-            // Clean up JID: "+1234567890@s.whatsapp.net" -> "+1234567890"
+            // Clean up JID: "+123****7890@s.whatsapp.net" -> "+123****7890"
             return contactJid
                 .replacingOccurrences(of: "@s.whatsapp.net", with: "")
                 .replacingOccurrences(of: "@g.us", with: " (Group)")
+        }
+
+        func exportFilename(format: MessageExportFormat, includeChatID: Bool) -> String {
+            let sanitized = displayName
+                .replacingOccurrences(of: "/", with: "-")
+                .replacingOccurrences(of: ":", with: "-")
+            let contactName = String(sanitized.prefix(80))
+            let baseName = contactName.isEmpty ? "WhatsApp Conversation" : contactName
+            return "\(baseName)\(includeChatID ? "-\(id)" : "").\(format.fileExtension)"
         }
     }
 
@@ -67,8 +79,9 @@ final class WhatsAppExporter {
         }
     }
 
-    init(databasePath: String) throws {
+    init(databasePath: String, manifest: BackupManifest? = nil) throws {
         self.db = try SQLiteReader(path: databasePath)
+        self.manifest = manifest
     }
 
     /// Initialize from a backup by finding WhatsApp's ChatStorage.sqlite.
@@ -82,7 +95,7 @@ final class WhatsAppExporter {
                 throw NSError(domain: "Phosphor", code: 404,
                               userInfo: [NSLocalizedDescriptionKey: "WhatsApp database file not found on disk"])
             }
-            try self.init(databasePath: filePath)
+            try self.init(databasePath: filePath, manifest: manifest)
             return
         }
 
@@ -91,7 +104,7 @@ final class WhatsAppExporter {
         for candidate in candidates where candidate.isFile {
             let filePath = try manifest.readablePath(for: candidate)
             if FileManager.default.fileExists(atPath: filePath) {
-                try self.init(databasePath: filePath)
+                try self.init(databasePath: filePath, manifest: manifest)
                 return
             }
         }
@@ -192,49 +205,283 @@ final class WhatsAppExporter {
 
     // MARK: - Export
 
-    func exportChat(chatId: Int, format: MessageExportFormat, to path: String) throws {
-        let messages = try getMessages(chatId: chatId)
-        let chats = try getChats()
-        let chat = chats.first { $0.id == chatId }
-        let chatTitle = chat?.displayName ?? "WhatsApp Chat"
+    func exportChat(
+        chatId: Int,
+        format: MessageExportFormat,
+        to path: String,
+        options: MessageExportOptions = MessageExportOptions(),
+        cancellationCheck: (() throws -> Void)? = nil
+    ) throws {
+        try cancellationCheck?()
+        let messages = filtered(try getMessages(chatId: chatId), options: options)
+        let chat = try getChats().first { $0.id == chatId }
+        try exportMessages(
+            messages,
+            title: chat?.displayName ?? "WhatsApp Chat",
+            format: format,
+            to: path,
+            options: options,
+            cancellationCheck: cancellationCheck
+        )
+    }
 
-        switch format {
-        case .csv:
-            try exportCSV(messages: messages, title: chatTitle, to: path)
-        case .txt:
-            try exportTXT(messages: messages, title: chatTitle, to: path)
-        case .pdf:
-            try exportPDF(messages: messages, title: chatTitle, to: path)
-        case .html:
-            try exportHTML(messages: messages, title: chatTitle, to: path)
-        case .json:
-            try exportJSON(messages: messages, title: chatTitle, to: path)
-        case .mbox:
-            // WhatsApp export reuses the iMessage MBOX writer via a minimal shim:
-            // serialise to TXT for now since WhatsApp media live in a separate
-            // ChatStorage layout. MBOX support tracked for iMessage in issue #13.
-            try exportTXT(messages: messages, title: chatTitle, to: path)
+    func exportChatPDFBundle(
+        chat: WAChat,
+        messages: [WAMessage],
+        to parentDirectory: String,
+        options: MessageExportOptions = MessageExportOptions(),
+        cancellationCheck: (() throws -> Void)? = nil
+    ) throws -> MessageExportBundleWriter.Result {
+        var bundleOptions = options
+        bundleOptions.includeAttachments = true
+        let filteredMessages = filtered(messages, options: bundleOptions)
+        let filename = chat.exportFilename(format: .pdf, includeChatID: false)
+        let directoryName = (filename as NSString).deletingPathExtension
+        return try MessageExportBundleWriter.write(
+            in: URL(fileURLWithPath: parentDirectory, isDirectory: true),
+            directoryName: directoryName
+        ) { conversationDirectory in
+            let attachmentsDirectory = conversationDirectory.appendingPathComponent("Attachments", isDirectory: true)
+            let attachmentMap = try stageMedia(
+                messages: filteredMessages,
+                to: attachmentsDirectory,
+                cancellationCheck: cancellationCheck
+            )
+            if attachmentMap.isEmpty {
+                try FileManager.default.createDirectory(at: attachmentsDirectory, withIntermediateDirectories: true)
+            }
+            try exportMessages(
+                filteredMessages,
+                title: chat.displayName,
+                format: .pdf,
+                to: conversationDirectory.appendingPathComponent(filename).path,
+                options: bundleOptions,
+                attachmentMap: attachmentMap,
+                cancellationCheck: cancellationCheck
+            )
+            return 1
         }
     }
 
-    func exportAllChats(format: MessageExportFormat, to directory: String) throws -> Int {
+    func exportAllChats(
+        format: MessageExportFormat,
+        to parentDirectory: String,
+        options: MessageExportOptions = MessageExportOptions(),
+        onProgress: ((Int, Int, String) throws -> Void)? = nil,
+        cancellationCheck: (() throws -> Void)? = nil
+    ) throws -> MessageExportBundleWriter.Result {
         let chats = try getChats()
-        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        return try MessageExportBundleWriter.write(
+            in: URL(fileURLWithPath: parentDirectory, isDirectory: true),
+            directoryName: "WhatsApp \(format.fileExtension.uppercased()) Export"
+        ) { exportDirectory in
+            for (index, chat) in chats.enumerated() {
+                try cancellationCheck?()
+                try onProgress?(index, chats.count, chat.displayName)
+                let path = exportDirectory.appendingPathComponent(
+                    chat.exportFilename(format: format, includeChatID: true)
+                ).path
+                try exportChat(
+                    chatId: chat.id,
+                    format: format,
+                    to: path,
+                    options: options,
+                    cancellationCheck: cancellationCheck
+                )
+            }
+            try onProgress?(chats.count, chats.count, "Complete")
+            return chats.count
+        }
+    }
 
+    func exportAllChatsAllFormats(
+        to parentDirectory: String,
+        options: MessageExportOptions = MessageExportOptions(),
+        onProgress: ((Int, Int, String) throws -> Void)? = nil,
+        cancellationCheck: (() throws -> Void)? = nil
+    ) throws -> MessageExportBundleWriter.Result {
+        let chats = try getChats()
+        var bundleOptions = options
+        bundleOptions.includeAttachments = true
+        return try MessageExportBundleWriter.write(
+            in: URL(fileURLWithPath: parentDirectory, isDirectory: true),
+            directoryName: "WhatsApp Export"
+        ) { rootDirectory in
+            for (index, chat) in chats.enumerated() {
+                try cancellationCheck?()
+                try onProgress?(index, chats.count, chat.displayName)
+                let folderName = (chat.exportFilename(format: .html, includeChatID: true) as NSString)
+                    .deletingPathExtension
+                let conversationDirectory = rootDirectory.appendingPathComponent(folderName, isDirectory: true)
+                try FileManager.default.createDirectory(at: conversationDirectory, withIntermediateDirectories: true)
+                let messages = filtered(try getMessages(chatId: chat.id), options: bundleOptions)
+                let attachmentsDirectory = conversationDirectory.appendingPathComponent("Attachments", isDirectory: true)
+                let attachmentMap = try stageMedia(
+                    messages: messages,
+                    to: attachmentsDirectory,
+                    cancellationCheck: cancellationCheck
+                )
+                if attachmentMap.isEmpty {
+                    try FileManager.default.createDirectory(at: attachmentsDirectory, withIntermediateDirectories: true)
+                }
+                for format in MessageExportFormat.allCases {
+                    try cancellationCheck?()
+                    try exportMessages(
+                        messages,
+                        title: chat.displayName,
+                        format: format,
+                        to: conversationDirectory.appendingPathComponent(
+                            chat.exportFilename(format: format, includeChatID: false)
+                        ).path,
+                        options: bundleOptions,
+                        attachmentMap: attachmentMap,
+                        cancellationCheck: cancellationCheck
+                    )
+                }
+            }
+            try onProgress?(chats.count, chats.count, "Complete")
+            return chats.count
+        }
+    }
+
+    func exportMessages(
+        _ messages: [WAMessage],
+        title: String,
+        format: MessageExportFormat,
+        to path: String,
+        options: MessageExportOptions = MessageExportOptions(),
+        attachmentMap providedAttachmentMap: [String: String]? = nil,
+        cancellationCheck: (() throws -> Void)? = nil
+    ) throws {
+        let finalURL = URL(fileURLWithPath: path)
+        let prepareAttachments: (() throws -> MessageAttachmentExporter.Generation)? = providedAttachmentMap == nil
+            ? { [self] in
+                try prepareMediaGeneration(
+                    messages: messages,
+                    beside: path,
+                    includeAttachments: options.includeAttachments,
+                    cancellationCheck: cancellationCheck
+                )
+            }
+            : nil
+        try MessageExportTransaction.write(
+            to: finalURL,
+            attachmentMap: providedAttachmentMap ?? [:],
+            prepareAttachments: prepareAttachments
+        ) { stagedURL, attachmentMap in
+            switch format {
+            case .csv:
+                try exportCSV(messages: messages, title: title, to: stagedURL.path, cancellationCheck: cancellationCheck)
+            case .txt:
+                try exportTXT(messages: messages, title: title, to: stagedURL.path, cancellationCheck: cancellationCheck)
+            case .pdf:
+                try exportPDF(messages: messages, title: title, to: stagedURL.path, attachmentMap: attachmentMap, cancellationCheck: cancellationCheck)
+            case .html:
+                try exportHTML(messages: messages, title: title, to: stagedURL.path, attachmentMap: attachmentMap, cancellationCheck: cancellationCheck)
+            case .json:
+                try exportJSON(messages: messages, title: title, to: stagedURL.path, cancellationCheck: cancellationCheck)
+            case .mbox:
+                try exportMbox(messages: messages, title: title, to: stagedURL.path, attachmentMap: attachmentMap, cancellationCheck: cancellationCheck)
+            }
+        }
+    }
+
+    // MARK: - Private
+
+    private func filtered(_ messages: [WAMessage], options: MessageExportOptions) -> [WAMessage] {
+        messages.filter { message in
+            if let startDate = options.startDate, message.date < startDate { return false }
+            if let endDate = options.endDate, message.date > endDate { return false }
+            return true
+        }
+    }
+
+    private func mediaItems(for messages: [WAMessage]) -> [MessageAttachmentExporter.Item] {
+        messages.compactMap { message in
+            guard let localPath = message.mediaLocalPath,
+                  let sourcePath = resolveMediaDiskPath(localPath) else { return nil }
+            let displayName = (localPath as NSString).lastPathComponent.isEmpty
+                ? "WhatsApp Media-\(message.id)"
+                : (localPath as NSString).lastPathComponent
+            return MessageAttachmentExporter.Item(
+                key: String(message.id),
+                displayName: displayName,
+                sourcePath: sourcePath
+            )
+        }
+    }
+
+    private func prepareMediaGeneration(
+        messages: [WAMessage],
+        beside path: String,
+        includeAttachments: Bool,
+        cancellationCheck: (() throws -> Void)?
+    ) throws -> MessageAttachmentExporter.Generation {
+        try MessageAttachmentExporter.prepareGeneration(
+            includeAttachments ? mediaItems(for: messages) : [],
+            beside: path,
+            cancellationCheck: cancellationCheck
+        )
+    }
+
+    private func stageMedia(
+        messages: [WAMessage],
+        to directory: URL,
+        cancellationCheck: (() throws -> Void)?
+    ) throws -> [String: String] {
+        try MessageAttachmentExporter.export(
+            mediaItems(for: messages),
+            to: directory,
+            cancellationCheck: cancellationCheck
+        )
+    }
+
+    private func resolveMediaDiskPath(_ localPath: String) -> String? {
+        if let cached = mediaPathCache[localPath] { return cached }
+        if missingMediaPaths.contains(localPath) { return nil }
+        guard let manifest else { return nil }
+
+        let normalized = localPath
+            .replacingOccurrences(of: "file://", with: "")
+            .replacingOccurrences(of: "/private/var/mobile/Containers/Shared/AppGroup/", with: "")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let filename = (normalized as NSString).lastPathComponent
+        let candidates = ((try? manifest.search(filename)) ?? []).filter {
+            $0.isFile
+                && $0.domain.localizedCaseInsensitiveContains("whatsapp")
+                && $0.fileName == filename
+        }
+        let exactEntry = candidates.first {
+            $0.relativePath == normalized || normalized.hasSuffix("/\($0.relativePath)")
+        }
+        let ranked = candidates.map { candidate in
+            (entry: candidate, score: Self.commonPathSuffixLength(candidate.relativePath, normalized))
+        }.sorted { $0.score > $1.score }
+        let bestSuffixEntry: BackupManifest.FileEntry? = {
+            guard let first = ranked.first, first.score >= 2 else { return nil }
+            guard ranked.dropFirst().first?.score != first.score else { return nil }
+            return first.entry
+        }()
+        let entry = exactEntry ?? bestSuffixEntry ?? (candidates.count == 1 ? candidates[0] : nil)
+        guard let entry, let path = try? manifest.readablePath(for: entry),
+              FileManager.default.fileExists(atPath: path) else {
+            missingMediaPaths.insert(localPath)
+            return nil
+        }
+        mediaPathCache[localPath] = path
+        return path
+    }
+
+    private static func commonPathSuffixLength(_ lhs: String, _ rhs: String) -> Int {
+        let left = lhs.split(separator: "/")
+        let right = rhs.split(separator: "/")
         var count = 0
-        for chat in chats {
-            let safeName = chat.displayName
-                .replacingOccurrences(of: "/", with: "-")
-                .replacingOccurrences(of: ":", with: "-")
-                .prefix(50)
-            let path = (directory as NSString).appendingPathComponent("\(safeName).\(format.fileExtension)")
-            try exportChat(chatId: chat.id, format: format, to: path)
+        while count < min(left.count, right.count),
+              left[left.count - 1 - count] == right[right.count - 1 - count] {
             count += 1
         }
         return count
     }
-
-    // MARK: - Private
 
     private func parseMessage(_ row: [String: Any?]) -> WAMessage? {
         guard let pk = row["Z_PK"] as? Int else { return nil }
@@ -260,33 +507,46 @@ final class WhatsAppExporter {
         )
     }
 
-    private func exportCSV(messages: [WAMessage], title: String, to path: String) throws {
+    private func exportCSV(messages: [WAMessage], title: String, to path: String, cancellationCheck: (() throws -> Void)? = nil) throws {
         var csv = "Date,Sender,Text,Media Type\n"
         for msg in messages {
+            try cancellationCheck?()
             let sender = msg.isFromMe ? "Me" : (msg.senderJid ?? "Unknown")
             csv += CSVExport.row([msg.formattedDate, sender, msg.displayText, msg.mediaTypeLabel])
         }
         try csv.write(toFile: path, atomically: true, encoding: .utf8)
     }
 
-    private func exportTXT(messages: [WAMessage], title: String, to path: String) throws {
+    private func exportTXT(messages: [WAMessage], title: String, to path: String, cancellationCheck: (() throws -> Void)? = nil) throws {
         var lines = "WhatsApp Chat: \(title)\n"
         lines += "Exported by Phosphor\n"
         lines += String(repeating: "-", count: 60) + "\n\n"
         for msg in messages {
+            try cancellationCheck?()
             let sender = msg.isFromMe ? "Me" : (msg.senderJid ?? "Unknown")
             lines += "[\(msg.formattedDate)] \(sender):\n\(msg.displayText)\n\n"
         }
         try lines.write(toFile: path, atomically: true, encoding: .utf8)
     }
 
-    private func exportPDF(messages: [WAMessage], title: String, to path: String) throws {
-        let entries = messages.map { msg in
-            PDFTranscriptWriter.Entry(
+    private func exportPDF(messages: [WAMessage], title: String, to path: String, attachmentMap: [String: String], cancellationCheck: (() throws -> Void)? = nil) throws {
+        let entries = try messages.map { msg in
+            try cancellationCheck?()
+            let relativePath = attachmentMap[String(msg.id)]
+            let absolutePath = relativePath.map {
+                URL(fileURLWithPath: path).deletingLastPathComponent().appendingPathComponent($0).path
+            }
+            let attachments: [PDFTranscriptWriter.Attachment] = relativePath.map { _ in
+                [.init(summary: (msg.mediaLocalPath as NSString?)?.lastPathComponent ?? msg.mediaTypeLabel,
+                       imagePath: (msg.mediaType == 1 || msg.mediaType == 9 || msg.mediaType == 15) ? absolutePath : nil)]
+            } ?? []
+            return PDFTranscriptWriter.Entry(
                 title: msg.isFromMe ? "Me" : (msg.senderJid ?? "Unknown"),
                 subtitle: msg.formattedDate,
+                timestamp: msg.date,
                 body: msg.displayText,
-                isFromMe: msg.isFromMe
+                isFromMe: msg.isFromMe,
+                attachments: attachments
             )
         }
         try PDFTranscriptWriter.write(
@@ -297,7 +557,7 @@ final class WhatsAppExporter {
         )
     }
 
-    private func exportHTML(messages: [WAMessage], title: String, to path: String) throws {
+    private func exportHTML(messages: [WAMessage], title: String, to path: String, attachmentMap: [String: String], cancellationCheck: (() throws -> Void)? = nil) throws {
         var html = """
         <!DOCTYPE html>
         <html lang="en"><head><meta charset="UTF-8">
@@ -320,6 +580,7 @@ final class WhatsAppExporter {
         """
 
         for msg in messages {
+            try cancellationCheck?()
             let cls = msg.isFromMe ? "me" : ""
             let bubble = msg.isFromMe ? "from-me" : "from-them"
             let text = msg.displayText.htmlEscaped
@@ -331,6 +592,10 @@ final class WhatsAppExporter {
             }
             if msg.mediaType != 0 {
                 html += "<span class=\"media\">\(text)</span>"
+                if let relativePath = attachmentMap[String(msg.id)] {
+                    let href = MessageAttachmentExporter.relativeURL(for: relativePath).htmlEscaped
+                    html += "<br><a href=\"\(href)\">Open original attachment</a>"
+                }
             } else {
                 html += text
             }
@@ -341,9 +606,106 @@ final class WhatsAppExporter {
         try html.write(toFile: path, atomically: true, encoding: .utf8)
     }
 
-    private func exportJSON(messages: [WAMessage], title: String, to path: String) throws {
-        let entries: [[String: Any]] = messages.map { msg in
-            [
+    private func exportMbox(
+        messages: [WAMessage],
+        title: String,
+        to path: String,
+        attachmentMap: [String: String],
+        cancellationCheck: (() throws -> Void)? = nil
+    ) throws {
+        let crlf = "\r\n"
+        let envelopeFormatter = DateFormatter()
+        envelopeFormatter.locale = Locale(identifier: "en_US_POSIX")
+        envelopeFormatter.timeZone = TimeZone(identifier: "UTC")
+        envelopeFormatter.dateFormat = "EEE MMM d HH:mm:ss yyyy"
+        let headerFormatter = DateFormatter()
+        headerFormatter.locale = Locale(identifier: "en_US_POSIX")
+        headerFormatter.dateFormat = "EEE, d MMM yyyy HH:mm:ss Z"
+        let transcriptURL = URL(fileURLWithPath: path)
+        var output = ""
+
+        for message in messages {
+            try cancellationCheck?()
+            let sender = message.isFromMe ? "Me" : (message.senderJid ?? "Unknown")
+            let relativePath = attachmentMap[String(message.id)]
+            let attachmentURL = relativePath.map {
+                transcriptURL.deletingLastPathComponent().appendingPathComponent($0)
+            }
+            let attachmentData = attachmentURL.flatMap { try? Data(contentsOf: $0) }
+            let attachmentName = attachmentURL?.lastPathComponent ?? "WhatsApp Media"
+
+            output += "From phosphor@localhost \(envelopeFormatter.string(from: message.date))\(crlf)"
+            output += "Date: \(headerFormatter.string(from: message.date))\(crlf)"
+            output += "From: \(mboxHeaderValue(sender)) <phosphor@localhost>\(crlf)"
+            output += "Subject: \(mboxHeaderValue("WhatsApp - \(title)"))\(crlf)"
+            output += "Message-ID: <whatsapp-\(message.id)@phosphor.local>\(crlf)"
+            output += "MIME-Version: 1.0\(crlf)"
+
+            if let attachmentData {
+                let boundary = "----=_Phosphor_WhatsApp_\(message.id)_\(UUID().uuidString)"
+                output += "Content-Type: multipart/mixed; boundary=\"\(boundary)\"\(crlf)\(crlf)"
+                output += "--\(boundary)\(crlf)"
+                output += "Content-Type: text/plain; charset=UTF-8\(crlf)"
+                output += "Content-Transfer-Encoding: 8bit\(crlf)\(crlf)"
+                output += mboxEscape(message.displayText) + crlf + crlf
+                output += "--\(boundary)\(crlf)"
+                output += "Content-Type: \(mediaMIMEType(message.mediaType, filename: attachmentName)); name=\"\(mboxHeaderValue(attachmentName))\"\(crlf)"
+                output += "Content-Disposition: attachment; filename=\"\(mboxHeaderValue(attachmentName))\"\(crlf)"
+                output += "Content-Transfer-Encoding: base64\(crlf)\(crlf)"
+                output += attachmentData.base64EncodedString(options: [.lineLength76Characters, .endLineWithCarriageReturn, .endLineWithLineFeed])
+                output += crlf + "--\(boundary)--\(crlf)\(crlf)"
+            } else {
+                output += "Content-Type: text/plain; charset=UTF-8\(crlf)"
+                output += "Content-Transfer-Encoding: 8bit\(crlf)\(crlf)"
+                var body = message.displayText
+                if relativePath != nil { body += "\n\n[Attachment unavailable: \(attachmentName)]" }
+                output += mboxEscape(body) + crlf + crlf
+            }
+        }
+        try output.write(toFile: path, atomically: true, encoding: .utf8)
+    }
+
+    private func mboxEscape(_ body: String) -> String {
+        body.components(separatedBy: "\n").map {
+            $0.hasPrefix("From ") ? ">" + $0 : $0
+        }.joined(separator: "\r\n")
+    }
+
+    private func mboxHeaderValue(_ raw: String) -> String {
+        let sanitized = raw
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\"", with: "'")
+        guard !sanitized.allSatisfy({ $0.isASCII }) else { return sanitized }
+        return "=?UTF-8?B?\(Data(sanitized.utf8).base64EncodedString())?="
+    }
+
+    private func mediaMIMEType(_ mediaType: Int, filename: String) -> String {
+        switch (filename as NSString).pathExtension.lowercased() {
+        case "jpg", "jpeg": return "image/jpeg"
+        case "png": return "image/png"
+        case "gif": return "image/gif"
+        case "heic", "heif": return "image/heic"
+        case "mp4", "m4v": return "video/mp4"
+        case "mov": return "video/quicktime"
+        case "mp3": return "audio/mpeg"
+        case "m4a": return "audio/mp4"
+        case "ogg", "opus": return "audio/ogg"
+        case "pdf": return "application/pdf"
+        default:
+            switch mediaType {
+            case 1, 9, 15: return "image/jpeg"
+            case 2: return "video/mp4"
+            case 3: return "audio/mpeg"
+            default: return "application/octet-stream"
+            }
+        }
+    }
+
+    private func exportJSON(messages: [WAMessage], title: String, to path: String, cancellationCheck: (() throws -> Void)? = nil) throws {
+        let entries: [[String: Any]] = try messages.map { msg in
+            try cancellationCheck?()
+            return [
                 "id": msg.id,
                 "date": msg.date.iso8601String,
                 "sender": msg.isFromMe ? "Me" : (msg.senderJid ?? ""),

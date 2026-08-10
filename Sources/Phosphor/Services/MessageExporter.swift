@@ -266,6 +266,11 @@ final class MessageExporter {
             "m.service", "m.cache_has_attachments", "m.is_read",
             "COALESCE(h.id, '') as handle_id"
         ]
+        if messageColumns.contains("attributedBody") {
+            // Keep backup-controlled BLOBs out of the bulk result set. Rows that
+            // need the fallback are loaded and decoded individually below.
+            fields.append(MessageAttributedBodyDecoder.attributedBodyCandidateSQLProjection)
+        }
         for opt in [
             "associated_message_type", "associated_message_guid", "balloon_bundle_id", "payload_data",
             "reply_to_guid", "thread_originator_guid", "thread_originator_part", "expressive_send_style_id",
@@ -334,12 +339,20 @@ final class MessageExporter {
             }
         }
 
+        // Recovered fallback strings are retained in the returned Message array.
+        // Bound their aggregate contribution per query just like each source BLOB.
+        var remainingAttributedBodyTextBytes = 64 * 1024 * 1024
         return primaryRows.compactMap { row in
             let rowId = (row["ROWID"] ?? nil) as? Int
             let guid = (row["guid"] ?? nil) as? String
             let attachments = rowId.flatMap { attachmentsByMessage[$0] } ?? []
             let reactionList = guid.flatMap { reactionsByTarget[$0] } ?? []
-            return parseMessage(row, attachments: attachments, reactions: reactionList)
+            return parseMessage(
+                row,
+                attachments: attachments,
+                reactions: reactionList,
+                remainingAttributedBodyTextBytes: &remainingAttributedBodyTextBytes
+            )
         }
     }
 
@@ -532,6 +545,52 @@ final class MessageExporter {
         try exportMessages(messages, chatTitle: chatTitle, format: format, to: path, options: options, cancellationCheck: cancellationCheck)
     }
 
+    /// Export one conversation as a self-contained PDF bundle with the readable
+    /// originals in `Attachments`. The bundle writer keeps the entire folder
+    /// private until the transcript and attachment copy have both completed.
+    func exportChatPDFBundle(
+        chat: MessageChat,
+        messages: [Message],
+        to parentDirectory: String,
+        options: MessageExportOptions = MessageExportOptions(),
+        cancellationCheck: (() throws -> Void)? = nil
+    ) throws -> MessageExportBundleWriter.Result {
+        let fileManager = FileManager.default
+        var bundleOptions = options
+        bundleOptions.includeAttachments = true
+        let pdfFilename = chat.exportFilename(format: .pdf, includeChatID: false)
+        let directoryName = (pdfFilename as NSString).deletingPathExtension
+        let filteredMessages = bundleOptions.apply(to: messages)
+
+        return try MessageExportBundleWriter.write(
+            in: URL(fileURLWithPath: parentDirectory, isDirectory: true),
+            directoryName: directoryName
+        ) { conversationDirectory in
+            try cancellationCheck?()
+            let attachmentsDirectory = conversationDirectory.appendingPathComponent("Attachments", isDirectory: true)
+            let attachmentMap = try stageOriginalAttachments(
+                messages: filteredMessages,
+                attachmentDirectory: attachmentsDirectory,
+                includeAttachments: true,
+                cancellationCheck: cancellationCheck
+            )
+            if attachmentMap.isEmpty {
+                try fileManager.createDirectory(at: attachmentsDirectory, withIntermediateDirectories: true)
+            }
+
+            try exportMessages(
+                filteredMessages,
+                chatTitle: chat.title,
+                format: .pdf,
+                to: conversationDirectory.appendingPathComponent(pdfFilename).path,
+                options: bundleOptions,
+                attachmentMap: attachmentMap,
+                cancellationCheck: cancellationCheck
+            )
+            return 1
+        }
+    }
+
     /// Export all conversations.
     func exportAllChats(
         format: MessageExportFormat,
@@ -548,7 +607,7 @@ final class MessageExporter {
         for chat in chats {
             try cancellationCheck?()
             try onProgress?(count, chats.count, chat.title)
-            let filename = exportFilename(for: chat, format: format)
+            let filename = chat.exportFilename(format: format, includeChatID: true)
             let path = (directory as NSString).appendingPathComponent(filename)
             try exportChat(chatId: chat.id, format: format, to: path, options: options, cancellationCheck: cancellationCheck)
             count += 1
@@ -557,39 +616,116 @@ final class MessageExporter {
         return count
     }
 
+    /// Export every conversation into its own folder with every supported
+    /// transcript format and one shared folder containing the original files.
+    func exportAllChatsAllFormats(
+        to parentDirectory: String,
+        options: MessageExportOptions = MessageExportOptions(),
+        onProgress: ((Int, Int, String) throws -> Void)? = nil,
+        cancellationCheck: (() throws -> Void)? = nil
+    ) throws -> MessageExportBundleWriter.Result {
+        let chats = try getChats()
+        let fileManager = FileManager.default
+        var bundleOptions = options
+        bundleOptions.includeAttachments = true
+
+        return try MessageExportBundleWriter.write(
+            in: URL(fileURLWithPath: parentDirectory, isDirectory: true)
+        ) { rootDirectory in
+            var count = 0
+            for chat in chats {
+                try cancellationCheck?()
+                try onProgress?(count, chats.count, chat.title)
+
+                let folderFilename = chat.exportFilename(format: .html, includeChatID: true)
+                let folderName = (folderFilename as NSString).deletingPathExtension
+                let conversationDirectory = rootDirectory.appendingPathComponent(folderName, isDirectory: true)
+                try fileManager.createDirectory(at: conversationDirectory, withIntermediateDirectories: true)
+
+                let messages = bundleOptions.apply(to: try getMessages(chatId: chat.id))
+                let attachmentsDirectory = conversationDirectory.appendingPathComponent("Attachments", isDirectory: true)
+                let attachmentMap = try stageOriginalAttachments(
+                    messages: messages,
+                    attachmentDirectory: attachmentsDirectory,
+                    includeAttachments: true,
+                    cancellationCheck: cancellationCheck
+                )
+                if attachmentMap.isEmpty {
+                    try fileManager.createDirectory(at: attachmentsDirectory, withIntermediateDirectories: true)
+                }
+
+                for format in MessageExportFormat.allCases {
+                    try cancellationCheck?()
+                    let filename = chat.exportFilename(format: format, includeChatID: false)
+                    let path = conversationDirectory.appendingPathComponent(filename).path
+                    try exportMessages(
+                        messages,
+                        chatTitle: chat.title,
+                        format: format,
+                        to: path,
+                        options: bundleOptions,
+                        attachmentMap: attachmentMap,
+                        cancellationCheck: cancellationCheck
+                    )
+                }
+                count += 1
+            }
+            try onProgress?(count, chats.count, "Complete")
+            return count
+        }
+    }
+
     func exportMessages(
         _ messages: [Message],
         chatTitle: String,
         format: MessageExportFormat,
         to path: String,
         options: MessageExportOptions = MessageExportOptions(),
+        attachmentMap providedAttachmentMap: [String: String]? = nil,
         cancellationCheck: (() throws -> Void)? = nil
     ) throws {
-        switch format {
-        case .csv:
-            try exportCSV(messages: messages, chatTitle: chatTitle, to: path, cancellationCheck: cancellationCheck)
-        case .txt:
-            try exportPlainText(messages: messages, chatTitle: chatTitle, to: path, cancellationCheck: cancellationCheck)
-        case .pdf:
-            try exportPDF(messages: messages, chatTitle: chatTitle, to: path, includeAttachments: options.includeAttachments, cancellationCheck: cancellationCheck)
-        case .html:
-            try exportHTML(messages: messages, chatTitle: chatTitle, to: path, includeAttachments: options.includeAttachments, cancellationCheck: cancellationCheck)
-        case .json:
-            try exportJSON(messages: messages, chatTitle: chatTitle, to: path, cancellationCheck: cancellationCheck)
-        case .mbox:
-            try exportMbox(messages: messages, chatTitle: chatTitle, to: path, includeAttachments: options.includeAttachments, cancellationCheck: cancellationCheck)
+        let finalTranscriptURL = URL(fileURLWithPath: path)
+        let prepareAttachments: (() throws -> MessageAttachmentExporter.Generation)? = providedAttachmentMap == nil
+            ? { [self] in
+                try prepareOriginalAttachmentGeneration(
+                    messages: messages,
+                    exportPath: path,
+                    includeAttachments: options.includeAttachments,
+                    cancellationCheck: cancellationCheck
+                )
+            }
+            : nil
+
+        try MessageExportTransaction.write(
+            to: finalTranscriptURL,
+            attachmentMap: providedAttachmentMap ?? [:],
+            prepareAttachments: prepareAttachments
+        ) { stagedTranscriptURL, attachmentMap in
+            switch format {
+            case .csv:
+                try exportCSV(messages: messages, chatTitle: chatTitle, to: stagedTranscriptURL.path, cancellationCheck: cancellationCheck)
+            case .txt:
+                try exportPlainText(messages: messages, chatTitle: chatTitle, to: stagedTranscriptURL.path, cancellationCheck: cancellationCheck)
+            case .pdf:
+                try exportPDF(messages: messages, chatTitle: chatTitle, to: stagedTranscriptURL.path, includeAttachments: options.includeAttachments, cancellationCheck: cancellationCheck)
+            case .html:
+                try exportHTML(
+                    messages: messages,
+                    chatTitle: chatTitle,
+                    to: stagedTranscriptURL.path,
+                    includeAttachments: options.includeAttachments,
+                    attachmentMap: attachmentMap,
+                    cancellationCheck: cancellationCheck
+                )
+            case .json:
+                try exportJSON(messages: messages, chatTitle: chatTitle, to: stagedTranscriptURL.path, cancellationCheck: cancellationCheck)
+            case .mbox:
+                try exportMbox(messages: messages, chatTitle: chatTitle, to: stagedTranscriptURL.path, includeAttachments: options.includeAttachments, cancellationCheck: cancellationCheck)
+            }
         }
     }
 
     // MARK: - Private Export Implementations
-
-    private func exportFilename(for chat: MessageChat, format: MessageExportFormat) -> String {
-        let safeName = chat.title
-            .replacingOccurrences(of: "/", with: "-")
-            .replacingOccurrences(of: ":", with: "-")
-            .prefix(50)
-        return "\(safeName)-chat-\(chat.id).\(format.fileExtension)"
-    }
 
     private func exportCSV(messages: [Message], chatTitle: String, to path: String, cancellationCheck: (() throws -> Void)? = nil) throws {
         let outputURL = URL(fileURLWithPath: path)
@@ -676,13 +812,33 @@ final class MessageExporter {
 
         let entries = messages.map { msg -> PDFTranscriptWriter.Entry in
             let visibleAttachments = includeAttachments ? msg.attachments.filter { !$0.isPluginPayload } : []
-            let body = (msg.text?.isEmpty == false) ? (msg.text ?? "") : msg.displayText
+            let body: String
+            if msg.text?.isEmpty == false {
+                body = msg.text ?? ""
+            } else if !visibleAttachments.isEmpty || msg.linkURL != nil {
+                // The attachment/link card is the visible message content. Avoid
+                // adding a redundant "[Attachment]" transcript line beneath it.
+                body = ""
+            } else {
+                body = msg.displayText
+            }
             let reactionBadges = msg.reactions.map { $0.type.emoji }
-            let attachmentSummaries = visibleAttachments.map { attachment in
+            var renderedImageCount = 0
+            let pdfAttachments = visibleAttachments.map { attachment in
                 var parts: [String] = [attachment.displayName]
                 if let mime = attachment.mimeType, !mime.isEmpty { parts.append(mime) }
                 if attachment.totalBytes > 0 { parts.append(ByteCountFormatter.string(fromByteCount: Int64(attachment.totalBytes), countStyle: .file)) }
-                return parts.joined(separator: " • ")
+                var imagePath: String?
+                if attachment.isImage,
+                   renderedImageCount < 3,
+                   let filename = attachment.filename {
+                    imagePath = resolveAttachmentDiskPath(filename: filename)
+                    if imagePath != nil { renderedImageCount += 1 }
+                }
+                return PDFTranscriptWriter.Attachment(
+                    summary: parts.joined(separator: " • "),
+                    imagePath: imagePath
+                )
             }
             // Keep PDF exports conversation-like: don't print "iMessage" or
             // read/unread under every bubble. Surface the service only when it
@@ -693,11 +849,12 @@ final class MessageExporter {
             return PDFTranscriptWriter.Entry(
                 title: msg.senderLabel,
                 subtitle: msg.formattedDate,
+                timestamp: msg.date,
                 body: body,
                 isFromMe: msg.isFromMe,
                 reactions: reactionBadges,
                 inlineReply: replyPreview(for: msg),
-                attachments: attachmentSummaries,
+                attachments: pdfAttachments,
                 linkURL: msg.linkURL,
                 status: statusParts.isEmpty ? nil : statusParts.joined(separator: " • ")
             )
@@ -712,66 +869,77 @@ final class MessageExporter {
         )
     }
 
-    /// Copy referenced attachments into a sibling `<export>_attachments` folder so the
-    /// HTML can <img>/<a href> them. Returns map of attachment filename -> relative
-    /// path used inside the HTML. Failures are silent: attachments missing from the
-    /// backup just stay as text annotations.
-    ///
-    /// Plugin payload blobs (rich-link metadata) are skipped because they are
-    /// binary plists that macOS has no handler for and would clutter the export
-    /// folder with `*.pluginPayloadAttachment` files (issue #17).
-    private func stageAttachments(messages: [Message], htmlPath: String, cancellationCheck: (() throws -> Void)? = nil) throws -> [String: String] {
-        let baseName = (htmlPath as NSString).deletingPathExtension
-        let dir = "\(baseName)_attachments"
-        let fm = FileManager.default
-        var map: [String: String] = [:]
-        var folderCreated = false
+    /// Resolve user-visible attachment blobs and stage originals beside every
+    /// transcript format. Rich-link plugin payloads remain internal metadata.
+    private func prepareOriginalAttachmentGeneration(
+        messages: [Message],
+        exportPath: String,
+        includeAttachments: Bool,
+        cancellationCheck: (() throws -> Void)? = nil
+    ) throws -> MessageAttachmentExporter.Generation {
+        let items = try originalAttachmentItems(
+            messages: messages,
+            includeAttachments: includeAttachments,
+            cancellationCheck: cancellationCheck
+        )
+        return try MessageAttachmentExporter.prepareGeneration(
+            items,
+            beside: exportPath,
+            cancellationCheck: cancellationCheck
+        )
+    }
 
-        for msg in messages {
+    private func stageOriginalAttachments(
+        messages: [Message],
+        attachmentDirectory: URL,
+        includeAttachments: Bool,
+        cancellationCheck: (() throws -> Void)? = nil
+    ) throws -> [String: String] {
+        let items = try originalAttachmentItems(
+            messages: messages,
+            includeAttachments: includeAttachments,
+            cancellationCheck: cancellationCheck
+        )
+        return try MessageAttachmentExporter.export(
+            items,
+            to: attachmentDirectory,
+            cancellationCheck: cancellationCheck
+        )
+    }
+
+    private func originalAttachmentItems(
+        messages: [Message],
+        includeAttachments: Bool,
+        cancellationCheck: (() throws -> Void)? = nil
+    ) throws -> [MessageAttachmentExporter.Item] {
+        guard includeAttachments else { return [] }
+        var seenFilenames: Set<String> = []
+        var items: [MessageAttachmentExporter.Item] = []
+        for message in messages {
             try cancellationCheck?()
-            for attachment in msg.attachments {
-                guard !attachment.isPluginPayload else { continue }
-                guard let filename = attachment.filename, !filename.isEmpty else { continue }
-                if map[filename] != nil { continue }
-                guard let source = resolveAttachmentDiskPath(filename: filename) else { continue }
-
-                if !folderCreated {
-                    try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
-                    folderCreated = true
-                }
-
-                let displayName = (filename as NSString).lastPathComponent
-                var unique = displayName
-                var dest = (dir as NSString).appendingPathComponent(unique)
-                var i = 2
-                while fm.fileExists(atPath: dest) {
-                    let ext = (displayName as NSString).pathExtension
-                    let stem = (displayName as NSString).deletingPathExtension
-                    unique = ext.isEmpty ? "\(stem)-\(i)" : "\(stem)-\(i).\(ext)"
-                    dest = (dir as NSString).appendingPathComponent(unique)
-                    i += 1
-                }
-                do {
-                    try fm.copyItem(atPath: source, toPath: dest)
-                    let folderName = (dir as NSString).lastPathComponent
-                    map[filename] = "\(folderName)/\(unique)"
-                } catch {
-                    continue
-                }
+            for attachment in message.attachments where !attachment.isPluginPayload {
+                guard let filename = attachment.filename,
+                      !filename.isEmpty,
+                      seenFilenames.insert(filename).inserted,
+                      let sourcePath = resolveAttachmentDiskPath(filename: filename) else { continue }
+                items.append(.init(
+                    key: filename,
+                    displayName: attachment.displayName,
+                    sourcePath: sourcePath
+                ))
             }
         }
-        return map
+        return items
     }
 
-    private func removeAttachmentFolder(forHTMLPath htmlPath: String) {
-        let baseName = (htmlPath as NSString).deletingPathExtension
-        let dir = "\(baseName)_attachments"
-        try? FileManager.default.removeItem(atPath: dir)
-    }
-
-    private func exportHTML(messages: [Message], chatTitle: String, to path: String, includeAttachments: Bool = true, cancellationCheck: (() throws -> Void)? = nil) throws {
-        removeAttachmentFolder(forHTMLPath: path)
-        let attachmentMap = includeAttachments ? try stageAttachments(messages: messages, htmlPath: path, cancellationCheck: cancellationCheck) : [:]
+    private func exportHTML(
+        messages: [Message],
+        chatTitle: String,
+        to path: String,
+        includeAttachments: Bool = true,
+        attachmentMap: [String: String],
+        cancellationCheck: (() throws -> Void)? = nil
+    ) throws {
         let outputURL = URL(fileURLWithPath: path)
         try? FileManager.default.removeItem(at: outputURL)
         FileManager.default.createFile(atPath: path, contents: nil)
@@ -854,7 +1022,7 @@ final class MessageExporter {
                 bubbleHTML += text
             }
 
-            for attachment in msg.attachments where !attachment.isPluginPayload {
+            for attachment in msg.attachments where includeAttachments && !attachment.isPluginPayload {
                 guard let filename = attachment.filename,
                       let relPath = attachmentMap[filename] else {
                     if !bubbleHTML.isEmpty { bubbleHTML += "<br>" }
@@ -862,13 +1030,14 @@ final class MessageExporter {
                     continue
                 }
                 if !bubbleHTML.isEmpty { bubbleHTML += "<br>" }
+                let relativeURL = MessageAttachmentExporter.relativeURL(for: relPath)
                 if attachment.isImage {
-                    bubbleHTML += "<img class=\"attach-img\" src=\"\(htmlEscape(relPath))\" loading=\"lazy\">"
+                    bubbleHTML += "<img class=\"attach-img\" src=\"\(htmlEscape(relativeURL))\" loading=\"lazy\">"
                 } else if attachment.isVideo {
-                    bubbleHTML += "<video class=\"attach-video\" controls src=\"\(htmlEscape(relPath))\"></video>"
+                    bubbleHTML += "<video class=\"attach-video\" controls src=\"\(htmlEscape(relativeURL))\"></video>"
                 } else {
                     let name = (relPath as NSString).lastPathComponent
-                    bubbleHTML += "<a class=\"attach-link\" href=\"\(htmlEscape(relPath))\">\(htmlEscape(name))</a>"
+                    bubbleHTML += "<a class=\"attach-link\" href=\"\(htmlEscape(relativeURL))\">\(htmlEscape(name))</a>"
                 }
             }
 
@@ -1139,7 +1308,8 @@ final class MessageExporter {
 
     private func parseMessage(_ row: [String: Any?],
                               attachments: [MessageAttachment],
-                              reactions: [Reaction]) -> Message? {
+                              reactions: [Reaction],
+                              remainingAttributedBodyTextBytes: inout Int) -> Message? {
         guard let rowId = row["ROWID"] as? Int,
               let guid = row["guid"] as? String else { return nil }
 
@@ -1154,7 +1324,22 @@ final class MessageExporter {
         let isFromMe = (row["is_from_me"] as? Int) == 1
         let visibleAttachments = attachments.filter { !$0.isPluginPayload }
 
-        let text = row["text"] as? String
+        let plainText = row["text"] as? String
+        let text: String?
+        if let plainText, !plainText.isEmpty {
+            text = plainText
+        } else if let messageId = row["attributed_body_rowid"] as? Int,
+                  let recovered = loadAttributedBodyText(messageId: messageId) {
+            let recoveredByteCount = recovered.utf8.count
+            if recoveredByteCount <= remainingAttributedBodyTextBytes {
+                remainingAttributedBodyTextBytes -= recoveredByteCount
+                text = recovered
+            } else {
+                text = plainText
+            }
+        } else {
+            text = plainText
+        }
         let balloonBundle = row["balloon_bundle_id"] as? String
         let payload = row["payload_data"] as? Data
 
@@ -1188,6 +1373,22 @@ final class MessageExporter {
             linkURL: linkURL,
             balloonBundleID: balloonBundle
         )
+    }
+
+    /// Loads at most one schema- and size-gated attributed body at a time so a
+    /// full chat query never retains every backup-controlled BLOB in memory.
+    private func loadAttributedBodyText(messageId: Int) -> String? {
+        let sql = """
+            SELECT \(MessageAttributedBodyDecoder.attributedBodySQLProjection)
+            FROM message m
+            WHERE m.ROWID = ?
+            LIMIT 1
+        """
+        guard let rows = try? db.query(sql, params: [String(messageId)]),
+              let body = rows.first?["attributedBody"] as? Data else {
+            return nil
+        }
+        return MessageAttributedBodyDecoder.text(from: body)
     }
 
     /// First http(s) URL inside a string, using a cached `NSDataDetector`.

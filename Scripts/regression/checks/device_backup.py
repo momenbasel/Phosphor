@@ -588,7 +588,7 @@ def test_multi_device_backup_activity_is_visible_and_device_scoped(root: Path) -
     assert_contains(overview, "backupVM.activity(for: device.id)", "a device card must not show another device's progress")
     assert_contains(overview, 'backupVM.isBackupActive(for: device.id) ? "Backing Up..."', "a device card must not show another device's global backup label")
     assert_contains(overview, ".disabled(backupVM.isBackupActive(for: device.id))", "only the busy device's backup button should be disabled")
-    assert "backupVM.isCreating" not in app.split('Button("New Backup")', 1)[1].split('Button("Refresh Backups")', 1)[0], "Cmd-B should remain available when another device is backing up"
+    assert "backupVM.isCreating" not in app.split('CommandMenu("Backup")', 1)[1].split('Button("Refresh Backups")', 1)[0], "Cmd-B should remain available when another device is backing up"
 
 
 def test_schedules_are_persisted_and_executed_per_device(root: Path) -> None:

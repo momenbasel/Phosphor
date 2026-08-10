@@ -63,6 +63,9 @@ fi
 # Copy entitlements for reference
 cp "$PROJECT_DIR/Resources/Phosphor.entitlements" "$APP_BUNDLE/Contents/Resources/"
 
+# Include licenses for source incorporated into the release binary.
+cp "$PROJECT_DIR/THIRD_PARTY_NOTICES.md" "$APP_BUNDLE/Contents/Resources/"
+
 # Copy SPM resource bundle (localization strings)
 # dirname, not "$BINARY_PATH/..": the latter traverses '..' through the binary
 # file itself (ENOTDIR), so the -d test always failed and the localization

@@ -5,8 +5,10 @@ struct ContentView: View {
 
     @EnvironmentObject var deviceVM: DeviceViewModel
     @EnvironmentObject var backupVM: BackupViewModel
+    @EnvironmentObject var messageVM: MessageViewModel
+    @EnvironmentObject var whatsAppVM: WhatsAppViewModel
+    @Binding var selectedSection: SidebarSection?
 
-    @State private var selectedSection: SidebarSection? = .devices
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var tunnelRunning = true
     @State private var tunnelStarting = false
@@ -23,6 +25,8 @@ struct ContentView: View {
                 }
                 detailView
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if messageVM.isExporting { messageExportProgressView }
+                if whatsAppVM.isExporting { whatsAppExportProgressView }
             }
         }
         .navigationTitle("Phosphor")
@@ -105,6 +109,46 @@ struct ContentView: View {
         .padding(.horizontal, 16)
         .padding(.top, 12)
         .padding(.bottom, 4)
+    }
+
+    private var messageExportProgressView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(messageVM.exportProgressText)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer()
+                Button("Cancel") { messageVM.cancelExport() }
+                    .controlSize(.small)
+            }
+            ProgressView(value: messageVM.exportProgress, total: 1.0)
+                .progressViewStyle(.linear)
+                .tint(.brandAccent)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .background(Color.brandAccent.opacity(0.06))
+    }
+
+    private var whatsAppExportProgressView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(whatsAppVM.exportProgressText)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer()
+                Button("Cancel") { whatsAppVM.cancelExport() }
+                    .controlSize(.small)
+            }
+            ProgressView(value: whatsAppVM.exportProgress, total: 1.0)
+                .progressViewStyle(.linear)
+                .tint(.green)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .background(Color.green.opacity(0.06))
     }
 
     private func checkTunnel() async {
@@ -306,8 +350,9 @@ struct WelcomeView: View {
 
 #if canImport(PreviewsMacros)
 #Preview {
-    ContentView()
+    ContentView(selectedSection: .constant(.devices))
         .environmentObject(DeviceViewModel())
         .environmentObject(BackupViewModel())
+        .environmentObject(MessageViewModel())
 }
 #endif

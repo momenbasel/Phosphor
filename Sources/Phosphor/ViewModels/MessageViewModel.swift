@@ -112,6 +112,7 @@ final class MessageViewModel: ObservableObject {
 
     private var exporter: MessageExporter?
     private var backupPath: String?
+    private var contactDirectory: ContactDirectory = .empty
     private var exportCancelled = false
     private var exportTask: Task<Void, Never>?
     private var exportOperationID: UUID?
@@ -124,6 +125,7 @@ final class MessageViewModel: ObservableObject {
         exportOperationID = nil
         exporter = nil
         backupPath = nil
+        contactDirectory = .empty
         chats = []
         selectedChat = nil
         messages = []
@@ -154,6 +156,7 @@ final class MessageViewModel: ObservableObject {
             invalidateExportForBackupSwitch()
         }
         self.backupPath = backupPath
+        contactDirectory = .empty
         backupReadiness = Self.readiness(for: backupPath)
         backupReadinessMessage = backupReadiness.subtitle
         selectedChat = nil
@@ -178,6 +181,7 @@ final class MessageViewModel: ObservableObject {
         } else {
             directory = .empty
         }
+        self.contactDirectory = directory
 
         do {
             let exporter = try MessageExporter(backupPath: backupPath, contacts: directory)
@@ -237,6 +241,78 @@ final class MessageViewModel: ObservableObject {
         exportProgressText = "Cancelling…"
     }
 
+    func startExportChatPDFBundle(
+        to parentDirectory: String,
+        dateFilter: MessageDateFilter = .all,
+        customStart: Date = Date(),
+        customEnd: Date = Date(),
+        visibleMessages: [Message]? = nil
+    ) {
+        guard let chat = selectedChat, let backupPath else { return }
+        let range = dateFilter.range(customStart: customStart, customEnd: customEnd)
+        let options = MessageExportOptions(startDate: range.start, endDate: range.end, includeAttachments: true)
+        let sourceMessages = visibleMessages
+        let fallbackMessages = messages
+        let contactDirectory = self.contactDirectory
+        isExporting = true
+        exportCancelled = false
+        exportProgress = 0.1
+        exportProgressText = "Creating PDF bundle for \(chat.title)…"
+        let exportID = UUID()
+        exportOperationID = exportID
+
+        exportTask = Task.detached(priority: .userInitiated) { [weak self, chat, sourceMessages, fallbackMessages, backupPath, contactDirectory, exportID] in
+            do {
+                let exporter = try MessageExporter(backupPath: backupPath, contacts: contactDirectory)
+                let baseMessages: [Message]
+                if let sourceMessages {
+                    baseMessages = sourceMessages
+                } else if fallbackMessages.isEmpty {
+                    baseMessages = try exporter.getMessages(chatId: chat.id)
+                } else {
+                    baseMessages = fallbackMessages
+                }
+                let exportedMessageCount = options.apply(to: baseMessages).count
+                try Task.checkCancellation()
+                let result = try exporter.exportChatPDFBundle(
+                    chat: chat,
+                    messages: baseMessages,
+                    to: parentDirectory,
+                    options: options,
+                    cancellationCheck: {
+                        try Task.checkCancellation()
+                    }
+                )
+                await MainActor.run { [weak self] in
+                    guard let self, self.exportOperationID == exportID, self.backupPath == backupPath else { return }
+                    self.isExporting = false
+                    self.exportOperationID = nil
+                    self.exportProgress = 1
+                    self.exportResult = MessageExportResult(
+                        url: result.directory,
+                        summary: "Exported \(exportedMessageCount) messages as a PDF bundle with attachments"
+                    )
+                }
+            } catch is CancellationError {
+                await MainActor.run { [weak self] in
+                    guard let self, self.exportOperationID == exportID, self.backupPath == backupPath else { return }
+                    self.isExporting = false
+                    self.exportOperationID = nil
+                    self.alertMessage = "Export cancelled"
+                    self.showAlert = true
+                }
+            } catch {
+                await MainActor.run { [weak self] in
+                    guard let self, self.exportOperationID == exportID, self.backupPath == backupPath else { return }
+                    self.isExporting = false
+                    self.exportOperationID = nil
+                    self.alertMessage = "Export failed: \(error.localizedDescription)"
+                    self.showAlert = true
+                }
+            }
+        }
+    }
+
     func startExportChat(format: MessageExportFormat, to path: String, dateFilter: MessageDateFilter = .all, customStart: Date = Date(), customEnd: Date = Date(), includeAttachments: Bool = true, visibleMessages: [Message]? = nil) {
         guard let chat = selectedChat, let backupPath else { return }
         let normalisedPath = ensureExtension(path, for: format)
@@ -244,6 +320,7 @@ final class MessageViewModel: ObservableObject {
         let options = MessageExportOptions(startDate: range.start, endDate: range.end, includeAttachments: includeAttachments)
         let sourceMessages = visibleMessages
         let fallbackMessages = messages
+        let contactDirectory = self.contactDirectory
         isExporting = true
         exportCancelled = false
         exportProgress = 0.1
@@ -251,9 +328,9 @@ final class MessageViewModel: ObservableObject {
         let exportID = UUID()
         exportOperationID = exportID
 
-        exportTask = Task.detached(priority: .userInitiated) { [weak self, chat, sourceMessages, fallbackMessages, backupPath, exportID] in
+        exportTask = Task.detached(priority: .userInitiated) { [weak self, chat, sourceMessages, fallbackMessages, backupPath, contactDirectory, exportID] in
             do {
-                let exporter = try MessageExporter(backupPath: backupPath, contacts: .empty)
+                let exporter = try MessageExporter(backupPath: backupPath, contacts: contactDirectory)
                 let baseMessages: [Message]
                 if let sourceMessages {
                     baseMessages = sourceMessages
@@ -298,6 +375,7 @@ final class MessageViewModel: ObservableObject {
         guard let backupPath else { return }
         let range = dateFilter.range(customStart: customStart, customEnd: customEnd)
         let options = MessageExportOptions(startDate: range.start, endDate: range.end, includeAttachments: includeAttachments)
+        let contactDirectory = self.contactDirectory
         isExporting = true
         exportCancelled = false
         exportProgress = 0
@@ -305,9 +383,9 @@ final class MessageViewModel: ObservableObject {
         let exportID = UUID()
         exportOperationID = exportID
 
-        exportTask = Task.detached(priority: .userInitiated) { [weak self, backupPath, exportID] in
+        exportTask = Task.detached(priority: .userInitiated) { [weak self, backupPath, contactDirectory, exportID] in
             do {
-                let exporter = try MessageExporter(backupPath: backupPath, contacts: .empty)
+                let exporter = try MessageExporter(backupPath: backupPath, contacts: contactDirectory)
                 let count = try exporter.exportAllChats(
                     format: format,
                     to: directory,
@@ -331,6 +409,74 @@ final class MessageViewModel: ObservableObject {
                     self.exportOperationID = nil
                     self.exportProgress = 1
                     self.exportResult = MessageExportResult(url: URL(fileURLWithPath: directory), summary: "Exported \(count) conversations")
+                }
+            } catch is CancellationError {
+                await MainActor.run { [weak self] in
+                    guard let self, self.exportOperationID == exportID, self.backupPath == backupPath else { return }
+                    self.isExporting = false
+                    self.exportOperationID = nil
+                    self.alertMessage = "Export cancelled"
+                    self.showAlert = true
+                }
+            } catch {
+                await MainActor.run { [weak self] in
+                    guard let self, self.exportOperationID == exportID, self.backupPath == backupPath else { return }
+                    self.isExporting = false
+                    self.exportOperationID = nil
+                    self.alertMessage = "Export failed: \(error.localizedDescription)"
+                    self.showAlert = true
+                }
+            }
+        }
+    }
+
+    func startExportAllChatsAllFormats(
+        to parentDirectory: String,
+        dateFilter: MessageDateFilter = .all,
+        customStart: Date = Date(),
+        customEnd: Date = Date()
+    ) {
+        guard let backupPath else { return }
+        let range = dateFilter.range(customStart: customStart, customEnd: customEnd)
+        let options = MessageExportOptions(startDate: range.start, endDate: range.end, includeAttachments: true)
+        let contactDirectory = self.contactDirectory
+        isExporting = true
+        exportCancelled = false
+        exportProgress = 0
+        exportProgressText = "Preparing complete export…"
+        let exportID = UUID()
+        exportOperationID = exportID
+
+        exportTask = Task.detached(priority: .userInitiated) { [weak self, backupPath, contactDirectory, exportID] in
+            do {
+                let exporter = try MessageExporter(backupPath: backupPath, contacts: contactDirectory)
+                let result = try exporter.exportAllChatsAllFormats(
+                    to: parentDirectory,
+                    options: options,
+                    onProgress: { completed, total, title in
+                        try Task.checkCancellation()
+                        let progress = total == 0 ? 0 : Double(completed) / Double(total)
+                        Task { @MainActor [weak self] in
+                            guard let self, self.exportOperationID == exportID, self.backupPath == backupPath else { return }
+                            self.exportProgress = progress
+                            self.exportProgressText = completed >= total
+                                ? "Export complete"
+                                : "Exporting \(completed + 1) of \(total): \(title)"
+                        }
+                    },
+                    cancellationCheck: {
+                        try Task.checkCancellation()
+                    }
+                )
+                await MainActor.run { [weak self] in
+                    guard let self, self.exportOperationID == exportID, self.backupPath == backupPath else { return }
+                    self.isExporting = false
+                    self.exportOperationID = nil
+                    self.exportProgress = 1
+                    self.exportResult = MessageExportResult(
+                        url: result.directory,
+                        summary: "Exported \(result.count) conversations in all formats with attachments"
+                    )
                 }
             } catch is CancellationError {
                 await MainActor.run { [weak self] in
