@@ -30,14 +30,33 @@ def plist_versions(root: Path) -> tuple[str, str]:
     return plist["CFBundleShortVersionString"], plist["CFBundleVersion"]
 
 
-def test_info_plist_version_matches_cask(root: Path) -> None:
+def parse_version(value: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in value.split(".") if part.isdigit())
+
+
+def test_info_plist_version_is_never_behind_the_cask(root: Path) -> None:
+    """The failure that hurts users is a shipped app reporting an OLDER version
+    than the release it came from: the update checker then compares against the
+    newest tag, decides an update exists, and hands the user the DMG they are
+    already running, forever.
+
+    Equality cannot be required, because a release legitimately passes through a
+    window where it is not true. The plist has to be stamped before the app is
+    built, but the cask can only be bumped after the DMG exists and its sha256 is
+    known, so mid-release the plist is one version ahead by construction. Only
+    "behind" is drift.
+    """
     short_version, _ = plist_versions(root)
-    expected = cask_version(root)
-    assert short_version == expected, (
+    cask = cask_version(root)
+    plist_parts, cask_parts = parse_version(short_version), parse_version(cask)
+    assert plist_parts, f"CFBundleShortVersionString {short_version!r} is not numeric"
+    assert cask_parts, f"cask version {cask!r} is not numeric"
+    assert plist_parts >= cask_parts, (
         f"Resources/Info.plist CFBundleShortVersionString is {short_version!r} but "
-        f"Homebrew/phosphor.rb ships {expected!r}. The update checker compares the "
-        "shipped version against the newest GitHub tag, so a stale plist nags every "
-        "user forever. Stamp the plist from the tag."
+        f"Homebrew/phosphor.rb already ships {cask!r}. A shipped build that reports "
+        "an older version than the published release tells every user an update is "
+        "available and then hands them the build they are already running. Stamp "
+        "the plist from the tag."
     )
 
 
