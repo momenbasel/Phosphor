@@ -1,4 +1,6 @@
 import Foundation
+import CommonCrypto
+import SQLite3
 
 /// Parses iOS backup Manifest.db to browse backup contents.
 /// The Manifest.db contains a "Files" table mapping domain/relativePath to SHA-1 hashed filenames.
@@ -301,6 +303,120 @@ final class BackupManifest {
     /// Get total file count.
     func totalFileCount() throws -> Int {
         try db.rowCount(for: "Files")
+    }
+
+    /// Ordered, bounded cursor used by backup comparison. It steps one indexed
+    /// manifest row at a time, caps metadata BLOB reads, and checks SQLite's
+    /// terminal status instead of accepting partial rows as a successful scan.
+    final class ComparisonCursor {
+        static let maximumMetadataBlobBytes = 256 * 1_024
+
+        private let connection: OpaquePointer
+        private let statement: OpaquePointer
+
+        fileprivate init(databasePath: String) throws {
+            var opened: OpaquePointer?
+            let openStatus = sqlite3_open_v2(
+                databasePath, &opened,
+                SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX,
+                nil
+            )
+            guard openStatus == SQLITE_OK, let opened else {
+                let error = Self.databaseError(connection: opened, operation: "open")
+                if let opened { sqlite3_close(opened) }
+                throw error
+            }
+
+            let sql = """
+                SELECT fileID, domain, relativePath, flags,
+                       CASE WHEN length(file) <= \(Self.maximumMetadataBlobBytes)
+                            THEN file ELSE NULL END AS boundedFile,
+                       length(file) AS metadataLength
+                FROM Files
+                WHERE flags = 1
+                  AND domain IS NOT NULL
+                  AND relativePath IS NOT NULL
+                  AND fileID IS NOT NULL
+                ORDER BY fileID
+            """
+            var prepared: OpaquePointer?
+            let prepareStatus = sqlite3_prepare_v2(opened, sql, -1, &prepared, nil)
+            guard prepareStatus == SQLITE_OK, let prepared else {
+                let error = Self.databaseError(connection: opened, operation: "prepare")
+                if let prepared { sqlite3_finalize(prepared) }
+                sqlite3_close(opened)
+                throw error
+            }
+            connection = opened
+            statement = prepared
+        }
+
+        deinit {
+            sqlite3_finalize(statement)
+            sqlite3_close(connection)
+        }
+
+        func next() throws -> BackupComparisonRecord? {
+            try Task.checkCancellation()
+            let status = sqlite3_step(statement)
+            if status == SQLITE_DONE { return nil }
+            guard status == SQLITE_ROW else {
+                throw Self.databaseError(connection: connection, operation: "step")
+            }
+
+            guard let fileID = Self.text(statement, column: 0),
+                  let domain = Self.text(statement, column: 1),
+                  let relativePath = Self.text(statement, column: 2) else {
+                throw Self.databaseError(connection: connection, operation: "decode")
+            }
+            let blob = Self.data(statement, column: 4)
+            let metadata = blob.flatMap(BackupFileRecord.init(fileBlob:))
+            return BackupComparisonRecord(
+                fileID: fileID,
+                domain: domain,
+                relativePath: relativePath,
+                flags: Int(sqlite3_column_int64(statement, 3)),
+                size: metadata?.size ?? 0,
+                modifiedTime: metadata?.modifiedTime,
+                metadataDigest: blob.map(Self.sha256) ?? Data(),
+                metadataComplete: sqlite3_column_type(statement, 4) != SQLITE_NULL
+            )
+        }
+
+        private static func text(_ statement: OpaquePointer, column: Int32) -> String? {
+            guard let bytes = sqlite3_column_text(statement, column) else { return nil }
+            return String(cString: bytes)
+        }
+
+        private static func data(_ statement: OpaquePointer, column: Int32) -> Data? {
+            guard sqlite3_column_type(statement, column) != SQLITE_NULL else { return nil }
+            let count = Int(sqlite3_column_bytes(statement, column))
+            guard count > 0 else { return Data() }
+            guard let bytes = sqlite3_column_blob(statement, column) else { return nil }
+            return Data(bytes: bytes, count: count)
+        }
+
+        private static func databaseError(connection: OpaquePointer?, operation: String) -> Error {
+            let message = connection.flatMap(sqlite3_errmsg).map(String.init(cString:))
+                ?? "Unknown SQLite error"
+            return NSError(
+                domain: "Phosphor.BackupComparison",
+                code: Int(connection.map(sqlite3_errcode) ?? SQLITE_ERROR),
+                userInfo: [NSLocalizedDescriptionKey: "Backup comparison could not \(operation) the manifest: \(message)"]
+            )
+        }
+
+        private static func sha256(_ data: Data) -> Data {
+            var digest = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
+            data.withUnsafeBytes { bytes in
+                _ = CC_SHA256(bytes.baseAddress, CC_LONG(data.count), &digest)
+            }
+            return Data(digest)
+        }
+    }
+
+    func makeComparisonCursor() throws -> ComparisonCursor {
+        try ComparisonCursor(databasePath: db.path)
     }
 
     /// Build a directory tree structure from file entries.

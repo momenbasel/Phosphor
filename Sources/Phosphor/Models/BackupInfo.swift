@@ -1,7 +1,7 @@
 import Foundation
 
 /// Represents an iOS backup stored on disk.
-struct BackupInfo: Identifiable, Hashable {
+struct BackupInfo: Identifiable, Hashable, Sendable {
     let id: String // backup directory name (usually UDID or UDID+timestamp)
     let path: String
     let deviceName: String

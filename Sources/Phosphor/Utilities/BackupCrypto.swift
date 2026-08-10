@@ -348,6 +348,7 @@ struct BackupFileRecord {
     let protectionClass: Int
     let wrappedKey: Data?
     let size: Int
+    let modifiedTime: TimeInterval?
 
     /// Length of a wrapped file key: a 4-byte little-endian protection class
     /// plus the 40-byte RFC 3394 wrapping of a 32-byte AES key.
@@ -363,6 +364,8 @@ struct BackupFileRecord {
 
         protectionClass = (fileObject["ProtectionClass"] as? NSNumber)?.intValue ?? 0
         size = (fileObject["Size"] as? NSNumber)?.intValue ?? 0
+        let rawModified = fileObject["LastModified"] ?? fileObject["MTime"]
+        modifiedTime = Self.modifiedTime(from: rawModified, objects: objects)
         if fileObject["EncryptionKey"] == nil {
             wrappedKey = nil
         } else {
@@ -370,5 +373,45 @@ struct BackupFileRecord {
                 .compactMap { $0["NS.data"] as? Data }
                 .first { $0.count == Self.wrappedKeyLength }
         }
+    }
+
+    /// Decode an NSDate stored through an NSKeyedArchiver UID without invoking
+    /// NSKeyedUnarchiver on backup-controlled data. `NS.time` is measured from
+    /// Apple's 2001 reference date; direct numeric manifest values retain their
+    /// historical interpretation as Unix timestamps.
+    private static func modifiedTime(from rawValue: Any?, objects: [Any]) -> TimeInterval? {
+        if let date = rawValue as? Date { return date.timeIntervalSince1970 }
+        if let number = rawValue as? NSNumber { return number.doubleValue }
+
+        guard let rawValue,
+              let index = archiveObjectIndex(from: rawValue),
+              objects.indices.contains(index) else { return nil }
+        let resolved = objects[index]
+        if let date = resolved as? Date { return date.timeIntervalSince1970 }
+        if let dictionary = resolved as? [String: Any],
+           let referenceTime = dictionary["NS.time"] as? NSNumber {
+            return referenceTime.doubleValue + Date.timeIntervalBetween1970AndReferenceDate
+        }
+        if let number = resolved as? NSNumber { return number.doubleValue }
+        return nil
+    }
+
+    /// PropertyListSerialization exposes binary-plist UID values as the opaque
+    /// CFKeyedArchiverUID type. Support its stable description plus the CF$UID
+    /// dictionary shape used by XML/plist tooling, while rejecting arbitrary
+    /// strings and out-of-range values.
+    private static func archiveObjectIndex(from value: Any) -> Int? {
+        if let dictionary = value as? [String: Any],
+           let number = dictionary["CF$UID"] as? NSNumber,
+           number.intValue >= 0 {
+            return number.intValue
+        }
+        let description = String(describing: value)
+        guard description.contains("CFKeyedArchiverUID"),
+              let marker = description.range(of: "{value = "),
+              let end = description[marker.upperBound...].firstIndex(of: "}") else { return nil }
+        let digits = description[marker.upperBound..<end]
+        guard !digits.isEmpty, digits.allSatisfy(\.isNumber) else { return nil }
+        return Int(digits)
     }
 }
