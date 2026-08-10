@@ -91,7 +91,20 @@ enum MessageAttachmentExporter {
 
         for entry in entries {
             let name = entry.lastPathComponent
-            guard name.hasPrefix(generationPrefix) || legacyNames.contains(name) else { continue }
+            // Only ever delete a directory this exporter created. Generations
+            // are named "<base>-<UUID>", so require the suffix to actually parse
+            // as a UUID rather than accepting any name that merely starts with
+            // "<base>-". Bare prefix-matching recursively removed the user's own
+            // folders: exporting Trip.html into a directory that already held a
+            // folder named "Trip-notes" destroyed it, unprompted.
+            //
+            // The legacy names stay eligible. Unlike the open-ended prefix they
+            // are exact matches on the sidecar name Phosphor itself generated
+            // for this very export path in an older version, so cleaning them is
+            // what lets an upgrade tidy up after itself.
+            let isGeneration = name.hasPrefix(generationPrefix)
+                && UUID(uuidString: String(name.dropFirst(generationPrefix.count))) != nil
+            guard isGeneration || legacyNames.contains(name) else { continue }
             guard entry.standardizedFileURL.path != currentURL?.standardizedFileURL.path else { continue }
             var isDirectory: ObjCBool = false
             guard fileManager.fileExists(atPath: entry.path, isDirectory: &isDirectory), isDirectory.boolValue else { continue }

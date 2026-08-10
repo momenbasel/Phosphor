@@ -59,10 +59,10 @@ struct GenerationPublicationProbe {
         try Data("NEW_ATTACHMENT".utf8).write(to: source)
 
         // The completed transcript points at its own immutable old generation.
-        let oldGeneration = root.appendingPathComponent("chat-txt_attachments-old", isDirectory: true)
+        let oldGeneration = root.appendingPathComponent("chat-txt_attachments-11111111-2222-3333-4444-555555555555", isDirectory: true)
         try fileManager.createDirectory(at: oldGeneration, withIntermediateDirectories: true)
         try Data("OLD_ATTACHMENT".utf8).write(to: oldGeneration.appendingPathComponent("old.bin"))
-        try Data("OLD:chat-txt_attachments-old/old.bin".utf8).write(to: final)
+        try Data("OLD:chat-txt_attachments-11111111-2222-3333-4444-555555555555/old.bin".utf8).write(to: final)
 
         let item = MessageAttachmentExporter.Item(key: "attachment", displayName: "new.bin", sourcePath: source.path)
 
@@ -70,7 +70,7 @@ struct GenerationPublicationProbe {
         // replacing the transcript. The old transcript must still resolve its old
         // sidecar; the new directory is merely an orphan recoverable on next run.
         let orphan = try MessageAttachmentExporter.prepareGeneration([item], beside: final.path)
-        guard try String(contentsOf: final, encoding: .utf8) == "OLD:chat-txt_attachments-old/old.bin",
+        guard try String(contentsOf: final, encoding: .utf8) == "OLD:chat-txt_attachments-11111111-2222-3333-4444-555555555555/old.bin",
               fileManager.fileExists(atPath: oldGeneration.appendingPathComponent("old.bin").path),
               let orphanPath = orphan.paths["attachment"],
               let orphanURL = orphan.directoryURL,
@@ -89,7 +89,7 @@ struct GenerationPublicationProbe {
             }
             exit(2)
         } catch ProbeError.cancelled {}
-        guard try String(contentsOf: final, encoding: .utf8) == "OLD:chat-txt_attachments-old/old.bin",
+        guard try String(contentsOf: final, encoding: .utf8) == "OLD:chat-txt_attachments-11111111-2222-3333-4444-555555555555/old.bin",
               fileManager.fileExists(atPath: oldGeneration.appendingPathComponent("old.bin").path),
               !fileManager.fileExists(atPath: root.appendingPathComponent("chat-txt_attachments").path) else {
             exit(3)
