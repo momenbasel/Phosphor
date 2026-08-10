@@ -62,16 +62,48 @@ final class PhotoExtractor: ObservableObject {
 
                 // relativePath and filename are manifest-controlled, so both branches
                 // resolve through the shared boundary check instead of being joined
-                // onto the destination directly.
-                let destPath = try? SafeExtractionPath.prepareDestination(
-                    root: URL(fileURLWithPath: destination, isDirectory: true),
-                    relativePath: preserveStructure ? item.relativePath : item.filename,
-                    fileManager: fm
-                )
+                // onto the destination directly. Flattened exports additionally keep
+                // distinct backup files distinct when their display names collide.
+                let destinationRoot = URL(fileURLWithPath: destination, isDirectory: true)
+                var flatReservation: FlatPhotoExportReservation?
+                var destPath: URL?
+                do {
+                    if preserveStructure {
+                        flatReservation = nil
+                        destPath = try SafeExtractionPath.prepareDestination(
+                            root: destinationRoot,
+                            relativePath: item.relativePath,
+                            fileManager: fm
+                        )
+                    } else {
+                        // Validate the manifest-controlled display name before the
+                        // reservation helper turns it into a flat sibling path.
+                        _ = try SafeExtractionPath.prepareDestination(
+                            root: destinationRoot,
+                            relativePath: item.filename,
+                            fileManager: fm
+                        )
+                        let reservation = try FlatPhotoExportReservation.reserve(
+                            filename: item.filename,
+                            stableID: item.id,
+                            root: destinationRoot,
+                            fileManager: fm
+                        )
+                        flatReservation = reservation
+                        destPath = reservation.stagingURL
+                    }
+                } catch {
+                    flatReservation = nil
+                    destPath = nil
+                }
 
                 if let destPath {
                     do {
+                        // A failed extraction removes only our private stage and
+                        // placeholder; it can never overwrite another export.
+                        defer { flatReservation?.discard() }
                         try manifest.extractFile(entry, to: destPath.path)
+                        try flatReservation?.publish()
                         extracted += 1
                     } catch {
                         // Skip files that can't be extracted, continue with others

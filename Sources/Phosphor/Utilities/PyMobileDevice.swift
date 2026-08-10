@@ -5,7 +5,10 @@ import Foundation
 /// Searches for pymobiledevice3 binary at common install locations (pipx, pip, venv).
 enum PyMobileDevice {
 
-    /// Cached path to the pymobiledevice3 binary once found.
+    /// Cached path to the pymobiledevice3 binary once found. Discovery can be
+    /// requested by several background probes at once, so all reads, writes, and
+    /// reset invalidation are serialized by `cacheLock`.
+    private static let cacheLock = NSLock()
     private static var cachedBinaryPath: String?
 
     /// Python minor versions to probe for pipx or pip --user installs and system Python.
@@ -28,6 +31,8 @@ enum PyMobileDevice {
     /// Find the pymobiledevice3 binary. Checks direct binary first (pipx, pip --user),
     /// then python3 -m pymobiledevice3 at various Python locations.
     private static func findBinary() -> String? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
         if let cached = cachedBinaryPath { return cached }
 
         let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -89,7 +94,9 @@ enum PyMobileDevice {
     /// Clear the cached binary path so the next call re-probes the filesystem.
     /// Useful after the user installs or upgrades pymobiledevice3 mid-session.
     static func resetBinaryCache() {
+        cacheLock.lock()
         cachedBinaryPath = nil
+        cacheLock.unlock()
     }
 
     /// Query installed pymobiledevice3 version, or nil if unavailable.
@@ -104,16 +111,17 @@ enum PyMobileDevice {
         return alt.succeeded && !altTrimmed.isEmpty ? altTrimmed : nil
     }
 
-    /// Whether the found binary is a direct pymobiledevice3 binary (vs python3 path).
-    private static var usesDirectBinary: Bool {
-        cachedBinaryPath?.hasSuffix("pymobiledevice3") == true
-            && cachedBinaryPath?.contains("python") != true
+    /// Classify the immutable path returned from one `findBinary` call. Do not
+    /// re-read the cache after resolution: `resetBinaryCache()` may run between
+    /// those reads and otherwise turn a console script into a Python `-m` command.
+    private static func isDirectBinary(_ path: String) -> Bool {
+        path.hasSuffix("pymobiledevice3") && !path.contains("python")
     }
 
     /// Build command and arguments for running pymobiledevice3.
     private static func buildCommand(subcommands: [String]) -> (cmd: String, args: [String])? {
         guard let binary = findBinary() else { return nil }
-        if usesDirectBinary {
+        if isDirectBinary(binary) {
             return (cmd: binary, args: subcommands)
         } else {
             // It's a python3 path - use -m
@@ -138,7 +146,7 @@ enum PyMobileDevice {
         guard let binary = findBinary() else {
             return "sudo -E env \"PATH=$PATH\" pymobiledevice3 remote tunneld"
         }
-        if usesDirectBinary {
+        if isDirectBinary(binary) {
             return "sudo \"\(binary)\" remote tunneld"
         } else {
             return "sudo \"\(binary)\" -m pymobiledevice3 remote tunneld"
@@ -171,7 +179,7 @@ enum PyMobileDevice {
         onOutput: @escaping (String) -> Void,
         onError: @escaping (String) -> Void = { _ in },
         completion: @escaping (Int32) -> Void
-    ) -> Process? {
+    ) -> Shell.ManagedProcess? {
         guard let cmd = buildCommand(subcommands: subcommands) else {
             onError("pymobiledevice3 not found")
             completion(-1)
@@ -787,7 +795,7 @@ enum PyMobileDevice {
         onOutput: @escaping (String) -> Void,
         onError: @escaping (String) -> Void = { _ in },
         completion: @escaping (Int32) -> Void
-    ) -> Process? {
+    ) -> Shell.ManagedProcess? {
         var args = ["backup2", "backup"]
         if full { args.append("--full") }
         // `--mobdev2` can prompt when the same wireless device is advertised on
@@ -811,7 +819,7 @@ enum PyMobileDevice {
         timeout: TimeInterval? = 6 * 60 * 60,
         onOutput: @escaping (String) -> Void,
         completion: @escaping (Int32) -> Void
-    ) -> Process? {
+    ) -> Shell.ManagedProcess? {
         var args = ["backup2", "restore"]
         if system { args.append("--system") }
         if reboot { args.append("--reboot") }
@@ -833,18 +841,6 @@ enum PyMobileDevice {
         return result.output.lowercased().contains("on") || result.output.lowercased().contains("enabled")
     }
 
-    static func setEncryption(enabled: Bool, password: String, udid: String? = nil) async -> Bool {
-        var args = ["backup2", "encryption", enabled ? "on" : "off", password]
-        if let udid { args += ["--udid", udid] }
-        return (await runAsync(args)).succeeded
-    }
-
-    static func changeEncryptionPassword(oldPassword: String, newPassword: String, udid: String? = nil) async -> Bool {
-        var args = ["backup2", "change-password", oldPassword, newPassword]
-        if let udid { args += ["--udid", udid] }
-        return (await runAsync(args)).succeeded
-    }
-
     // MARK: - Syslog
 
     /// Start streaming syslog. Returns Process for termination.
@@ -852,7 +848,7 @@ enum PyMobileDevice {
         udid: String? = nil,
         onOutput: @escaping (String) -> Void,
         completion: @escaping (Int32) -> Void
-    ) -> Process? {
+    ) -> Shell.ManagedProcess? {
         var args = ["syslog", "live"]
         if let udid { args += ["--udid", udid] }
         return runStreaming(args, onOutput: onOutput, completion: completion)
