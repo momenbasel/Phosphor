@@ -17,7 +17,7 @@ struct BackupBrowserView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Backup Browser")
                             .font(.title2.weight(.semibold))
-                        Text("\(backup.deviceName) - \(backup.dateString)")
+                        Text("\(backup.deviceIdentityLabel) • \(backup.dateString)")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }

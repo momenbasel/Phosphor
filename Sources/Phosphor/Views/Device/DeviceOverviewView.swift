@@ -383,13 +383,13 @@ struct DeviceOverviewView: View {
                     Task { await deviceVM.takeScreenshot() }
                 }
                 ActionButton(
-                    icon: backupVM.isCreating ? "hourglass" : backupActionIcon(for: device),
-                    label: backupVM.isCreating ? "Backing Up..." : backupActionLabel(for: device),
+                    icon: backupVM.isBackupActive(for: device.id) ? "hourglass" : backupActionIcon(for: device),
+                    label: backupVM.isBackupActive(for: device.id) ? "Backing Up..." : backupActionLabel(for: device),
                     color: .brandAccent
                 ) {
                     startBackup(for: device)
                 }
-                .disabled(backupVM.isCreating)
+                .disabled(backupVM.isBackupActive(for: device.id))
                 .help("Start a backup for this device")
                 if !device.isPaired {
                     ActionButton(icon: "link", label: "Pair", color: .green) {
@@ -409,13 +409,21 @@ struct DeviceOverviewView: View {
                 }
             }
 
-            if backupVM.isCreating {
+            if let activity = backupVM.activity(for: device.id), activity.isActive {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(backupVM.displayProgressText)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    ProgressView(value: backupVM.displayProgressFraction, total: 1.0)
+                    HStack {
+                        Text(activity.displayProgressText)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Spacer()
+                        Button("Cancel") { backupVM.cancelBackup(udid: device.id) }
+                            .controlSize(.small)
+                    }
+                    ProgressView(
+                        value: activity.displayProgressFraction,
+                        total: 1.0
+                    )
                         .progressViewStyle(.linear)
                         .tint(.brandAccent)
                 }

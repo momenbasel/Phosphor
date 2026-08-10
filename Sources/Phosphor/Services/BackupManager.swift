@@ -53,16 +53,38 @@ final class BackupManager: ObservableObject {
         case incomplete(path: String)
     }
 
-    /// Active managed backup session leader for cancellation.
+    /// Active managed backup session leader for cancellation (#63 replaced
+    /// Foundation.Process with a posix_spawn session leader so the whole process
+    /// group can be signalled). Ownership is shared across manager instances by
+    /// device UDID, allowing different devices to run concurrently without
+    /// permitting two writers to operate on the same physical device (#60).
+    private static var operationRegistry = BackupOperationRegistry()
     private var activeProcess: Shell.ManagedProcess?
-    private var activeOperationID: UUID?
+    private var operationCoordinator = BackupDeviceCoordinator()
     private var cancelledOperationIDs: Set<UUID> = []
 
-    private func beginCancellableOperation() -> UUID {
-        let id = UUID()
-        activeOperationID = id
+    private func beginCancellableOperation(udid: String) -> UUID? {
+        // Reset before either rejection branch, not between them. With these
+        // below the first guard, a contention refusal left the PREVIOUS
+        // operation's lastBackupFailure in place, so BackupViewModel.createBackup
+        // read it and re-presented a stale "Incomplete Backup Found" recovery
+        // sheet - offering "Delete Incomplete Backup and Run Full Backup" in
+        // response to an unrelated event, while the real reason sat unread in
+        // lastError.
         lastOperationWasCancelled = false
-        return id
+        lastBackupFailure = nil
+        guard operationCoordinator.activeOperationID == nil else {
+            lastError = "Another backup or restore operation is already running."
+            return nil
+        }
+        guard let operationID = operationCoordinator.begin(
+            udid: udid,
+            registry: &Self.operationRegistry
+        ) else {
+            lastError = "Another backup or restore operation is already running for this device."
+            return nil
+        }
+        return operationID
     }
 
     private func operationWasCancelled(_ id: UUID) -> Bool {
@@ -70,8 +92,7 @@ final class BackupManager: ObservableObject {
     }
 
     private func finishOperation(_ id: UUID) {
-        if activeOperationID == id {
-            activeOperationID = nil
+        if operationCoordinator.finish(operationID: id, registry: &Self.operationRegistry) {
             activeProcess = nil
             isCreatingBackup = false
         }
@@ -79,7 +100,7 @@ final class BackupManager: ObservableObject {
     }
 
     private func markOperationCancelled(_ id: UUID, progress: String = "Cancelled") {
-        if activeOperationID == id {
+        if operationCoordinator.activeOperationID == id {
             lastOperationWasCancelled = true
             backupProgress = progress
             lastError = nil
@@ -481,17 +502,16 @@ final class BackupManager: ObservableObject {
         preferNetwork: Bool = false,
         onProgress: @escaping (String) -> Void
     ) async -> Bool {
-        guard let coordinatorToken = BackupOperationCoordinator.shared.beginBackup() else {
-            let message = "Wait for the active backup comparison to finish, then try the backup again."
-            backupProgress = "Backup paused"
-            lastError = message
-            onProgress(message)
-            return false
+        // Per-device ownership first (#60): if another owner already holds this
+        // UDID we must not take the comparison gate on its behalf.
+        guard let operationID = beginCancellableOperation(udid: udid) else { return false }
+        // Then the reader/writer gate (#70). beginBackup preempts any in-flight
+        // comparison rather than being refused by one, so this always succeeds.
+        let coordinatorToken = BackupOperationCoordinator.shared.beginBackup()
+        defer {
+            if let coordinatorToken { BackupOperationCoordinator.shared.endBackup(coordinatorToken) }
         }
-        defer { BackupOperationCoordinator.shared.endBackup(coordinatorToken) }
-
         isCreatingBackup = true
-        let operationID = beginCancellableOperation()
         backupProgress = "Starting backup..."
         backupPercent = 0
         lastError = nil
@@ -685,7 +705,7 @@ final class BackupManager: ObservableObject {
                             continuation.resume(returning: false)
                             return
                         }
-                        if self.activeOperationID == operationID {
+                        if self.operationCoordinator.activeOperationID == operationID {
                             self.activeProcess = nil
                         }
                         if self.operationWasCancelled(operationID) {
@@ -705,17 +725,16 @@ final class BackupManager: ObservableObject {
         preferNetwork: Bool = false,
         onProgress: @escaping (String) -> Void
     ) async -> Bool {
-        guard let coordinatorToken = BackupOperationCoordinator.shared.beginBackup() else {
-            let message = "Wait for the active backup comparison to finish, then try the backup again."
-            backupProgress = "Backup paused"
-            lastError = message
-            onProgress(message)
-            return false
+        // Per-device ownership first (#60): if another owner already holds this
+        // UDID we must not take the comparison gate on its behalf.
+        guard let operationID = beginCancellableOperation(udid: udid) else { return false }
+        // Then the reader/writer gate (#70). beginBackup preempts any in-flight
+        // comparison rather than being refused by one, so this always succeeds.
+        let coordinatorToken = BackupOperationCoordinator.shared.beginBackup()
+        defer {
+            if let coordinatorToken { BackupOperationCoordinator.shared.endBackup(coordinatorToken) }
         }
-        defer { BackupOperationCoordinator.shared.endBackup(coordinatorToken) }
-
         isCreatingBackup = true
-        let operationID = beginCancellableOperation()
         backupProgress = "Starting incremental backup..."
         backupPercent = 0
         lastError = nil
@@ -870,7 +889,7 @@ final class BackupManager: ObservableObject {
             return false
         }
 
-        let operationID = beginCancellableOperation()
+        guard let operationID = beginCancellableOperation(udid: targetUDID) else { return false }
         // Primary: pymobiledevice3
         if PyMobileDevice.available() {
             return await withCheckedContinuation { continuation in
@@ -931,7 +950,7 @@ final class BackupManager: ObservableObject {
 
     /// Cancel an active backup/restore.
     func cancelBackup() {
-        if let activeOperationID {
+        if let activeOperationID = operationCoordinator.activeOperationID {
             cancelledOperationIDs.insert(activeOperationID)
         }
         lastOperationWasCancelled = true

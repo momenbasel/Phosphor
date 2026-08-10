@@ -59,6 +59,7 @@ struct PhosphorApp: App {
                         try? await Task.sleep(for: .milliseconds(750))
                         deviceVM.deviceManager.startPolling(interval: 4.0)
                         backupVM.loadBackups()
+                        scheduler.attachBackupViewModel(backupVM)
                         scheduler.startMonitoring()
                     }
                 }
@@ -105,7 +106,10 @@ struct PhosphorApp: App {
                     }
                 }
                 .keyboardShortcut("b", modifiers: .command)
-                .disabled(deviceVM.selectedDevice == nil)
+                .disabled(
+                    deviceVM.selectedDevice == nil ||
+                    deviceVM.selectedDevice.map { backupVM.isBackupActive(for: $0.id) } == true
+                )
 
                 Button("Refresh Backups") {
                     backupVM.loadBackups()
@@ -116,6 +120,8 @@ struct PhosphorApp: App {
 
         Settings {
             SettingsView()
+                .environmentObject(deviceVM)
+                .environmentObject(backupVM)
         }
     }
 

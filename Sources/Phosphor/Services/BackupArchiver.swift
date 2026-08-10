@@ -98,7 +98,9 @@ enum BackupArchiver {
         dateFormatter.dateFormat = "yyyy-MM-dd_HHmmss"
         let dateStr = dateFormatter.string(from: backup.lastBackupDate ?? Date())
 
-        let archiveName = "\(safeName)_\(dateStr).\(fileExtension)"
+        // Keep portable archives attributable when same-name devices create
+        // backups at similar times.
+        let archiveName = "\(safeName)_\(backup.shortUDID)_\(dateStr).\(fileExtension)"
         let archivePath = (destinationDir as NSString).appendingPathComponent(archiveName)
         // Staging beside the final archive guarantees the publish is on one volume.
         // A UUID prevents concurrent exports of the same backup from sharing output.

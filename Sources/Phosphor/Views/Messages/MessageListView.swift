@@ -166,7 +166,7 @@ struct MessageListView: View {
                 .foregroundStyle(.secondary)
             Menu {
                 ForEach(backupVM.backups) { backup in
-                    Button("\(backup.displayName) • iOS \(backup.iosVersion) • \(backup.relativeDate)\(backup.isEncrypted ? " • Encrypted" : "")") {
+                    Button("\(backup.deviceIdentityLabel) • iOS \(backup.iosVersion) • \(backup.relativeDate)\(backup.isEncrypted ? " • Encrypted" : "")") {
                         selectBackup(backup)
                     }
                 }
@@ -176,7 +176,7 @@ struct MessageListView: View {
                 }
             } label: {
                 HStack {
-                    Text(backupVM.selectedBackup.map { "\($0.displayName) • iOS \($0.iosVersion) • \($0.relativeDate)\($0.isEncrypted ? " • Encrypted" : "")" } ?? "Choose Backup")
+                    Text(backupVM.selectedBackup.map { "\($0.deviceIdentityLabel) • iOS \($0.iosVersion) • \($0.relativeDate)\($0.isEncrypted ? " • Encrypted" : "")" } ?? "Choose Backup")
                         .lineLimit(1)
                     Image(systemName: "chevron.down")
                         .font(.system(size: 9, weight: .semibold))
