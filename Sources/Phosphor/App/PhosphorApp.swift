@@ -38,6 +38,7 @@ struct PhosphorApp: App {
     @StateObject private var backupVM = BackupViewModel()
     @StateObject private var unifiedSearchVM = UnifiedSearchViewModel()
     @StateObject private var scheduler = BackupScheduler()
+    @StateObject private var updateController = UpdateViewModel()
     @AppStorage("phosphor.hasCompletedOnboarding") private var hasCompletedOnboarding = false
 
     init() {
@@ -53,6 +54,7 @@ struct PhosphorApp: App {
                 .environmentObject(deviceVM)
                 .environmentObject(backupVM)
                 .environmentObject(unifiedSearchVM)
+                .environmentObject(updateController)
                 .frame(minWidth: 960, minHeight: 640)
                 .onAppear {
                     Task {
@@ -73,6 +75,13 @@ struct PhosphorApp: App {
         .windowToolbarStyle(.unified(showsTitle: true))
         .defaultSize(width: 1100, height: 720)
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") {
+                    Task { await updateController.checkForUpdates() }
+                }
+                .disabled(updateController.isChecking)
+            }
+
             CommandMenu("Device") {
                 Button("Refresh Devices") {
                     Task { await deviceVM.refresh() }
@@ -124,6 +133,7 @@ struct PhosphorApp: App {
             SettingsView()
                 .environmentObject(deviceVM)
                 .environmentObject(backupVM)
+                .environmentObject(updateController)
         }
     }
 
