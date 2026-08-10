@@ -181,12 +181,12 @@ final class WhatsAppExporter {
                 mi.ZMEDIALOCALPATH
             FROM ZWAMESSAGE m
             LEFT JOIN ZWAMEDIAITEM mi ON mi.ZMESSAGE = m.Z_PK
-            WHERE m.ZTEXT LIKE ?
+            WHERE m.ZTEXT LIKE ? ESCAPE '\\'
             ORDER BY m.ZMESSAGEDATE DESC
             LIMIT \(limit)
         """
 
-        let rows = try db.query(sql, params: ["%\(query)%"])
+        let rows = try db.query(sql, params: [SQLiteReader.containsPattern(query)])
         return rows.compactMap(parseMessage)
     }
 

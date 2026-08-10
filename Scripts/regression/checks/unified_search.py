@@ -170,7 +170,7 @@ enum UnifiedSearchExporter {
 }
 
 final class BackupManifest {
-    enum ManifestError: Error { case backupEncrypted, manifestMissing, manifestUnreadable }
+    enum ManifestError: Error { case backupEncrypted, manifestMissing, manifestUnreadable, invalidFileID(String) }
     struct FileEntry {
         let id: String
         let isFile: Bool

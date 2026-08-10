@@ -243,12 +243,12 @@ final class MessageExporter {
             SELECT \(messageSelectFields())
             FROM message m
             LEFT JOIN handle h ON m.handle_id = h.ROWID
-            WHERE m.text LIKE ?
+            WHERE m.text LIKE ? ESCAPE '\\'
             ORDER BY m.date DESC
             LIMIT \(limit)
         """
 
-        let rows = try db.query(sql, params: ["%\(query)%"])
+        let rows = try db.query(sql, params: [SQLiteReader.containsPattern(query)])
         let attachmentsByMessage = (try? attachmentsByMessage(messageIds: messageIds(from: rows))) ?? [:]
         return foldRows(rows, attachmentsByMessage: attachmentsByMessage)
     }

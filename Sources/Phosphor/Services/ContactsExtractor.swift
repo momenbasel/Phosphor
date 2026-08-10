@@ -130,15 +130,15 @@ final class ContactsExtractor {
         }
 
         let boundedLimit = max(1, min(limit, 1_000))
-        let pattern = "%\(query)%"
+        let pattern = SQLiteReader.containsPattern(query)
         let persons = try db.query("""
             SELECT DISTINCT p.ROWID, p.First, p.Last, p.Organization, p.CreationDate
             FROM ABPerson p
             LEFT JOIN ABMultiValue mv ON mv.record_id = p.ROWID AND mv.property IN (3, 4)
-            WHERE p.First LIKE ? COLLATE NOCASE
-               OR p.Last LIKE ? COLLATE NOCASE
-               OR p.Organization LIKE ? COLLATE NOCASE
-               OR mv.value LIKE ? COLLATE NOCASE
+            WHERE p.First LIKE ? ESCAPE '\\' COLLATE NOCASE
+               OR p.Last LIKE ? ESCAPE '\\' COLLATE NOCASE
+               OR p.Organization LIKE ? ESCAPE '\\' COLLATE NOCASE
+               OR mv.value LIKE ? ESCAPE '\\' COLLATE NOCASE
             ORDER BY COALESCE(p.First, '') || COALESCE(p.Last, '') || COALESCE(p.Organization, '')
             LIMIT \(boundedLimit)
         """, params: [pattern, pattern, pattern, pattern])

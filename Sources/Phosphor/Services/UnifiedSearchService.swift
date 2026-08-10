@@ -32,7 +32,7 @@ enum UnifiedSearchService {
             switch manifestError {
             case .backupEncrypted:
                 throw UnifiedSearchError.lockedBackup
-            case .manifestMissing, .manifestUnreadable:
+            case .manifestMissing, .manifestUnreadable, .invalidFileID:
                 throw UnifiedSearchError.invalidBackup
             }
         } catch {

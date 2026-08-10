@@ -155,16 +155,16 @@ final class SafariExtractor {
         }
         let db = try SQLiteReader(path: manifest.readablePath(for: entry))
         let boundedLimit = max(1, min(limit, 1_000))
-        let pattern = "%\(query)%"
+        let pattern = SQLiteReader.containsPattern(query)
         let rows = try db.query("""
             SELECT b.id, b.title, b.url, b.order_index,
                    COALESCE(p.title, '') as parent_title
             FROM bookmarks b
             LEFT JOIN bookmarks p ON b.parent = p.id
             WHERE b.url IS NOT NULL AND b.url != ''
-              AND (b.title LIKE ? COLLATE NOCASE
-                   OR b.url LIKE ? COLLATE NOCASE
-                   OR p.title LIKE ? COLLATE NOCASE)
+              AND (b.title LIKE ? ESCAPE '\\' COLLATE NOCASE
+                   OR b.url LIKE ? ESCAPE '\\' COLLATE NOCASE
+                   OR p.title LIKE ? ESCAPE '\\' COLLATE NOCASE)
             ORDER BY b.parent, b.order_index
             LIMIT \(boundedLimit)
         """, params: [pattern, pattern, pattern])
@@ -191,7 +191,7 @@ final class SafariExtractor {
         }
         let db = try SQLiteReader(path: manifest.readablePath(for: entry))
         let boundedLimit = max(1, min(limit, 1_000))
-        let pattern = "%\(query)%"
+        let pattern = SQLiteReader.containsPattern(query)
         let rows = try db.query("""
             SELECT hi.id, hi.url, COALESCE(hi.title, '') as title,
                    hi.visit_count, hv.visit_time
@@ -201,7 +201,7 @@ final class SafariExtractor {
                 FROM history_visits
                 GROUP BY history_item
             ) hv ON hv.history_item = hi.id
-            WHERE hi.url LIKE ? COLLATE NOCASE OR hi.title LIKE ? COLLATE NOCASE
+            WHERE hi.url LIKE ? ESCAPE '\\' COLLATE NOCASE OR hi.title LIKE ? ESCAPE '\\' COLLATE NOCASE
             ORDER BY hv.visit_time DESC
             LIMIT \(boundedLimit)
         """, params: [pattern, pattern])

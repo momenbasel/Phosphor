@@ -268,7 +268,7 @@ final class NotesExtractor {
     func searchNotes(_ query: String, limit: Int = 250) throws -> [Note] {
         let tables = try db.tableNames()
         let boundedLimit = max(1, min(limit, 1_000))
-        let pattern = "%\(query)%"
+        let pattern = SQLiteReader.containsPattern(query)
 
         if tables.contains("ZICCLOUDSYNCINGOBJECT") {
             let rows = try db.query("""
@@ -285,7 +285,7 @@ final class NotesExtractor {
                 FROM ZICCLOUDSYNCINGOBJECT n
                 LEFT JOIN ZICCLOUDSYNCINGOBJECT f ON n.ZFOLDER = f.Z_PK
                 WHERE n.ZTITLE1 IS NOT NULL
-                  AND (n.ZTITLE1 LIKE ? COLLATE NOCASE OR n.ZSNIPPET LIKE ? COLLATE NOCASE)
+                  AND (n.ZTITLE1 LIKE ? ESCAPE '\\' COLLATE NOCASE OR n.ZSNIPPET LIKE ? ESCAPE '\\' COLLATE NOCASE)
                 ORDER BY n.ZMODIFICATIONDATE1 DESC
                 LIMIT \(boundedLimit)
             """, params: [pattern, pattern])
@@ -317,7 +317,7 @@ final class NotesExtractor {
                     COALESCE(s.ZTITLE, 'Notes') as folder_name
                 FROM ZNOTE n
                 LEFT JOIN ZSTORE s ON n.ZSTORE = s.Z_PK
-                WHERE n.ZTITLE LIKE ? COLLATE NOCASE OR n.ZSUMMARY LIKE ? COLLATE NOCASE
+                WHERE n.ZTITLE LIKE ? ESCAPE '\\' COLLATE NOCASE OR n.ZSUMMARY LIKE ? ESCAPE '\\' COLLATE NOCASE
                 ORDER BY n.ZMODIFICATIONDATE DESC
                 LIMIT \(boundedLimit)
             """, params: [pattern, pattern])

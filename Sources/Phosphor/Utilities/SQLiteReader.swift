@@ -158,3 +158,25 @@ final class SQLiteReader {
         return count ?? 0
     }
 }
+
+extension SQLiteReader {
+    /// Build a `LIKE` pattern that matches the user's text literally.
+    ///
+    /// Every search predicate in this app is parameterised, so there is no
+    /// injection here - but the parameter is still a LIKE *pattern*, and `%`,
+    /// `_` and the escape character keep their wildcard meaning inside a bound
+    /// value. Wrapping the raw term as "%term%" meant searching for `%%` built
+    /// `%%%%`, which matches every non-NULL row of every column searched, and
+    /// `50%` matched "500 dollars". Pair this with `LIKE ? ESCAPE '\'`.
+    static func containsPattern(_ term: String) -> String {
+        var escaped = ""
+        escaped.reserveCapacity(term.count + 2)
+        for character in term {
+            if character == "\\" || character == "%" || character == "_" {
+                escaped.append("\\")
+            }
+            escaped.append(character)
+        }
+        return "%\(escaped)%"
+    }
+}

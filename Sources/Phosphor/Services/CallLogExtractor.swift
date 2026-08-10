@@ -59,7 +59,7 @@ final class CallLogExtractor {
         let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return [] }
         let boundedLimit = max(1, min(limit, 1_000))
-        let pattern = "%\(normalized)%"
+        let pattern = SQLiteReader.containsPattern(normalized)
         let matchingTypes = [
             CallLogEntry.CallType.incoming,
             .outgoing,
@@ -68,7 +68,7 @@ final class CallLogExtractor {
         let tables = try db.tableNames()
 
         if tables.contains("ZCALLRECORD") {
-            var predicate = "ZADDRESS LIKE ? COLLATE NOCASE"
+            var predicate = "ZADDRESS LIKE ? ESCAPE '\\' COLLATE NOCASE"
             if !matchingTypes.isEmpty {
                 predicate += " OR ZCALLTYPE IN (\(matchingTypes.map { String($0.rawValue) }.joined(separator: ",")))"
             }
@@ -86,7 +86,7 @@ final class CallLogExtractor {
             var legacyFlags: [Int] = []
             if matchingTypes.contains(.incoming) { legacyFlags.append(4) }
             if matchingTypes.contains(.outgoing) { legacyFlags.append(5) }
-            var predicate = "address LIKE ? COLLATE NOCASE"
+            var predicate = "address LIKE ? ESCAPE '\\' COLLATE NOCASE"
             if !legacyFlags.isEmpty {
                 predicate += " OR flags IN (\(legacyFlags.map(String.init).joined(separator: ",")))"
             }
