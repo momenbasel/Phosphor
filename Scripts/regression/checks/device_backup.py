@@ -20,7 +20,7 @@ def test_pymobiledevice_queries_usb_and_network_before_fallback(root: Path) -> N
     src = read(root, "Sources/Phosphor/Utilities/PyMobileDevice.swift")
     assert_contains(src, 'runAsync(["usbmux", "list", "--usb"]', "device discovery must explicitly query USB devices")
     assert_contains(src, 'runAsync(["usbmux", "list", "--network"]', "device discovery must explicitly query network devices")
-    assert_contains(src, 'runAsync(["usbmux", "list"])', "device discovery should retain default usbmux fallback")
+    assert_contains(src, 'runAsync(["usbmux", "list"], timeout: 5)', "device discovery should retain a timeout-bounded default usbmux fallback")
     assert_contains(src, 'entry["ConnectionType"] as? String', "usbmux JSON parser should inspect top-level ConnectionType")
     assert_contains(src, '(entry["Properties"] as? [String: Any])?["ConnectionType"] as? String', "usbmux JSON parser should inspect nested Properties.ConnectionType")
 
@@ -143,34 +143,35 @@ def test_sidebar_highlights_only_the_selected_or_hovered_device_row(root: Path) 
 def test_device_polling_prefers_lightweight_discovery_before_python_fallback(root: Path) -> None:
     manager = read(root, "Sources/Phosphor/Services/DeviceManager.swift")
     assert_contains(manager, "let lightweightScan = await listLibimobiledeviceEntries()", "routine polling should start with lightweight idevice_id discovery")
-    assert_contains(manager, "if forceRefresh || !lightweightScan.isAvailable", "explicit refresh or missing idevice_id should retain full pymobiledevice discovery")
-    assert_contains(manager, "compatibilityDiscoveryInterval", "routine polling should periodically recheck pymobiledevice-specific discovery")
+    assert_contains(manager, "if forceRefresh || compatibilityScanIsDue", "explicit refresh should bypass compatibility backoff without making routine failures spin")
+    assert_contains(manager, "DiscoveryRetryBackoff(initialDelay: 5, maximumDelay: 30)", "routine polling should periodically recheck pymobiledevice-specific discovery")
     assert_contains(manager, "compatibilityScanIsDue", "devices visible only to pymobiledevice must still be discovered automatically")
-    assert_contains(manager, "let pyEntries = await PyMobileDevice.listDevicesWithType()", "pymobiledevice discovery must remain as the compatibility fallback")
-    assert manager.index("let lightweightScan = await listLibimobiledeviceEntries()") < manager.index("let pyEntries = await PyMobileDevice.listDevicesWithType()"), "lightweight discovery must run before the expensive Python fallback"
+    assert_contains(manager, "let pyDiscovery = await PyMobileDevice.discoverDevicesWithType()", "pymobiledevice discovery must return probe authority as well as entries")
+    assert manager.index("let lightweightScan = await listLibimobiledeviceEntries()") < manager.index("let pyDiscovery = await PyMobileDevice.discoverDevicesWithType()"), "lightweight discovery must run before the expensive Python fallback"
     assert_not_contains(manager, "cachedNetworkDeviceEntries", "listDevicesWithType already queries network devices; polling must not launch a duplicate network query")
     assert_contains(manager, "Shell.runAsync(\"idevice_id\", arguments: [\"-l\"], timeout: 5)", "routine USB discovery must be timeout bounded")
     assert_contains(manager, "Shell.runAsync(\"idevice_id\", arguments: [\"-n\"], timeout: 5)", "routine network discovery must be timeout bounded")
-    assert_contains(manager, "compatibilityOnlyDeviceEntries", "pymobiledevice-only devices must persist between compatibility scans")
-    assert_contains(manager, "compatibilityOnlyDeviceEntries = pyEntries.filter", "compatibility cache should exclude devices already covered by lightweight discovery")
-    assert_contains(manager, "lightweightScan.entries + compatibilityOnlyDeviceEntries", "every routine poll should merge cached compatibility-only devices")
+    assert_contains(manager, "compatibilityOnlyDeviceCache", "pymobiledevice-only devices must persist between compatibility scans")
+    assert_contains(manager, "currentCompatibilityEntries = pyEntries.filter", "compatibility cache should exclude devices already covered by lightweight discovery")
+    assert_contains(manager, "lightweightScan.entries + retainedEntries", "every routine poll should merge non-expired compatibility-only devices")
 
     # Pin the actual predicate and the merge expression. Asserting against a Python
     # restatement of the intended semantics stays green no matter what the Swift does.
     assert_contains(
         manager,
-        "compatibilityOnlyDeviceEntries = pyEntries.filter { !lightweightIDs.contains($0.udid) }",
+        "currentCompatibilityEntries = pyEntries.filter { !lightweightIDs.contains($0.udid) }",
         "the compatibility cache must keep the devices lightweight discovery MISSED, not the ones it already found",
     )
     # A failed idevice_id probe yields an empty UDID set, so the subtraction above is
     # a no-op and would cache every USB device as compatibility-only, republishing
     # them as duplicate rows for a full interval once the probe recovers.
     assert_contains(manager, "if lightweightScan.isAvailable {", "the compatibility cache may only be refreshed from a scan whose lightweight probe succeeded")
-    assert_contains(manager, "compatibilityOnlyDeviceEntries = []", "a failed lightweight probe must clear the compatibility cache instead of poisoning it")
-    assert_contains(manager, "entries = mergeDeviceEntries(pyEntries)", "when the lightweight probe fails, the pymobiledevice snapshot is the whole picture for that poll")
-    # Date() here would hide pymobiledevice-only devices for the first full interval
-    # after launch, which is exactly what this discovery path promises to prevent.
-    assert_contains(manager, "lastCompatibilityDiscoveryAt = Date.distantPast", "the first poll after launch must run a compatibility scan, not wait out the interval")
+    assert_contains(manager, "compatibilityOnlyDeviceCache.reset()", "an authoritative full pymobiledevice snapshot must clear stale compatibility-only entries when lightweight discovery is unavailable")
+    assert_contains(manager, "pyEntries + retainedEntries", "a partial pymobiledevice failure must retain non-expired compatibility-only entries")
+    assert_contains(manager, "authoritative: pyDiscovery.isAuthoritative", "only an authoritative transport snapshot may delete cached compatibility-only entries")
+    assert_contains(manager, "regularInterval: compatibilityDiscoveryInterval", "a successful compatibility scan should restore the normal scan interval")
+    assert_contains(manager, "lastError = pyDiscovery.failureDescription", "a partial compatibility scan should be surfaced instead of masquerading as an empty result")
+    assert_contains(manager, "compatibilityDiscoveryRetry.isDue(at: scanStartedAt)", "the first poll should run immediately and later failures should honor retry backoff")
     assert_not_contains(manager, "isAvailable: usb.succeeded && network.succeeded", "requiring the -n probe to succeed disables the optimization on builds whose idevice_id rejects it")
 
 

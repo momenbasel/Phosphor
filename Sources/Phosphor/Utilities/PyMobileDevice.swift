@@ -217,6 +217,28 @@ enum PyMobileDevice {
         }
     }
 
+    struct DeviceDiscoveryResult {
+        let entries: [DeviceEntry]
+        let usbProbeSucceeded: Bool
+        let networkProbeSucceeded: Bool
+        let fallbackProbeSucceeded: Bool?
+
+        /// Only transport-specific probes can prove an omitted device is absent.
+        /// The default fallback helps older pymobiledevice3 versions, but is not
+        /// an authoritative transport snapshot.
+        var isAuthoritative: Bool {
+            usbProbeSucceeded && networkProbeSucceeded
+        }
+
+        var failureDescription: String? {
+            guard !isAuthoritative else { return nil }
+            var failed: [String] = []
+            if !usbProbeSucceeded { failed.append("USB") }
+            if !networkProbeSucceeded { failed.append("Wi-Fi") }
+            return "pymobiledevice3 \(failed.joined(separator: " and ")) discovery failed; showing the last known compatible devices and retrying."
+        }
+    }
+
     struct BonjourDevice: Hashable {
         let id: String
         let name: String
@@ -231,8 +253,20 @@ enum PyMobileDevice {
     /// omit ConnectionType there, which can make paired Wi-Fi devices disappear
     /// or be misclassified as USB.
     static func listDevicesWithType() async -> [DeviceEntry] {
-        async let usbResult = runAsync(["usbmux", "list", "--usb"])
-        async let networkResult = runAsync(["usbmux", "list", "--network"], timeout: 10)
+        await discoverDevicesWithType().entries.filter {
+            $0.connectionType == "USB" || $0.connectionType == "Network"
+        }
+    }
+
+    /// Return both entries and probe authority so callers do not collapse a
+    /// timeout or tool failure into an authoritative empty snapshot.
+    static func discoverDevicesWithType() async -> DeviceDiscoveryResult {
+        // Discovery runs inside DeviceManager's recurring scan. Keep every
+        // branch bounded so one wedged pymobiledevice3 process cannot leave
+        // isScanning set for runAsync's five-minute default and suppress all
+        // routine polls or an explicit Refresh Devices action in the meantime.
+        async let usbResult = runAsync(["usbmux", "list", "--usb"], timeout: 5)
+        async let networkResult = runAsync(["usbmux", "list", "--network"], timeout: 5)
 
         var entries: [DeviceEntry] = []
         let usb = await usbResult
@@ -245,14 +279,24 @@ enum PyMobileDevice {
             entries += parseUsbmuxDeviceEntries(from: network.output, defaultConnectionType: "Network")
         }
 
+        var fallbackSucceeded: Bool?
         if entries.isEmpty {
-            let fallback = await runAsync(["usbmux", "list"])
+            let fallback = await runAsync(["usbmux", "list"], timeout: 5)
+            fallbackSucceeded = fallback.succeeded
             if fallback.succeeded {
-                entries = parseUsbmuxDeviceEntries(from: fallback.output, defaultConnectionType: "USB")
+                // The unfiltered command can contain either transport. Older
+                // versions sometimes omit ConnectionType, so do not fabricate
+                // USB provenance for an entry whose route is actually unknown.
+                entries = parseUsbmuxDeviceEntries(from: fallback.output, defaultConnectionType: "Unknown")
             }
         }
 
-        return mergeDeviceEntries(entries)
+        return DeviceDiscoveryResult(
+            entries: mergeDeviceEntries(entries),
+            usbProbeSucceeded: usb.succeeded,
+            networkProbeSucceeded: network.succeeded,
+            fallbackProbeSucceeded: fallbackSucceeded
+        )
     }
 
     /// List devices currently reachable over network/Wi-Fi with connection metadata.
@@ -341,9 +385,10 @@ enum PyMobileDevice {
                         ?? entry["SerialNumber"] as? String else { continue }
                 let connType = (entry["ConnectionType"] as? String)
                     ?? (entry["Properties"] as? [String: Any])?["ConnectionType"] as? String
-                    ?? defaultConnectionType
-                let isUSB = connType.lowercased().contains("usb") || connType == "1"
-                let type = isUSB ? "USB" : "Network"
+                let type = UsbmuxConnectionType.normalize(
+                    connType,
+                    default: defaultConnectionType
+                )
 
                 if byUdid[udid] == nil { orderedUdids.append(udid) }
                 if byUdid[udid]?.connectionType != "USB" || type == "USB" {

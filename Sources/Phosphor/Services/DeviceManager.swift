@@ -18,16 +18,15 @@ final class DeviceManager: ObservableObject {
     private var batteryInfoCache: [String: (info: [String: String], fetchedAt: Date)] = [:]
     private var pairStatusCache: [String: (isPaired: Bool, fetchedAt: Date)] = [:]
     private var bonjourDeviceCache: (devices: [PyMobileDevice.BonjourDevice], fetchedAt: Date)?
-    private var compatibilityOnlyDeviceEntries: [PyMobileDevice.DeviceEntry] = []
-    // distantPast, not Date(): the first poll after launch has to run the
-    // pymobiledevice3 scan, otherwise a device only it can enumerate stays
-    // invisible for the whole first compatibility interval.
-    private var lastCompatibilityDiscoveryAt = Date.distantPast
+    private var compatibilityOnlyDeviceCache = AuthoritativeSnapshotCache<PyMobileDevice.DeviceEntry>()
+    private var networkDeviceGraceCache = NetworkDeviceGraceCache<DeviceInfo>(maxMissedScans: 1)
+    private var compatibilityDiscoveryRetry = DiscoveryRetryBackoff(initialDelay: 5, maximumDelay: 30)
+    private let compatibilityDiscoveryInterval: TimeInterval = 30
     private let deviceInfoRefreshInterval: TimeInterval = 30
     private let batteryInfoRefreshInterval: TimeInterval = 60
     private let pairStatusRefreshInterval: TimeInterval = 120
     private let bonjourDeviceRefreshInterval: TimeInterval = 30
-    private let compatibilityDiscoveryInterval: TimeInterval = 30
+
 
     // MARK: - Dependency Check
 
@@ -56,7 +55,9 @@ final class DeviceManager: ObservableObject {
             }
         }
         isScanning = true
-        lastError = nil
+        if forceRefresh || compatibilityDiscoveryRetry.consecutiveFailures == 0 {
+            lastError = nil
+        }
         defer { isScanning = false }
 
         // Routine polling uses libimobiledevice discovery because it is a tiny
@@ -64,50 +65,98 @@ final class DeviceManager: ObservableObject {
         // substantially more CPU. Explicit refreshes and systems without both
         // idevice_id transports retain the full pymobiledevice3 compatibility path.
         let lightweightScan = await listLibimobiledeviceEntries()
-        let compatibilityScanIsDue = Date().timeIntervalSince(lastCompatibilityDiscoveryAt) >= compatibilityDiscoveryInterval
-        let entries: [PyMobileDevice.DeviceEntry]
-        if forceRefresh || !lightweightScan.isAvailable || compatibilityScanIsDue {
-            lastCompatibilityDiscoveryAt = Date()
-            let pyEntries = await PyMobileDevice.listDevicesWithType()
+        let scanStartedAt = Date()
+        let compatibilityScanIsDue = compatibilityDiscoveryRetry.isDue(at: scanStartedAt)
+        let discoveredEntries: [PyMobileDevice.DeviceEntry]
+        var compatibilityProbeFailed = false
+        var retainedCompatibilityDeviceIDs: Set<String> = []
+        if forceRefresh || compatibilityScanIsDue {
+            let pyDiscovery = await PyMobileDevice.discoverDevicesWithType()
+            let discoveryCompletedAt = Date()
+            // A default fallback without ConnectionType is useful as a hint but
+            // cannot safely change a known Wi-Fi device into USB. Only explicit
+            // transport observations may enter the rendered/cache snapshot.
+            let pyEntries = pyDiscovery.entries.filter {
+                $0.connectionType == "USB" || $0.connectionType == "Network"
+            }
+            compatibilityProbeFailed = !pyDiscovery.isAuthoritative
+            if pyDiscovery.isAuthoritative {
+                lastError = nil
+                compatibilityDiscoveryRetry.recordSuccess(
+                    at: discoveryCompletedAt,
+                    regularInterval: compatibilityDiscoveryInterval
+                )
+            } else {
+                compatibilityDiscoveryRetry.recordFailure(at: discoveryCompletedAt)
+                lastError = pyDiscovery.failureDescription
+            }
+
             if lightweightScan.isAvailable {
                 let lightweightIDs = Set(lightweightScan.entries.map(\.udid))
-                compatibilityOnlyDeviceEntries = pyEntries.filter { !lightweightIDs.contains($0.udid) }
-                entries = mergeDeviceEntries(lightweightScan.entries + compatibilityOnlyDeviceEntries)
+                let currentCompatibilityEntries = pyEntries.filter { !lightweightIDs.contains($0.udid) }
+                let cachedCompatibilityIDs = Set(compatibilityOnlyDeviceCache.values.map(\.udid))
+                let compatibilityEntries = compatibilityOnlyDeviceCache.merge(
+                    current: currentCompatibilityEntries.map { (id: $0.udid, value: $0) },
+                    authoritative: pyDiscovery.isAuthoritative,
+                    now: discoveryCompletedAt
+                )
+                if compatibilityProbeFailed {
+                    let directlyObservedIDs = lightweightIDs.union(pyEntries.map(\.udid))
+                    retainedCompatibilityDeviceIDs = Set(compatibilityEntries.map(\.udid))
+                        .intersection(cachedCompatibilityIDs)
+                        .subtracting(directlyObservedIDs)
+                }
+                discoveredEntries = mergeDeviceEntries(lightweightScan.entries + compatibilityEntries)
             } else {
                 // The probe failed, so its UDID set is empty and cannot subtract
                 // duplicates. pyEntries is already the whole picture for this poll;
                 // caching it as compatibility-only would republish every USB device
                 // as a phantom row for the next 30s once the probe recovers.
-                compatibilityOnlyDeviceEntries = []
-                entries = mergeDeviceEntries(pyEntries)
+                if pyDiscovery.isAuthoritative {
+                    compatibilityOnlyDeviceCache.reset()
+                    discoveredEntries = mergeDeviceEntries(pyEntries)
+                } else {
+                    let cachedCompatibilityIDs = Set(compatibilityOnlyDeviceCache.values.map(\.udid))
+                    let retainedEntries = compatibilityOnlyDeviceCache.merge(
+                        current: [],
+                        authoritative: false,
+                        now: discoveryCompletedAt
+                    )
+                    retainedCompatibilityDeviceIDs = Set(retainedEntries.map(\.udid))
+                        .intersection(cachedCompatibilityIDs)
+                        .subtracting(pyEntries.map(\.udid))
+                    discoveredEntries = mergeDeviceEntries(pyEntries + retainedEntries)
+                }
             }
         } else {
-            entries = mergeDeviceEntries(lightweightScan.entries + compatibilityOnlyDeviceEntries)
+            // Skipping an expensive probe during its normal interval/backoff is
+            // not another failed discovery. Do not consume the cache's failure
+            // budget on every lightweight UI poll.
+            let retainedEntries = compatibilityOnlyDeviceCache.retainedValues(now: scanStartedAt)
+            if compatibilityDiscoveryRetry.consecutiveFailures > 0 {
+                retainedCompatibilityDeviceIDs = Set(retainedEntries.map(\.udid))
+                    .subtracting(lightweightScan.entries.map(\.udid))
+            }
+            discoveredEntries = mergeDeviceEntries(lightweightScan.entries + retainedEntries)
         }
 
-        if entries.isEmpty {
-            let bonjourDevices = await cachedBonjourDevices(forceRefresh: forceRefresh)
-            connectedDevices = []
-            nearbyWirelessDevices = bonjourDevices
-            selectedDevice = nil
-            deviceInfoCache.removeAll()
-            batteryInfoCache.removeAll()
-            pairStatusCache.removeAll()
-            return
-        }
-
-        nearbyWirelessDevices = []
-
-        let visibleUDIDs = Set(entries.map(\.udid))
+        let visibleUDIDs = Set(discoveredEntries.map(\.udid))
         deviceInfoCache = deviceInfoCache.filter { visibleUDIDs.contains($0.key) }
         batteryInfoCache = batteryInfoCache.filter { visibleUDIDs.contains($0.key) }
         pairStatusCache = pairStatusCache.filter { visibleUDIDs.contains($0.key) }
 
-        var devices: [DeviceInfo] = []
-        for entry in entries {
+        var currentDevices: [DeviceInfo] = []
+        for entry in discoveredEntries {
             let connType: DeviceInfo.ConnectionType = entry.connectionType == "USB" ? .usb : .wifi
-            if !forceRefresh, let cached = cachedDevice(udid: entry.udid, connectionType: connType) {
-                devices.append(cached)
+            if retainedCompatibilityDeviceIDs.contains(entry.udid),
+               var cached = deviceInfoCache[entry.udid]?.device {
+                cached.connectionType = connType
+                currentDevices.append(cached)
+                continue
+            }
+            if !forceRefresh,
+               let cached = cachedDevice(udid: entry.udid, connectionType: connType) {
+                currentDevices.append(cached)
                 continue
             }
             if var device = await fetchDeviceInfo(
@@ -118,10 +167,38 @@ final class DeviceManager: ObservableObject {
             ) {
                 device.connectionType = connType
                 deviceInfoCache[entry.udid] = (device, Date())
-                devices.append(device)
+                currentDevices.append(device)
             }
         }
 
+        // A Wi-Fi device can vanish from usbmux or fail a metadata query for one
+        // poll while iOS changes power or network state. Retain the last rendered
+        // network snapshot through one routine miss so the selected row does not
+        // flicker every four seconds. USB devices still disappear immediately. An
+        // explicit refresh bypasses grace after an authoritative scan, but a probe
+        // failure cannot be misreported as an authoritative disconnect.
+        if forceRefresh && !compatibilityProbeFailed { networkDeviceGraceCache.reset() }
+        let currentUSBDeviceIDs = Set(
+            discoveredEntries.filter { $0.connectionType == "USB" }.map(\.udid)
+        )
+        networkDeviceGraceCache.remove(ids: currentUSBDeviceIDs)
+        let currentNetworkDevices = currentDevices
+            .filter { $0.connectionType == .wifi }
+            .map { (id: $0.id, value: $0) }
+        let stableNetworkDevices = networkDeviceGraceCache.merge(current: currentNetworkDevices)
+        let devices = currentDevices.filter { $0.connectionType == .usb } + stableNetworkDevices
+
+        if devices.isEmpty {
+            nearbyWirelessDevices = await cachedBonjourDevices(forceRefresh: forceRefresh)
+            connectedDevices = []
+            selectedDevice = nil
+            deviceInfoCache.removeAll()
+            batteryInfoCache.removeAll()
+            pairStatusCache.removeAll()
+            return
+        }
+
+        nearbyWirelessDevices = []
         connectedDevices = devices
         if let selectedID = selectedDevice?.id,
            let refreshedSelection = devices.first(where: { $0.id == selectedID }) {
