@@ -143,7 +143,12 @@ def test_sidebar_highlights_only_the_selected_or_hovered_device_row(root: Path) 
 def test_device_polling_prefers_lightweight_discovery_before_python_fallback(root: Path) -> None:
     manager = read(root, "Sources/Phosphor/Services/DeviceManager.swift")
     assert_contains(manager, "let lightweightScan = await listLibimobiledeviceEntries()", "routine polling should start with lightweight idevice_id discovery")
-    assert_contains(manager, "if forceRefresh || compatibilityScanIsDue", "explicit refresh should bypass compatibility backoff without making routine failures spin")
+    # The `!lightweightScan.isAvailable` term is not decoration. On a
+    # pymobiledevice3-only install libimobiledevice discovery yields nothing, so
+    # without it every poll where the compatibility scan is not yet due renders
+    # an empty device list and drops the sidebar selection. Regressed once
+    # already; commit 2b654c3 added this assertion for exactly that reason.
+    assert_contains(manager, "if forceRefresh || !lightweightScan.isAvailable || compatibilityScanIsDue", "routine polls must still run the compatibility probe when libimobiledevice is unavailable")
     assert_contains(manager, "DiscoveryRetryBackoff(initialDelay: 5, maximumDelay: 30)", "routine polling should periodically recheck pymobiledevice-specific discovery")
     assert_contains(manager, "compatibilityScanIsDue", "devices visible only to pymobiledevice must still be discovered automatically")
     assert_contains(manager, "let pyDiscovery = await PyMobileDevice.discoverDevicesWithType()", "pymobiledevice discovery must return probe authority as well as entries")

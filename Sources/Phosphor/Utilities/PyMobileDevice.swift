@@ -254,7 +254,16 @@ enum PyMobileDevice {
     /// or be misclassified as USB.
     static func listDevicesWithType() async -> [DeviceEntry] {
         await discoverDevicesWithType().entries.filter {
-            $0.connectionType == "USB" || $0.connectionType == "Network"
+            // "Unknown" comes from the unfiltered `usbmux list` fallback, which
+            // only runs when both typed probes returned nothing. Dropping those
+            // entries makes the device vanish entirely on older pymobiledevice3
+            // builds that omit ConnectionType - the clone picker empties and
+            // BackupScheduler.findTargetDevice returns nil, so a configured
+            // scheduled backup silently stops firing. Keep them; callers that
+            // need a transport resolve Unknown as directly attached.
+            $0.connectionType == "USB"
+                || $0.connectionType == "Network"
+                || $0.connectionType == "Unknown"
         }
     }
 

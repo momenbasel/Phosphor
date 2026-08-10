@@ -160,7 +160,14 @@ def test_non_authoritative_fallback_cannot_fabricate_usb_transport(root: Path) -
 
     assert 'defaultConnectionType: "Unknown"' in pymobiledevice
     assert "UsbmuxConnectionType.normalize" in pymobiledevice
-    assert '$0.connectionType == "USB" || $0.connectionType == "Network"' in manager
+    # An "Unknown" entry must survive discovery - it is the only evidence the
+    # device exists on pymobiledevice3 builds that omit ConnectionType, and
+    # filtering it out emptied the device list, the clone picker and
+    # BackupScheduler.findTargetDevice. What must NOT happen is inventing a
+    # transport: an Unknown entry may only render as Wi-Fi if this UDID was
+    # already classified Wi-Fi, otherwise it falls back to directly attached.
+    assert '$0.connectionType == "Unknown"' in manager
+    assert 'deviceInfoCache[entry.udid]?.device.connectionType == .wifi ? .wifi : .usb' in manager
     assert 'discoveredEntries.filter { $0.connectionType == "USB" }' in manager
     assert "retainedCompatibilityDeviceIDs.contains(entry.udid)" in manager
     assert "if !forceRefresh," in manager

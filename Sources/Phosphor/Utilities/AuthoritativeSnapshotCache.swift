@@ -13,6 +13,14 @@ struct AuthoritativeSnapshotCache<Value> {
     private var valuesByID: [String: Value] = [:]
     private var orderedIDs: [String] = []
     private var lastAuthoritativeSnapshotAt: Date?
+    /// Stamped by every merge that produced entries, authoritative or not.
+    /// Retention has to age against this rather than against the authoritative
+    /// stamp: on a machine where one transport probe never succeeds inside its
+    /// timeout, `lastAuthoritativeSnapshotAt` stays nil forever, so ageing
+    /// against it made `retainedValues` reset on every routine poll and the
+    /// compatibility-only device flickered - the exact bug this cache exists
+    /// to prevent. Deletion authority still keys off the authoritative stamp.
+    private var lastSnapshotAt: Date?
     private var consecutiveNonAuthoritativeMerges = 0
 
     init(maxStaleAge: TimeInterval = 30, maxNonAuthoritativeMerges: Int = 3) {
@@ -28,8 +36,8 @@ struct AuthoritativeSnapshotCache<Value> {
     /// another failed discovery. Expired entries are removed immediately even
     /// while the expensive compatibility probe is in backoff.
     mutating func retainedValues(now: Date = Date()) -> [Value] {
-        guard let lastAuthoritativeSnapshotAt,
-              now.timeIntervalSince(lastAuthoritativeSnapshotAt) <= maxStaleAge else {
+        guard let lastSnapshotAt,
+              now.timeIntervalSince(lastSnapshotAt) <= maxStaleAge else {
             reset()
             return []
         }
@@ -47,7 +55,7 @@ struct AuthoritativeSnapshotCache<Value> {
             consecutiveNonAuthoritativeMerges += 1
         }
         let canRetainPrevious = consecutiveNonAuthoritativeMerges <= maxNonAuthoritativeMerges
-            && (lastAuthoritativeSnapshotAt.map {
+            && (lastSnapshotAt.map {
                 now.timeIntervalSince($0) <= maxStaleAge
             } ?? false)
         if authoritative || !canRetainPrevious {
@@ -65,6 +73,10 @@ struct AuthoritativeSnapshotCache<Value> {
             valuesByID[id] = value
         }
 
+        if !valuesByID.isEmpty {
+            lastSnapshotAt = now
+        }
+
         return values
     }
 
@@ -72,6 +84,7 @@ struct AuthoritativeSnapshotCache<Value> {
         valuesByID.removeAll()
         orderedIDs.removeAll()
         lastAuthoritativeSnapshotAt = nil
+        lastSnapshotAt = nil
         consecutiveNonAuthoritativeMerges = 0
     }
 }

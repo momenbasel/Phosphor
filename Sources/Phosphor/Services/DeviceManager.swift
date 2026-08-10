@@ -70,14 +70,21 @@ final class DeviceManager: ObservableObject {
         let discoveredEntries: [PyMobileDevice.DeviceEntry]
         var compatibilityProbeFailed = false
         var retainedCompatibilityDeviceIDs: Set<String> = []
-        if forceRefresh || compatibilityScanIsDue {
+        // `!lightweightScan.isAvailable` is load-bearing: on a pymobiledevice3-only
+        // install (which hasRequiredTools accepts) libimobiledevice discovery
+        // returns no entries at all, so skipping the compatibility probe on the
+        // polls where it is not yet due leaves nothing to render and the device
+        // list blanks every few seconds. Restored from commit 2b654c3.
+        if forceRefresh || !lightweightScan.isAvailable || compatibilityScanIsDue {
             let pyDiscovery = await PyMobileDevice.discoverDevicesWithType()
             let discoveryCompletedAt = Date()
             // A default fallback without ConnectionType is useful as a hint but
             // cannot safely change a known Wi-Fi device into USB. Only explicit
             // transport observations may enter the rendered/cache snapshot.
             let pyEntries = pyDiscovery.entries.filter {
-                $0.connectionType == "USB" || $0.connectionType == "Network"
+                $0.connectionType == "USB"
+                    || $0.connectionType == "Network"
+                    || $0.connectionType == "Unknown"
             }
             compatibilityProbeFailed = !pyDiscovery.isAuthoritative
             if pyDiscovery.isAuthoritative {
@@ -147,7 +154,22 @@ final class DeviceManager: ObservableObject {
 
         var currentDevices: [DeviceInfo] = []
         for entry in discoveredEntries {
-            let connType: DeviceInfo.ConnectionType = entry.connectionType == "USB" ? .usb : .wifi
+            // "Unknown" means the unfiltered `usbmux list` fallback ran, which
+            // only happens when both typed probes came back empty. Dropping
+            // those entries made the device disappear on older pymobiledevice3
+            // builds that omit ConnectionType, taking the clone picker and
+            // scheduled backups with it. Keep the device, but never invent a
+            // transport: if we already classified this UDID as Wi-Fi, keep
+            // Wi-Fi; otherwise treat it as directly attached.
+            let connType: DeviceInfo.ConnectionType
+            switch entry.connectionType {
+            case "Network":
+                connType = .wifi
+            case "USB":
+                connType = .usb
+            default:
+                connType = deviceInfoCache[entry.udid]?.device.connectionType == .wifi ? .wifi : .usb
+            }
             if retainedCompatibilityDeviceIDs.contains(entry.udid),
                var cached = deviceInfoCache[entry.udid]?.device {
                 cached.connectionType = connType
