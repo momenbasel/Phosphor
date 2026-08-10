@@ -11,6 +11,7 @@ final class BackupManifest {
         case manifestMissing(path: String)
         case backupEncrypted(path: String)
         case manifestUnreadable(path: String, underlying: String)
+        case invalidFileID(String)
 
         var errorDescription: String? {
             switch self {
@@ -27,6 +28,8 @@ final class BackupManifest {
                 """
             case .manifestUnreadable(let path, let underlying):
                 return "Cannot read Manifest.db at \(path): \(underlying)"
+            case .invalidFileID(let fileID):
+                return "Backup manifest contains a malformed file identifier (\(fileID)). The backup may be corrupt or was not produced by iOS."
             }
         }
     }
@@ -196,6 +199,12 @@ final class BackupManifest {
         guard decryptor != nil, let plaintextScratch else { return sourcePath }
         if let cached = plaintextCache[entry.id] { return cached }
 
+        // Belt and braces. parseFileEntry already rejects a non-SHA-1 fileID,
+        // but this is the sink that actually writes decrypted bytes to a path
+        // built from it, and FileEntry is constructible elsewhere in the app.
+        guard Self.isValidFileID(entry.id) else {
+            throw ManifestError.invalidFileID(entry.id)
+        }
         let destination = plaintextScratch.appendingPathComponent(entry.id)
         try fileData(for: entry).write(to: destination, options: .atomic)
         try? FileManager.default.setAttributes(
@@ -511,8 +520,24 @@ final class BackupManifest {
 
     // MARK: - Private
 
+    /// An iOS backup fileID is always the 40-character lowercase SHA-1 hex of
+    /// `domain-relativePath`. Nothing else is legitimate, and the value is used
+    /// unescaped to build filesystem paths: `diskPath` interpolates it into
+    /// `<root>/<first two chars>/<id>`, and the encrypted path writes the
+    /// decrypted plaintext to `plaintextScratch.appendingPathComponent(id)`.
+    /// `appendingPathComponent` happily traverses, and this app ships with
+    /// `com.apple.security.app-sandbox` disabled, so a Files row carrying
+    /// `../../../../Users/<user>/Library/LaunchAgents/x.plist` in an
+    /// attacker-supplied encrypted backup would have written attacker bytes to
+    /// that path. Reject anything that is not a SHA-1 hex string at the point
+    /// the row becomes a FileEntry, so no downstream sink has to remember.
+    private static func isValidFileID(_ fileID: String) -> Bool {
+        fileID.count == 40 && fileID.allSatisfy { $0.isHexDigit && !$0.isUppercase }
+    }
+
     private func parseFileEntry(_ row: [String: Any?]) -> FileEntry? {
         guard let fileID = row["fileID"] as? String,
+              Self.isValidFileID(fileID),
               let domain = row["domain"] as? String,
               let relativePath = row["relativePath"] as? String else {
             return nil
