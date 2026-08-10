@@ -22,6 +22,23 @@ cd "$PROJECT_DIR"
 APP=".build/Phosphor.app"
 DMG=".build/Phosphor.dmg"
 ENTITLEMENTS="Resources/Phosphor.entitlements"
+PLIST="Resources/Info.plist"
+
+# Stamp the bundle version from the tag before building. Nothing else in the
+# pipeline writes Info.plist, so on every previous release this was a manual
+# step that could be forgotten. Since the built-in update checker compares the
+# shipped CFBundleShortVersionString against the newest GitHub tag, a stale
+# plist is no longer cosmetic: it tells every user of the new build that an
+# update is available and hands them the DMG they are already running.
+echo "==> Stamping $PLIST to $VERSION"
+CURRENT_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST")"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$PLIST"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $((CURRENT_BUILD + 1))" "$PLIST"
+echo "    CFBundleShortVersionString=$VERSION CFBundleVersion=$((CURRENT_BUILD + 1))"
+if ! git diff --quiet "$PLIST"; then
+    git add "$PLIST"
+    git commit -m "release: stamp bundle version $VERSION"
+fi
 
 echo "==> Building release (universal arm64 + x86_64)"
 rm -rf .build
@@ -65,16 +82,34 @@ xcrun stapler validate "$DMG"
 SHA=$(shasum -a 256 "$DMG" | awk '{print $1}')
 echo "==> SHA256: $SHA"
 
-if ! git tag -l "$TAG" | grep -q "^$TAG$"; then
-    echo "==> Creating + pushing tag $TAG"
-    git tag -a "$TAG" -m "$TAG"
-    git push origin "$TAG"
+# Publish the tag and the DMG in ONE step. The previous order pushed the tag
+# first, which starts the CI release job; release-guard then asks whether the
+# tag already has Phosphor.dmg attached, sees nothing (the upload had not
+# happened yet) and lets CI build and notarize a competing DMG. Whichever
+# upload lands last wins, while the cask is bumped from the LOCAL sha - which
+# is exactly how issue #21 shipped casks pointing at a DMG that no longer
+# existed. `gh release create` creates the tag, the release and the asset
+# together, so by the time the tag event reaches CI the guard already sees a
+# published DMG and stands down.
+echo "==> Publishing $TAG with the DMG attached"
+if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+    echo "    release $TAG already exists - uploading DMG"
+    gh release upload "$TAG" --repo "$REPO" "$DMG" --clobber
+else
+    git push origin "$(git rev-parse --abbrev-ref HEAD)"
+    gh release create "$TAG" --repo "$REPO" "$DMG" \
+        --title "$TAG" --generate-notes --target "$(git rev-parse HEAD)"
 fi
 
-echo "==> Creating GitHub release"
-gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 || \
-    gh release create "$TAG" --repo "$REPO" "$DMG" --title "$TAG" --generate-notes
-gh release upload "$TAG" --repo "$REPO" "$DMG" --clobber
+echo "==> Verifying the PUBLISHED asset matches what we built"
+PUBLISHED_SHA="$(gh release download "$TAG" --repo "$REPO" --pattern 'Phosphor.dmg' \
+    --output - | shasum -a 256 | awk '{print $1}')"
+if [[ "$PUBLISHED_SHA" != "$SHA" ]]; then
+    echo "ERROR: published DMG sha ($PUBLISHED_SHA) != built sha ($SHA)."
+    echo "       Refusing to bump the casks - they would point at a DMG nobody has."
+    exit 1
+fi
+echo "    published sha matches: $SHA"
 
 echo "==> Bumping in-repo Homebrew cask"
 CASK="Homebrew/phosphor.rb"
@@ -84,7 +119,12 @@ CASK="Homebrew/phosphor.rb"
 if ! git diff --quiet "$CASK"; then
     git add "$CASK"
     git commit -m "homebrew: bump cask to $TAG"
-    git push origin main
+    # main can have moved while the notary was running (a merged PR, or CI's own
+    # cask commit). Rebase before pushing so the bump never fails with
+    # "fetch first" and leave the release half-published.
+    git fetch origin main
+    git rebase origin/main
+    git push origin HEAD:main
 fi
 
 # Keep the external tap (`brew install --cask momenbasel/phosphor/phosphor`) in

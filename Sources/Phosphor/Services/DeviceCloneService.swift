@@ -20,6 +20,13 @@ final class DeviceCloneService: ObservableObject {
     @Published var isRunning = false
     @Published var lastError: String?
 
+    private struct BackupFingerprint: Equatable {
+        let lastBackupDate: Date?
+        let directoryModifiedAt: Date?
+        let statusModifiedAt: Date?
+        let manifestModifiedAt: Date?
+    }
+
     private let backupManager = BackupManager()
 
     /// Get all currently connected devices.
@@ -55,6 +62,7 @@ final class DeviceCloneService: ObservableObject {
     func clone(
         sourceUDID: String,
         destinationUDID: String,
+        backupViewModel: BackupViewModel,
         encrypted: Bool = false
     ) async -> Bool {
         guard sourceUDID != destinationUDID else {
@@ -71,15 +79,19 @@ final class DeviceCloneService: ObservableObject {
         overallProgress = 0.05
         progress = "Starting backup of source device..."
 
-        let backupSuccess = await backupManager.createBackup(udid: sourceUDID, encrypted: encrypted) { [weak self] text in
-            self?.progress = text
-            if let pct = PyMobileDevice.parseProgress(from: text) {
-                self?.overallProgress = pct / 2.0
-            }
-        }
+        backupManager.discoverBackups()
+        let previousFingerprints = Dictionary(uniqueKeysWithValues:
+            backupManager.backups
+                .filter { $0.udid == sourceUDID }
+                .map { ($0.path, backupFingerprint(for: $0)) }
+        )
+
+        await backupViewModel.createBackup(udid: sourceUDID, encrypted: encrypted)
+        let sourceActivity = backupViewModel.activity(for: sourceUDID)
+        let backupSuccess = sourceActivity?.state == .completed
 
         guard backupSuccess else {
-            lastError = backupManager.lastError ?? "Backup of source device failed"
+            lastError = sourceActivity?.errorMessage ?? "Backup of source device failed"
             phase = .failed
             isRunning = false
             return false
@@ -90,7 +102,13 @@ final class DeviceCloneService: ObservableObject {
 
         // Find backup
         backupManager.discoverBackups()
-        guard let latestBackup = backupManager.backups.first(where: { $0.udid == sourceUDID }) else {
+        let sourceBackups = backupManager.backups.filter { $0.udid == sourceUDID }
+        let freshSourceBackups = sourceBackups.filter {
+            previousFingerprints[$0.path] != backupFingerprint(for: $0)
+        }
+        guard let latestBackup = freshSourceBackups.max(by: {
+            backupFreshnessDate(for: $0) < backupFreshnessDate(for: $1)
+        }) else {
             lastError = "Could not find the backup that was just created"
             phase = .failed
             isRunning = false
@@ -122,6 +140,31 @@ final class DeviceCloneService: ObservableObject {
 
         isRunning = false
         return restoreSuccess
+    }
+
+    private func backupFingerprint(for backup: BackupInfo) -> BackupFingerprint {
+        let path = backup.path as NSString
+        return BackupFingerprint(
+            lastBackupDate: backup.lastBackupDate,
+            directoryModifiedAt: modificationDate(at: backup.path),
+            statusModifiedAt: modificationDate(at: path.appendingPathComponent("Status.plist")),
+            manifestModifiedAt: modificationDate(at: path.appendingPathComponent("Manifest.db"))
+        )
+    }
+
+    private func backupFreshnessDate(for backup: BackupInfo) -> Date {
+        let fingerprint = backupFingerprint(for: backup)
+        return [
+            fingerprint.lastBackupDate,
+            fingerprint.directoryModifiedAt,
+            fingerprint.statusModifiedAt,
+            fingerprint.manifestModifiedAt
+        ].compactMap { $0 }.max() ?? .distantPast
+    }
+
+    private func modificationDate(at path: String) -> Date? {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: path)
+        return attributes?[.modificationDate] as? Date
     }
 
     func reset() {

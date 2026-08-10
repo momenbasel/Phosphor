@@ -13,6 +13,7 @@ struct BackupTimeMachineView: View {
     @State private var pendingRestore: RestoreRequest?
     @State private var restoreProgress: String?
     @State private var isRestoring = false
+    @State private var showComparison = false
     @State private var starPositions: [StarParticle] = generateStars(count: 120)
 
     private struct RestoreRequest {
@@ -87,7 +88,11 @@ struct BackupTimeMachineView: View {
                 performRestore(request)
             }
         } message: { request in
-            Text("Restore \(request.targetName) from \(request.backup.dateString)? The device will restart, and this cannot be undone.")
+            Text("Restore \(request.targetName) · ID …\(request.targetUDID.suffix(8)) using \(request.backup.deviceIdentityLabel) from \(request.backup.dateString)? The target device will restart, and this cannot be undone.")
+        }
+        .sheet(isPresented: $showComparison) {
+            BackupComparisonView(initiallySelected: selectedBackup)
+                .environmentObject(backupVM)
         }
     }
 
@@ -96,6 +101,11 @@ struct BackupTimeMachineView: View {
             get: { pendingRestore != nil },
             set: { if !$0 { pendingRestore = nil } }
         )
+    }
+
+    private var selectedBackup: BackupInfo? {
+        guard backupVM.backups.indices.contains(selectedIndex) else { return nil }
+        return backupVM.backups[selectedIndex]
     }
 
     // MARK: - Star Field
@@ -145,9 +155,10 @@ struct BackupTimeMachineView: View {
                     .font(.system(size: 16))
                     .foregroundStyle(.white.opacity(0.9))
 
-                Text(backup.deviceName)
+                Text(backup.deviceIdentityLabel)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.white)
+                    .lineLimit(1)
 
                 Spacer()
 
@@ -212,6 +223,14 @@ struct BackupTimeMachineView: View {
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                         .tint(.white)
+
+                        Button("Compare Backups") {
+                            showComparison = true
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .tint(.white)
+                        .disabled(backupVM.isCreating || backupVM.backups.filter { $0.udid == backup.udid }.count < 2)
                     }
                     .padding(.top, 4)
                 }
@@ -270,6 +289,18 @@ struct BackupTimeMachineView: View {
 
             // Navigation arrows
             HStack {
+                Button {
+                    backupVM.loadBackups()
+                    selectedIndex = min(selectedIndex, max(0, backupVM.backups.count - 1))
+                } label: {
+                    Image(systemName: "arrow.clockwise.circle.fill")
+                        .font(.system(size: 24))
+                        .foregroundStyle(.white.opacity(0.8))
+                }
+                .buttonStyle(.plain)
+                .help("Refresh Backups")
+                .disabled(backupVM.isCreating)
+
                 Button {
                     withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
                         selectedIndex = max(0, selectedIndex - 1)

@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 struct MessageListView: View {
 
     @EnvironmentObject var backupVM: BackupViewModel
-    @StateObject private var messageVM = MessageViewModel()
+    @EnvironmentObject var messageVM: MessageViewModel
     @State private var showExportSheet = false
     @State private var exportFormat: MessageExportFormat = .html
     @State private var searchText = ""
@@ -32,9 +32,6 @@ struct MessageListView: View {
         }
         .onChange(of: backupVM.backups.map(\.path)) { _, _ in
             reconcileLoadedBackupWithAvailableBackups()
-        }
-        .overlay(alignment: .bottom) {
-            if messageVM.isExporting { exportProgressBar }
         }
         .alert("Messages", isPresented: $messageVM.showAlert) {
             Button("OK") {}
@@ -166,7 +163,7 @@ struct MessageListView: View {
                 .foregroundStyle(.secondary)
             Menu {
                 ForEach(backupVM.backups) { backup in
-                    Button("\(backup.displayName) • iOS \(backup.iosVersion) • \(backup.relativeDate)\(backup.isEncrypted ? " • Encrypted" : "")") {
+                    Button("\(backup.deviceIdentityLabel) • iOS \(backup.iosVersion) • \(backup.relativeDate)\(backup.isEncrypted ? " • Encrypted" : "")") {
                         selectBackup(backup)
                     }
                 }
@@ -176,7 +173,7 @@ struct MessageListView: View {
                 }
             } label: {
                 HStack {
-                    Text(backupVM.selectedBackup.map { "\($0.displayName) • iOS \($0.iosVersion) • \($0.relativeDate)\($0.isEncrypted ? " • Encrypted" : "")" } ?? "Choose Backup")
+                    Text(backupVM.selectedBackup.map { "\($0.deviceIdentityLabel) • iOS \($0.iosVersion) • \($0.relativeDate)\($0.isEncrypted ? " • Encrypted" : "")" } ?? "Choose Backup")
                         .lineLimit(1)
                     Image(systemName: "chevron.down")
                         .font(.system(size: 9, weight: .semibold))
@@ -199,6 +196,10 @@ struct MessageListView: View {
                 Button(format.rawValue) {
                     exportAllConversations(format: format)
                 }
+            }
+            Divider()
+            Button("All Formats + Attachments") {
+                exportAllConversationsAllFormats()
             }
         }
         .menuStyle(.borderlessButton)
@@ -266,9 +267,10 @@ struct MessageListView: View {
                 .labelsHidden()
                 .frame(width: 130)
 
-                Toggle("Attachments", isOn: $includeAttachments)
+                Toggle("Export Attachments", isOn: $includeAttachments)
                     .toggleStyle(.checkbox)
                     .font(.system(size: 11))
+                    .help("Copies original photos, videos, audio, and files into an attachments folder beside the transcript.")
             }
             .padding(.horizontal, 16)
 
@@ -310,22 +312,6 @@ struct MessageListView: View {
         .background(Color(.controlBackgroundColor).opacity(0.35))
     }
 
-    private var exportProgressBar: some View {
-        HStack(spacing: 12) {
-            ProgressView(value: messageVM.exportProgress)
-                .frame(width: 180)
-            Text(messageVM.exportProgressText)
-                .font(.system(size: 12))
-                .lineLimit(1)
-            Spacer()
-            Button("Cancel") { messageVM.cancelExport() }
-                .controlSize(.small)
-        }
-        .padding(12)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .padding()
-    }
 
     // MARK: - Message Detail
 
@@ -482,11 +468,35 @@ struct MessageListView: View {
     /// extension (HTML/JSON/MBOX). SwiftUI's `.fileExporter` hard-codes a
     /// single `UTType` per modifier and was rewriting `.html` to `.txt`
     /// (issue #17).
+    private func exportSingleChatPDFBundle() {
+        guard loadedBackupIsCurrent else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.prompt = "Create PDF Bundle"
+        panel.message = "Choose where Phosphor should create a folder containing this conversation PDF and its original attachments."
+
+        if panel.runModal() == .OK, let url = panel.url {
+            messageVM.startExportChatPDFBundle(
+                to: url.path,
+                dateFilter: dateFilter,
+                customStart: customStartDate,
+                customEnd: customEndDate,
+                visibleMessages: displayedMessages
+            )
+        }
+    }
+
     private func exportSingleChat(format: MessageExportFormat) {
         guard loadedBackupIsCurrent, let chat = messageVM.selectedChat else { return }
+        if format == .pdf {
+            exportSingleChatPDFBundle()
+            return
+        }
         let panel = NSSavePanel()
         panel.title = "Export Conversation"
-        panel.nameFieldStringValue = "\(safeFileName(chat.title)).\(format.fileExtension)"
+        panel.nameFieldStringValue = chat.exportFilename(format: format, includeChatID: false)
         if let type = format.contentType { panel.allowedContentTypes = [type] }
         panel.canCreateDirectories = true
 
@@ -524,12 +534,25 @@ struct MessageListView: View {
         }
     }
 
-    private func safeFileName(_ raw: String) -> String {
-        let stripped = raw
-            .replacingOccurrences(of: "/", with: "-")
-            .replacingOccurrences(of: ":", with: "-")
-        return String(stripped.prefix(80))
+    private func exportAllConversationsAllFormats() {
+        guard loadedBackupIsCurrent else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.prompt = "Create Export"
+        panel.message = "Choose where Phosphor should create a Messages Export folder containing every conversation, all supported formats, and original attachments."
+
+        if panel.runModal() == .OK, let url = panel.url {
+            messageVM.startExportAllChatsAllFormats(
+                to: url.path,
+                dateFilter: dateFilter,
+                customStart: customStartDate,
+                customEnd: customEndDate
+            )
+        }
     }
+
 }
 
 private extension MessageExportFormat {

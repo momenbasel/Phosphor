@@ -7,7 +7,7 @@ cask "phosphor" do
   desc "Free and open-source iOS device manager for macOS"
   homepage "https://github.com/momenbasel/Phosphor"
 
-  depends_on macos: ">= :sonoma"
+  depends_on macos: :sonoma
   depends_on formula: "libimobiledevice"
 
   app "Phosphor.app"

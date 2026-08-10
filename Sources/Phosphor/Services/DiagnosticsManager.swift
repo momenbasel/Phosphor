@@ -8,8 +8,8 @@ final class DiagnosticsManager: ObservableObject {
     @Published var syslogLines: [String] = []
     @Published var isStreamingSyslog = false
 
-    /// Active syslog process for proper termination.
-    private var syslogProcess: Process?
+    /// Active managed syslog session leader for proper termination.
+    private var syslogProcess: Shell.ManagedProcess?
     private var syslogStreamID: UUID?
 
     struct BatteryDiagnostics {

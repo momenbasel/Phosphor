@@ -5,7 +5,10 @@ import Foundation
 /// Searches for pymobiledevice3 binary at common install locations (pipx, pip, venv).
 enum PyMobileDevice {
 
-    /// Cached path to the pymobiledevice3 binary once found.
+    /// Cached path to the pymobiledevice3 binary once found. Discovery can be
+    /// requested by several background probes at once, so all reads, writes, and
+    /// reset invalidation are serialized by `cacheLock`.
+    private static let cacheLock = NSLock()
     private static var cachedBinaryPath: String?
 
     /// Python minor versions to probe for pipx or pip --user installs and system Python.
@@ -28,6 +31,8 @@ enum PyMobileDevice {
     /// Find the pymobiledevice3 binary. Checks direct binary first (pipx, pip --user),
     /// then python3 -m pymobiledevice3 at various Python locations.
     private static func findBinary() -> String? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
         if let cached = cachedBinaryPath { return cached }
 
         let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -89,7 +94,9 @@ enum PyMobileDevice {
     /// Clear the cached binary path so the next call re-probes the filesystem.
     /// Useful after the user installs or upgrades pymobiledevice3 mid-session.
     static func resetBinaryCache() {
+        cacheLock.lock()
         cachedBinaryPath = nil
+        cacheLock.unlock()
     }
 
     /// Query installed pymobiledevice3 version, or nil if unavailable.
@@ -104,16 +111,17 @@ enum PyMobileDevice {
         return alt.succeeded && !altTrimmed.isEmpty ? altTrimmed : nil
     }
 
-    /// Whether the found binary is a direct pymobiledevice3 binary (vs python3 path).
-    private static var usesDirectBinary: Bool {
-        cachedBinaryPath?.hasSuffix("pymobiledevice3") == true
-            && cachedBinaryPath?.contains("python") != true
+    /// Classify the immutable path returned from one `findBinary` call. Do not
+    /// re-read the cache after resolution: `resetBinaryCache()` may run between
+    /// those reads and otherwise turn a console script into a Python `-m` command.
+    private static func isDirectBinary(_ path: String) -> Bool {
+        path.hasSuffix("pymobiledevice3") && !path.contains("python")
     }
 
     /// Build command and arguments for running pymobiledevice3.
     private static func buildCommand(subcommands: [String]) -> (cmd: String, args: [String])? {
         guard let binary = findBinary() else { return nil }
-        if usesDirectBinary {
+        if isDirectBinary(binary) {
             return (cmd: binary, args: subcommands)
         } else {
             // It's a python3 path - use -m
@@ -138,7 +146,7 @@ enum PyMobileDevice {
         guard let binary = findBinary() else {
             return "sudo -E env \"PATH=$PATH\" pymobiledevice3 remote tunneld"
         }
-        if usesDirectBinary {
+        if isDirectBinary(binary) {
             return "sudo \"\(binary)\" remote tunneld"
         } else {
             return "sudo \"\(binary)\" -m pymobiledevice3 remote tunneld"
@@ -171,7 +179,7 @@ enum PyMobileDevice {
         onOutput: @escaping (String) -> Void,
         onError: @escaping (String) -> Void = { _ in },
         completion: @escaping (Int32) -> Void
-    ) -> Process? {
+    ) -> Shell.ManagedProcess? {
         guard let cmd = buildCommand(subcommands: subcommands) else {
             onError("pymobiledevice3 not found")
             completion(-1)
@@ -217,6 +225,28 @@ enum PyMobileDevice {
         }
     }
 
+    struct DeviceDiscoveryResult {
+        let entries: [DeviceEntry]
+        let usbProbeSucceeded: Bool
+        let networkProbeSucceeded: Bool
+        let fallbackProbeSucceeded: Bool?
+
+        /// Only transport-specific probes can prove an omitted device is absent.
+        /// The default fallback helps older pymobiledevice3 versions, but is not
+        /// an authoritative transport snapshot.
+        var isAuthoritative: Bool {
+            usbProbeSucceeded && networkProbeSucceeded
+        }
+
+        var failureDescription: String? {
+            guard !isAuthoritative else { return nil }
+            var failed: [String] = []
+            if !usbProbeSucceeded { failed.append("USB") }
+            if !networkProbeSucceeded { failed.append("Wi-Fi") }
+            return "pymobiledevice3 \(failed.joined(separator: " and ")) discovery failed; showing the last known compatible devices and retrying."
+        }
+    }
+
     struct BonjourDevice: Hashable {
         let id: String
         let name: String
@@ -231,8 +261,29 @@ enum PyMobileDevice {
     /// omit ConnectionType there, which can make paired Wi-Fi devices disappear
     /// or be misclassified as USB.
     static func listDevicesWithType() async -> [DeviceEntry] {
-        async let usbResult = runAsync(["usbmux", "list", "--usb"])
-        async let networkResult = runAsync(["usbmux", "list", "--network"], timeout: 10)
+        await discoverDevicesWithType().entries.filter {
+            // "Unknown" comes from the unfiltered `usbmux list` fallback, which
+            // only runs when both typed probes returned nothing. Dropping those
+            // entries makes the device vanish entirely on older pymobiledevice3
+            // builds that omit ConnectionType - the clone picker empties and
+            // BackupScheduler.findTargetDevice returns nil, so a configured
+            // scheduled backup silently stops firing. Keep them; callers that
+            // need a transport resolve Unknown as directly attached.
+            $0.connectionType == "USB"
+                || $0.connectionType == "Network"
+                || $0.connectionType == "Unknown"
+        }
+    }
+
+    /// Return both entries and probe authority so callers do not collapse a
+    /// timeout or tool failure into an authoritative empty snapshot.
+    static func discoverDevicesWithType() async -> DeviceDiscoveryResult {
+        // Discovery runs inside DeviceManager's recurring scan. Keep every
+        // branch bounded so one wedged pymobiledevice3 process cannot leave
+        // isScanning set for runAsync's five-minute default and suppress all
+        // routine polls or an explicit Refresh Devices action in the meantime.
+        async let usbResult = runAsync(["usbmux", "list", "--usb"], timeout: 5)
+        async let networkResult = runAsync(["usbmux", "list", "--network"], timeout: 5)
 
         var entries: [DeviceEntry] = []
         let usb = await usbResult
@@ -245,14 +296,24 @@ enum PyMobileDevice {
             entries += parseUsbmuxDeviceEntries(from: network.output, defaultConnectionType: "Network")
         }
 
+        var fallbackSucceeded: Bool?
         if entries.isEmpty {
-            let fallback = await runAsync(["usbmux", "list"])
+            let fallback = await runAsync(["usbmux", "list"], timeout: 5)
+            fallbackSucceeded = fallback.succeeded
             if fallback.succeeded {
-                entries = parseUsbmuxDeviceEntries(from: fallback.output, defaultConnectionType: "USB")
+                // The unfiltered command can contain either transport. Older
+                // versions sometimes omit ConnectionType, so do not fabricate
+                // USB provenance for an entry whose route is actually unknown.
+                entries = parseUsbmuxDeviceEntries(from: fallback.output, defaultConnectionType: "Unknown")
             }
         }
 
-        return mergeDeviceEntries(entries)
+        return DeviceDiscoveryResult(
+            entries: mergeDeviceEntries(entries),
+            usbProbeSucceeded: usb.succeeded,
+            networkProbeSucceeded: network.succeeded,
+            fallbackProbeSucceeded: fallbackSucceeded
+        )
     }
 
     /// List devices currently reachable over network/Wi-Fi with connection metadata.
@@ -341,9 +402,10 @@ enum PyMobileDevice {
                         ?? entry["SerialNumber"] as? String else { continue }
                 let connType = (entry["ConnectionType"] as? String)
                     ?? (entry["Properties"] as? [String: Any])?["ConnectionType"] as? String
-                    ?? defaultConnectionType
-                let isUSB = connType.lowercased().contains("usb") || connType == "1"
-                let type = isUSB ? "USB" : "Network"
+                let type = UsbmuxConnectionType.normalize(
+                    connType,
+                    default: defaultConnectionType
+                )
 
                 if byUdid[udid] == nil { orderedUdids.append(udid) }
                 if byUdid[udid]?.connectionType != "USB" || type == "USB" {
@@ -733,7 +795,7 @@ enum PyMobileDevice {
         onOutput: @escaping (String) -> Void,
         onError: @escaping (String) -> Void = { _ in },
         completion: @escaping (Int32) -> Void
-    ) -> Process? {
+    ) -> Shell.ManagedProcess? {
         var args = ["backup2", "backup"]
         if full { args.append("--full") }
         // `--mobdev2` can prompt when the same wireless device is advertised on
@@ -757,7 +819,7 @@ enum PyMobileDevice {
         timeout: TimeInterval? = 6 * 60 * 60,
         onOutput: @escaping (String) -> Void,
         completion: @escaping (Int32) -> Void
-    ) -> Process? {
+    ) -> Shell.ManagedProcess? {
         var args = ["backup2", "restore"]
         if system { args.append("--system") }
         if reboot { args.append("--reboot") }
@@ -779,18 +841,6 @@ enum PyMobileDevice {
         return result.output.lowercased().contains("on") || result.output.lowercased().contains("enabled")
     }
 
-    static func setEncryption(enabled: Bool, password: String, udid: String? = nil) async -> Bool {
-        var args = ["backup2", "encryption", enabled ? "on" : "off", password]
-        if let udid { args += ["--udid", udid] }
-        return (await runAsync(args)).succeeded
-    }
-
-    static func changeEncryptionPassword(oldPassword: String, newPassword: String, udid: String? = nil) async -> Bool {
-        var args = ["backup2", "change-password", oldPassword, newPassword]
-        if let udid { args += ["--udid", udid] }
-        return (await runAsync(args)).succeeded
-    }
-
     // MARK: - Syslog
 
     /// Start streaming syslog. Returns Process for termination.
@@ -798,7 +848,7 @@ enum PyMobileDevice {
         udid: String? = nil,
         onOutput: @escaping (String) -> Void,
         completion: @escaping (Int32) -> Void
-    ) -> Process? {
+    ) -> Shell.ManagedProcess? {
         var args = ["syslog", "live"]
         if let udid { args += ["--udid", udid] }
         return runStreaming(args, onOutput: onOutput, completion: completion)

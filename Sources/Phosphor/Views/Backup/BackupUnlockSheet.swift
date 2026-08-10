@@ -22,7 +22,7 @@ struct BackupUnlockSheet: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Unlock Encrypted Backup")
                         .font(.headline)
-                    Text("\(backup.displayName) • \(backup.relativeDate)")
+                    Text("\(backup.deviceIdentityLabel) • \(backup.relativeDate)")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }

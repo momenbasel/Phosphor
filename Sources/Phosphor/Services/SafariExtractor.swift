@@ -144,6 +144,80 @@ final class SafariExtractor {
         }
     }
 
+    func searchBookmarks(_ query: String, limit: Int = 250) throws -> [Bookmark] {
+        let manifest = try BackupManifest(backupPath: backupPath)
+        let candidates = try manifest.search("Bookmarks.db", limit: 20)
+        guard let entry = candidates.first(where: {
+            $0.isFile && $0.relativePath.contains("Safari") && $0.relativePath.hasSuffix("Bookmarks.db")
+        }) else {
+            throw NSError(domain: "Phosphor", code: 404,
+                          userInfo: [NSLocalizedDescriptionKey: "Safari Bookmarks.db not found"])
+        }
+        let db = try SQLiteReader(path: manifest.readablePath(for: entry))
+        let boundedLimit = max(1, min(limit, 1_000))
+        let pattern = SQLiteReader.containsPattern(query)
+        let rows = try db.query("""
+            SELECT b.id, b.title, b.url, b.order_index,
+                   COALESCE(p.title, '') as parent_title
+            FROM bookmarks b
+            LEFT JOIN bookmarks p ON b.parent = p.id
+            WHERE b.url IS NOT NULL AND b.url != ''
+              AND (b.title LIKE ? ESCAPE '\\' COLLATE NOCASE
+                   OR b.url LIKE ? ESCAPE '\\' COLLATE NOCASE
+                   OR p.title LIKE ? ESCAPE '\\' COLLATE NOCASE)
+            ORDER BY b.parent, b.order_index
+            LIMIT \(boundedLimit)
+        """, params: [pattern, pattern, pattern])
+        return rows.compactMap { row in
+            guard let id = row["id"] as? Int else { return nil }
+            return Bookmark(
+                id: id,
+                title: (row["title"] as? String) ?? "",
+                url: (row["url"] as? String) ?? "",
+                parentTitle: (row["parent_title"] as? String) ?? "Bookmarks",
+                orderIndex: (row["order_index"] as? Int) ?? 0
+            )
+        }
+    }
+
+    func searchHistory(_ query: String, limit: Int = 250) throws -> [HistoryItem] {
+        let manifest = try BackupManifest(backupPath: backupPath)
+        let candidates = try manifest.search("History.db", limit: 20)
+        guard let entry = candidates.first(where: {
+            $0.isFile && $0.relativePath.contains("Safari") && $0.relativePath.hasSuffix("History.db")
+        }) else {
+            throw NSError(domain: "Phosphor", code: 404,
+                          userInfo: [NSLocalizedDescriptionKey: "Safari History.db not found"])
+        }
+        let db = try SQLiteReader(path: manifest.readablePath(for: entry))
+        let boundedLimit = max(1, min(limit, 1_000))
+        let pattern = SQLiteReader.containsPattern(query)
+        let rows = try db.query("""
+            SELECT hi.id, hi.url, COALESCE(hi.title, '') as title,
+                   hi.visit_count, hv.visit_time
+            FROM history_items hi
+            LEFT JOIN (
+                SELECT history_item, MAX(visit_time) as visit_time
+                FROM history_visits
+                GROUP BY history_item
+            ) hv ON hv.history_item = hi.id
+            WHERE hi.url LIKE ? ESCAPE '\\' COLLATE NOCASE OR hi.title LIKE ? ESCAPE '\\' COLLATE NOCASE
+            ORDER BY hv.visit_time DESC
+            LIMIT \(boundedLimit)
+        """, params: [pattern, pattern])
+        return rows.compactMap { row in
+            guard let id = row["id"] as? Int, let url = row["url"] as? String else { return nil }
+            let date = (row["visit_time"] as? Double).map { Date(timeIntervalSinceReferenceDate: $0) }
+            return HistoryItem(
+                id: id,
+                url: url,
+                title: (row["title"] as? String) ?? "",
+                visitCount: (row["visit_count"] as? Int) ?? 1,
+                lastVisitDate: date
+            )
+        }
+    }
+
     // MARK: - Export
 
     func exportBookmarks(to path: String) throws {
