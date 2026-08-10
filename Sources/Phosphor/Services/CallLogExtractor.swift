@@ -53,6 +53,56 @@ final class CallLogExtractor {
         return []
     }
 
+    /// Search the entire call database before applying the result limit.
+    /// This avoids hiding an older exact match behind a fixed recent-call window.
+    func searchCallLog(_ query: String, limit: Int = 250) throws -> [CallLogEntry] {
+        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return [] }
+        let boundedLimit = max(1, min(limit, 1_000))
+        let pattern = "%\(normalized)%"
+        let matchingTypes = [
+            CallLogEntry.CallType.incoming,
+            .outgoing,
+            .missed,
+        ].filter { $0.label.localizedCaseInsensitiveContains(normalized) }
+        let tables = try db.tableNames()
+
+        if tables.contains("ZCALLRECORD") {
+            var predicate = "ZADDRESS LIKE ? COLLATE NOCASE"
+            if !matchingTypes.isEmpty {
+                predicate += " OR ZCALLTYPE IN (\(matchingTypes.map { String($0.rawValue) }.joined(separator: ",")))"
+            }
+            let rows = try db.query("""
+                SELECT Z_PK, ZADDRESS, ZDATE, ZDURATION, ZCALLTYPE, ZISO_COUNTRY_CODE
+                FROM ZCALLRECORD
+                WHERE \(predicate)
+                ORDER BY ZDATE DESC, Z_PK DESC
+                LIMIT \(boundedLimit)
+            """, params: [pattern])
+            return modernEntries(from: rows)
+        }
+
+        if tables.contains("call") {
+            var legacyFlags: [Int] = []
+            if matchingTypes.contains(.incoming) { legacyFlags.append(4) }
+            if matchingTypes.contains(.outgoing) { legacyFlags.append(5) }
+            var predicate = "address LIKE ? COLLATE NOCASE"
+            if !legacyFlags.isEmpty {
+                predicate += " OR flags IN (\(legacyFlags.map(String.init).joined(separator: ",")))"
+            }
+            let rows = try db.query("""
+                SELECT ROWID, address, date, duration, flags
+                FROM call
+                WHERE \(predicate)
+                ORDER BY date DESC, ROWID DESC
+                LIMIT \(boundedLimit)
+            """, params: [pattern])
+            return legacyEntries(from: rows)
+        }
+
+        return []
+    }
+
     private func getModernCallLog(limit: Int) throws -> [CallLogEntry] {
         let sql = """
             SELECT
@@ -67,8 +117,11 @@ final class CallLogExtractor {
             LIMIT \(limit)
         """
 
-        let rows = try db.query(sql)
-        return rows.compactMap { row -> CallLogEntry? in
+        return modernEntries(from: try db.query(sql))
+    }
+
+    private func modernEntries(from rows: [[String: Any?]]) -> [CallLogEntry] {
+        rows.compactMap { row -> CallLogEntry? in
             guard let pk = row["Z_PK"] as? Int,
                   let address = row["ZADDRESS"] as? String else { return nil }
 
@@ -103,8 +156,11 @@ final class CallLogExtractor {
             LIMIT \(limit)
         """
 
-        let rows = try db.query(sql)
-        return rows.compactMap { row -> CallLogEntry? in
+        return legacyEntries(from: try db.query(sql))
+    }
+
+    private func legacyEntries(from rows: [[String: Any?]]) -> [CallLogEntry] {
+        rows.compactMap { row -> CallLogEntry? in
             guard let rowId = row["ROWID"] as? Int,
                   let address = row["address"] as? String else { return nil }
 

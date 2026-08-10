@@ -7,6 +7,7 @@ enum SidebarSection: String, CaseIterable, Identifiable {
     case backups
     case backupBrowser
     case timeMachine
+    case unifiedSearch
     case messages
     case whatsapp
     case photos
@@ -35,6 +36,7 @@ enum SidebarSection: String, CaseIterable, Identifiable {
         case .backups: return "Backups"
         case .backupBrowser: return "Backup Browser"
         case .timeMachine: return "Time Machine"
+        case .unifiedSearch: return "Unified Search"
         case .messages: return "Messages"
         case .whatsapp: return "WhatsApp"
         case .photos: return "Photos"
@@ -63,6 +65,7 @@ enum SidebarSection: String, CaseIterable, Identifiable {
         case .backups: return "externaldrive.fill"
         case .backupBrowser: return "folder.fill"
         case .timeMachine: return "clock.arrow.circlepath"
+        case .unifiedSearch: return "magnifyingglass.circle.fill"
         case .messages: return "message.fill"
         case .whatsapp: return "bubble.left.and.text.bubble.right.fill"
         case .photos: return "photo.on.rectangle.angled"
@@ -88,7 +91,7 @@ enum SidebarSection: String, CaseIterable, Identifiable {
         switch self {
         case .devices, .readiness: return .device
         case .backups, .backupBrowser, .timeMachine: return .backups
-        case .messages, .whatsapp, .photos, .apps, .notes, .callLog, .safari, .health, .music, .watch, .contacts, .calendar: return .data
+        case .unifiedSearch, .messages, .whatsapp, .photos, .apps, .notes, .callLog, .safari, .health, .music, .watch, .contacts, .calendar: return .data
         case .clone, .files, .diagnostics, .battery, .screenCapture, .location: return .tools
         }
     }
@@ -136,6 +139,7 @@ struct SidebarView: View {
             }
 
             Section("Data") {
+                sidebarRow(.unifiedSearch)
                 sidebarRow(.messages)
                 sidebarRow(.whatsapp)
                 sidebarRow(.photos)
