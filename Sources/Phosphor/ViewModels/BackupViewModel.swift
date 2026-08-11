@@ -466,7 +466,8 @@ final class BackupViewModel: ObservableObject {
         }
         do {
             let request = recoveryRequest(for: issue)
-            try BackupManager.deleteIncompleteBackup(for: udid, expectedPath: path)
+            let recoveryRoot = (path as NSString).deletingLastPathComponent
+            try BackupManager.deleteIncompleteBackup(for: udid, expectedPath: path, in: recoveryRoot)
             backupIssue = nil
             loadBackups()
             await createBackup(

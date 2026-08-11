@@ -95,4 +95,6 @@ def test_readiness_center_incomplete_backup_recovery_action(root: Path) -> None:
     assert "pendingRecovery" in view, "readiness recovery should require a confirmation alert"
     assert "Move Incomplete Backup to Trash" in view, "readiness center should expose the cleanup action"
     assert "BackupManager.deleteIncompleteBackup" in view, "cleanup should use the guarded BackupManager trash flow"
+    assert "let recoveryRoot = (path as NSString).deletingLastPathComponent" in view, "readiness recovery must derive the root from its captured incomplete path"
+    assert "deleteIncompleteBackup(for: udid, expectedPath: path, in: recoveryRoot)" in view, "readiness recovery must not re-read the mutable backup root"
     assert "device.connectionType == .usb" in view, "readiness should auto-start full backup only on USB"
