@@ -54,6 +54,7 @@ final class BackupScheduler: ObservableObject {
     }
 
     private var timer: Timer?
+    private var backgroundActivityScheduler: NSBackgroundActivityScheduler?
     private var scheduledCheckTask: Task<Void, Never>?
     private var scheduledRunTasks: [String: Task<Void, Never>] = [:]
     private var scheduledRunSchedules: [String: Schedule] = [:]
@@ -147,6 +148,8 @@ final class BackupScheduler: ObservableObject {
     private func configureMonitoring() {
         timer?.invalidate()
         timer = nil
+        backgroundActivityScheduler?.invalidate()
+        backgroundActivityScheduler = nil
         scheduledCheckTask?.cancel()
         scheduledCheckTask = nil
         guard isMonitoring else {
@@ -163,12 +166,32 @@ final class BackupScheduler: ObservableObject {
                 self?.startScheduledCheck()
             }
         }
+
+        // The foreground timer gives timely checks while the app is active. This
+        // system scheduler lets macOS wake the app opportunistically and routes
+        // through the same all-schedules check, preserving per-device ownership.
+        let backgroundActivity = NSBackgroundActivityScheduler(
+            identifier: "com.phosphor.backup-scheduler"
+        )
+        backgroundActivity.interval = 15 * 60
+        backgroundActivity.tolerance = 5 * 60
+        backgroundActivity.qualityOfService = .utility
+        backgroundActivity.repeats = true
+        backgroundActivity.schedule { [weak self] completion in
+            Task { @MainActor [weak self] in
+                await self?.checkAndRun()
+                completion(.finished)
+            }
+        }
+        backgroundActivityScheduler = backgroundActivity
     }
 
     func stopMonitoring() {
         isMonitoring = false
         timer?.invalidate()
         timer = nil
+        backgroundActivityScheduler?.invalidate()
+        backgroundActivityScheduler = nil
         cancelScheduledWork()
     }
 

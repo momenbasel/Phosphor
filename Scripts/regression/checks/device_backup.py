@@ -216,6 +216,24 @@ def test_wifi_schedules_use_network_discovery_and_network_backup_flag(root: Path
     assert_contains(settings, ".onChange(of: scheduler.schedule.preferredHour)", "Settings should refresh next-run timing when preferred time changes")
 
 
+def test_background_wake_rearms_every_enabled_device_schedule_through_shared_view_model(root: Path) -> None:
+    scheduler = read(root, "Sources/Phosphor/Services/BackupScheduler.swift")
+
+    monitoring = scheduler.split("private func configureMonitoring()", 1)[1].split("func stopMonitoring()", 1)[0]
+    assert_contains(monitoring, "NSBackgroundActivityScheduler(", "enabled schedules need a macOS background wake source")
+    assert_contains(monitoring, "repeats = true", "background wakes must rearm instead of becoming a one-shot timer")
+    assert_contains(monitoring, "await self?.checkAndRun()", "a background wake must use the scheduler's normal all-schedules evaluation")
+
+    check_and_run = scheduler.split("func checkAndRun() async", 1)[1].split("func runNow() async", 1)[0]
+    assert_contains(check_and_run, "for stored in schedules where stored.enabled", "wake evaluation must retain every enabled device schedule")
+    assert_contains(check_and_run, "for dueSchedule in dueSchedules", "each due target must be started independently after a wake")
+    assert_contains(check_and_run, "self?.startScheduledRun(dueSchedule)", "wake evaluation must preserve per-device scheduled-run ownership")
+
+    scheduled_run = scheduler.split("private func runScheduledBackup(", 1)[1].split("// MARK: - Device Discovery", 1)[0]
+    assert_contains(scheduled_run, "await backupViewModel.createBackup", "background scheduled runs must stay on the shared BackupViewModel queue")
+    assert_not_contains(scheduled_run, "BackupManager(", "background scheduled runs must not create a private backup manager")
+
+
 def test_scheduled_backups_never_choose_between_multiple_devices(root: Path) -> None:
     resolver = root / "Sources/Phosphor/Utilities/ScheduledBackupTargetResolver.swift"
     scheduler = read(root, "Sources/Phosphor/Services/BackupScheduler.swift")
