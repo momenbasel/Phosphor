@@ -17,9 +17,14 @@ enum Shell {
     /// managed command a session/process group before its first instruction.
     final class ManagedProcess: @unchecked Sendable {
         let processIdentifier: pid_t
+        fileprivate let processTree: ProcessTree
 
         init(processIdentifier: pid_t) {
             self.processIdentifier = processIdentifier
+            // Capture the dedicated session/group while the leader is guaranteed
+            // to exist. Reconstructing this after waitpid() has reaped the leader
+            // loses the group identity and can miss a still-writing descendant.
+            self.processTree = ProcessTree(rootProcessID: processIdentifier)
         }
 
         var isRunning: Bool {
@@ -251,7 +256,7 @@ enum Shell {
     /// Supervises the session/process group created atomically by posix_spawn.
     /// Group signalling covers descendants forked after a snapshot, while the
     /// PID snapshot remains a compatibility fallback should session setup fail.
-    private final class ProcessTree: @unchecked Sendable {
+    fileprivate final class ProcessTree: @unchecked Sendable {
         private let lock = NSLock()
         private let rootProcessID: pid_t
         private let processGroupID: pid_t?
@@ -458,7 +463,7 @@ enum Shell {
         var stderrData = Data()
         let readGroup = DispatchGroup()
         let waitSemaphore = DispatchSemaphore(value: 0)
-        let processTree = ProcessTree(rootProcessID: process.processIdentifier)
+        let processTree = process.processTree
         let exitSource = DispatchSource.makeProcessSource(
             identifier: process.processIdentifier,
             eventMask: .exit,
@@ -537,7 +542,7 @@ enum Shell {
                 return
             }
 
-            let processTree = ProcessTree(rootProcessID: process.processIdentifier)
+            let processTree = process.processTree
             let exitSource = DispatchSource.makeProcessSource(
                 identifier: process.processIdentifier,
                 eventMask: .exit,
@@ -628,7 +633,7 @@ enum Shell {
             return nil
         }
 
-        let processTree = ProcessTree(rootProcessID: process.processIdentifier)
+        let processTree = process.processTree
         let exitSource = DispatchSource.makeProcessSource(
             identifier: process.processIdentifier,
             eventMask: .exit,
@@ -687,18 +692,20 @@ enum Shell {
 
     /// Terminate a long-running managed command and every descendant it has spawned.
     static func terminate(_ process: ManagedProcess) {
+        Task { await terminateAndWait(process) }
+    }
+
+    /// Awaited variant used by application termination. AppKit must not complete
+    /// Quit while an idevicebackup2/pymobiledevice process group can still write.
+    static func terminateAndWait(_ process: ManagedProcess) async {
         guard process.processIdentifier > 0 else { return }
-        let processTree = ProcessTree(rootProcessID: process.processIdentifier)
-        Task {
-            terminateProcessTree(processTree, signal: SIGTERM)
-            // This is the user pressing Cancel on a backup or restore, so give
-            // idevicebackup2 the same flush window a timeout does. Killing it
-            // 250ms in leaves a half-written snapshot that the next run has to
-            // repair. A child that exits promptly still returns immediately.
-            if !(await waitForProcessTreeCleanup(processTree, timeout: streamTerminationGrace)) {
-                terminateProcessTree(processTree, signal: SIGKILL)
-                _ = await waitForProcessTreeCleanup(processTree, timeout: 1)
-            }
+        let processTree = process.processTree
+        terminateProcessTree(processTree, signal: SIGTERM)
+        // Give backup tools their normal flush window before escalation. The
+        // process-tree helper verifies descendants as well as the session leader.
+        if !(await waitForProcessTreeCleanup(processTree, timeout: streamTerminationGrace)) {
+            terminateProcessTree(processTree, signal: SIGKILL)
+            _ = await waitForProcessTreeCleanup(processTree, timeout: 1)
         }
     }
 

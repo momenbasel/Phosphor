@@ -152,6 +152,7 @@ final class BackupScheduler: ObservableObject {
         backgroundActivityScheduler = nil
         scheduledCheckTask?.cancel()
         scheduledCheckTask = nil
+        BackgroundExecutionController.shared.setScheduledWorkEnabled(schedules.contains(where: \.enabled))
         guard isMonitoring else {
             cancelScheduledWork()
             return

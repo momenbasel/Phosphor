@@ -192,3 +192,74 @@ def test_shell_terminates_and_confirms_full_descendant_tree_cleanup(root: Path) 
     assert "SIGTERM" in source and "SIGKILL" in source, "tree termination must escalate from graceful to forced shutdown"
     assert "waitForProcessTreeCleanup" in source, "Shell must confirm descendant cleanup before reporting timeout completion"
     assert "static func terminate(_ process: ManagedProcess)" in source, "explicit cancellation must terminate a managed process tree"
+
+
+def test_shell_retains_process_group_after_stream_leader_is_reaped(root: Path) -> None:
+    """Quit-time cancellation must still kill a child after its leader was reaped."""
+    probe = r'''
+import Foundation
+import Darwin
+
+@main
+struct ReapedLeaderProbe {
+    static func main() async {
+        let marker = CommandLine.arguments[1]
+        let script = """
+        import os, signal, time
+        child = os.fork()
+        if child:
+            os._exit(0)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        with open(\"\(marker)\", \"w\") as handle:
+            handle.write(str(os.getpid()))
+            handle.flush()
+        while True:
+            time.sleep(0.05)
+        """
+        guard let process = Shell.runStreaming(
+            "/usr/bin/python3",
+            arguments: ["-c", script],
+            onOutput: { _ in },
+            completion: { _ in }
+        ) else {
+            print("RESULT|launch-failed")
+            return
+        }
+
+        var childPID: pid_t?
+        for _ in 0..<100 {
+            if let raw = try? String(contentsOfFile: marker),
+               let parsed = pid_t(raw.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                childPID = parsed
+                break
+            }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        // The DispatchSource exit handler has time to reap the session leader.
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        await Shell.terminateAndWait(process)
+        let childStillExists = childPID.map { Darwin.kill($0, 0) == 0 || errno == EPERM } ?? true
+        print("RESULT|\(childStillExists)")
+    }
+}
+'''
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp = Path(temp_dir)
+        (temp / "Probe.swift").write_text(probe)
+        (temp / "PyMobileDeviceStub.swift").write_text("enum PyMobileDevice { static func available() -> Bool { false } }\n")
+        executable = temp / "reaped-leader-probe"
+        compile_result = subprocess.run(
+            [
+                "swiftc", "-parse-as-library",
+                str(root / "Sources/Phosphor/Utilities/Shell.swift"),
+                str(temp / "PyMobileDeviceStub.swift"),
+                str(temp / "Probe.swift"),
+                "-o", str(executable),
+            ],
+            capture_output=True, text=True, timeout=60,
+        )
+        assert compile_result.returncode == 0, compile_result.stderr
+        result = subprocess.run([str(executable), str(temp / "child-pid")], capture_output=True, text=True, timeout=10)
+
+    assert result.returncode == 0, result.stderr
+    assert "RESULT|false" in result.stdout, result.stdout

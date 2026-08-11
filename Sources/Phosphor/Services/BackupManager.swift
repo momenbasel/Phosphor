@@ -62,6 +62,8 @@ final class BackupManager: ObservableObject {
     private var activeProcess: Shell.ManagedProcess?
     private var operationCoordinator = BackupDeviceCoordinator()
     private var cancelledOperationIDs: Set<UUID> = []
+    private var cancellationDrainTasks: [UUID: Task<Void, Never>] = [:]
+    private var applicationTerminationWaiters: [CheckedContinuation<Void, Never>] = []
 
     private func beginCancellableOperation(udid: String) -> UUID? {
         // Reset before either rejection branch, not between them. With these
@@ -84,6 +86,11 @@ final class BackupManager: ObservableObject {
             lastError = "Another backup or restore operation is already running for this device."
             return nil
         }
+        guard ApplicationTerminationCoordinator.shared.register(self) else {
+            _ = operationCoordinator.finish(operationID: operationID, registry: &Self.operationRegistry)
+            lastError = "Phosphor is quitting; no new backup or restore can start."
+            return nil
+        }
         return operationID
     }
 
@@ -91,10 +98,20 @@ final class BackupManager: ObservableObject {
         cancelledOperationIDs.contains(id)
     }
 
+    private func awaitCancellationDrain(_ id: UUID) async {
+        guard let drain = cancellationDrainTasks[id] else { return }
+        await drain.value
+        cancellationDrainTasks.removeValue(forKey: id)
+    }
+
     private func finishOperation(_ id: UUID) {
         if operationCoordinator.finish(operationID: id, registry: &Self.operationRegistry) {
             activeProcess = nil
             isCreatingBackup = false
+            ApplicationTerminationCoordinator.shared.unregister(self)
+            let waiters = applicationTerminationWaiters
+            applicationTerminationWaiters.removeAll()
+            waiters.forEach { $0.resume() }
         }
         cancelledOperationIDs.remove(id)
     }
@@ -552,6 +569,11 @@ final class BackupManager: ObservableObject {
             return false
         }
 
+        if operationWasCancelled(operationID) {
+            markOperationCancelled(operationID)
+            return false
+        }
+
         // Primary: pymobiledevice3
         let pySuccess = await createBackupViaPymobiledevice(
             udid: udid,
@@ -578,6 +600,11 @@ final class BackupManager: ObservableObject {
         var idevicebackupStderr = ""
 
         return await withCheckedContinuation { continuation in
+            guard !operationWasCancelled(operationID) else {
+                markOperationCancelled(operationID)
+                continuation.resume(returning: false)
+                return
+            }
             activeProcess = Shell.runStreaming(
                 "idevicebackup2",
                 arguments: args,
@@ -600,6 +627,7 @@ final class BackupManager: ObservableObject {
                             return
                         }
                         if self.operationWasCancelled(operationID) {
+                            await self.awaitCancellationDrain(operationID)
                             self.markOperationCancelled(operationID)
                             continuation.resume(returning: false)
                             return
@@ -650,6 +678,9 @@ final class BackupManager: ObservableObject {
         operationID: UUID,
         onProgress: @escaping (String) -> Void
     ) async -> Bool {
+        // Entering this async helper is an actor suspension point. Quit may request
+        // cancellation after ownership is acquired but before a child is assigned.
+        guard !operationWasCancelled(operationID) else { return false }
         guard PyMobileDevice.available() else {
             lastError = "pymobiledevice3 not installed. Install with: pipx install pymobiledevice3"
             return false
@@ -660,6 +691,10 @@ final class BackupManager: ObservableObject {
         pymobiledeviceStderrTail.removeAll()
 
         return await withCheckedContinuation { continuation in
+            guard !operationWasCancelled(operationID) else {
+                continuation.resume(returning: false)
+                return
+            }
             activeProcess = PyMobileDevice.backup(
                 directory: Self.activeBackupDir,
                 udid: udid,
@@ -709,6 +744,7 @@ final class BackupManager: ObservableObject {
                             self.activeProcess = nil
                         }
                         if self.operationWasCancelled(operationID) {
+                            await self.awaitCancellationDrain(operationID)
                             continuation.resume(returning: false)
                             return
                         }
@@ -790,6 +826,11 @@ final class BackupManager: ObservableObject {
             return false
         }
 
+        if operationWasCancelled(operationID) {
+            markOperationCancelled(operationID)
+            return false
+        }
+
         // Primary: pymobiledevice3 (without --full flag)
         if PyMobileDevice.available() {
             let success = await createBackupViaPymobiledevice(
@@ -813,6 +854,11 @@ final class BackupManager: ObservableObject {
 
         // Fallback: idevicebackup2
         return await withCheckedContinuation { continuation in
+            guard !operationWasCancelled(operationID) else {
+                markOperationCancelled(operationID)
+                continuation.resume(returning: false)
+                return
+            }
             activeProcess = Shell.runStreaming(
                 "idevicebackup2",
                 arguments: idevicebackupArguments(udid: udid, full: false, preferNetwork: preferNetwork),
@@ -835,6 +881,7 @@ final class BackupManager: ObservableObject {
                             return
                         }
                         if self.operationWasCancelled(operationID) {
+                            await self.awaitCancellationDrain(operationID)
                             self.markOperationCancelled(operationID)
                             continuation.resume(returning: false)
                             return
@@ -890,9 +937,18 @@ final class BackupManager: ObservableObject {
         }
 
         guard let operationID = beginCancellableOperation(udid: targetUDID) else { return false }
+        if operationWasCancelled(operationID) {
+            markOperationCancelled(operationID, progress: "Restore cancelled")
+            return false
+        }
         // Primary: pymobiledevice3
         if PyMobileDevice.available() {
             return await withCheckedContinuation { continuation in
+                guard !operationWasCancelled(operationID) else {
+                    markOperationCancelled(operationID, progress: "Restore cancelled")
+                    continuation.resume(returning: false)
+                    return
+                }
                 activeProcess = PyMobileDevice.restore(
                     directory: backupRoot,
                     udid: targetUDID,
@@ -906,6 +962,7 @@ final class BackupManager: ObservableObject {
                                 return
                             }
                             if self.operationWasCancelled(operationID) {
+                                await self.awaitCancellationDrain(operationID)
                                 self.markOperationCancelled(operationID, progress: "Restore cancelled")
                                 continuation.resume(returning: false)
                                 return
@@ -920,6 +977,11 @@ final class BackupManager: ObservableObject {
 
         // Fallback: idevicebackup2
         return await withCheckedContinuation { continuation in
+            guard !operationWasCancelled(operationID) else {
+                markOperationCancelled(operationID, progress: "Restore cancelled")
+                continuation.resume(returning: false)
+                return
+            }
             activeProcess = Shell.runStreaming(
                 "idevicebackup2",
                 // Global options first, then the subcommand, then its options. The
@@ -936,6 +998,7 @@ final class BackupManager: ObservableObject {
                             return
                         }
                         if self.operationWasCancelled(operationID) {
+                            await self.awaitCancellationDrain(operationID)
                             self.markOperationCancelled(operationID, progress: "Restore cancelled")
                             continuation.resume(returning: false)
                             return
@@ -952,14 +1015,38 @@ final class BackupManager: ObservableObject {
     func cancelBackup() {
         if let activeOperationID = operationCoordinator.activeOperationID {
             cancelledOperationIDs.insert(activeOperationID)
+            if let activeProcess, cancellationDrainTasks[activeOperationID] == nil {
+                // Keep the per-device operation lease until every descendant is
+                // gone. The streaming leader can exit before a TERM-ignoring
+                // child, so its completion alone is not cancellation completion.
+                cancellationDrainTasks[activeOperationID] = Task {
+                    await Shell.terminateAndWait(activeProcess)
+                }
+            }
         }
         lastOperationWasCancelled = true
         lastError = nil
         lastBackupFailure = nil
-        if let activeProcess {
-            Shell.terminate(activeProcess)
-        }
         backupProgress = "Cancelled"
+    }
+
+    /// Cancel this manager's current process tree and do not return until both
+    /// process-group cleanup and the operation completion callback have finished.
+    func cancelForApplicationTermination() async {
+        guard let activeOperationID = operationCoordinator.activeOperationID else { return }
+        cancelledOperationIDs.insert(activeOperationID)
+        lastOperationWasCancelled = true
+        lastError = nil
+        lastBackupFailure = nil
+
+        if let activeProcess {
+            await Shell.terminateAndWait(activeProcess)
+        }
+
+        guard operationCoordinator.activeOperationID != nil else { return }
+        await withCheckedContinuation { continuation in
+            applicationTerminationWaiters.append(continuation)
+        }
     }
 
     // MARK: - Backup Browsing
