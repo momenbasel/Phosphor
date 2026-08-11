@@ -11,6 +11,7 @@ final class DeviceCloneService: ObservableObject {
         case preparing = "Preparing restore..."
         case restoring = "Restoring to destination device..."
         case complete = "Clone complete"
+        case cancelled = "Clone cancelled"
         case failed = "Clone failed"
     }
 
@@ -28,6 +29,7 @@ final class DeviceCloneService: ObservableObject {
     }
 
     private let backupManager = BackupManager()
+    private var cancellationGate = CloneCancellationGate()
 
     /// Get all currently connected devices.
     func getConnectedDevices() async -> [(udid: String, name: String)] {
@@ -65,6 +67,9 @@ final class DeviceCloneService: ObservableObject {
         backupViewModel: BackupViewModel,
         encrypted: Bool = false
     ) async -> Bool {
+        cancellationGate.reset()
+        defer { cancellationGate.reset() }
+
         guard sourceUDID != destinationUDID else {
             lastError = "Source and destination must be different devices"
             phase = .failed
@@ -93,6 +98,16 @@ final class DeviceCloneService: ObservableObject {
         guard backupSuccess else {
             lastError = sourceActivity?.errorMessage ?? "Backup of source device failed"
             phase = .failed
+            isRunning = false
+            return false
+        }
+
+        // BackupViewModel may finish its source subprocess before this clone
+        // continuation resumes. A clone-local request remains authoritative here:
+        // never begin the destructive destination restore after cancellation.
+        guard !cancellationGate.isCancellationRequested else {
+            lastError = nil
+            phase = .cancelled
             isRunning = false
             return false
         }
@@ -140,6 +155,13 @@ final class DeviceCloneService: ObservableObject {
 
         isRunning = false
         return restoreSuccess
+    }
+
+    /// Request cancellation of clone continuation. The source backup may already
+    /// have completed when this arrives, so `clone` checks this again before restore.
+    func cancelClone() {
+        guard isRunning else { return }
+        cancellationGate.requestCancellation()
     }
 
     private func backupFingerprint(for backup: BackupInfo) -> BackupFingerprint {
