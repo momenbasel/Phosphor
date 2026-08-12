@@ -231,7 +231,7 @@ struct DeviceCloneView: View {
                 VStack(spacing: 2) {
                     Text("\(Int(cloneService.overallProgress * 100))%")
                         .font(.system(size: 28, weight: .bold, design: .rounded))
-                    Text(cloneService.phase.rawValue)
+                    Text(LocalizedStringKey(cloneService.phase.rawValue))
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 }
