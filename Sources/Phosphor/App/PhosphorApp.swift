@@ -8,16 +8,24 @@ final class PhosphorAppDelegate: NSObject, NSApplicationDelegate {
         // completes with no visible app window.
         UserDefaults.standard.set(true, forKey: "ApplePersistenceIgnoreState")
         UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
+        BackgroundExecutionController.shared.configureAfterLaunch()
         ensureWindowSoon()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { ensureWindowSoon() }
+        // A Dock click must also activate/front an existing window that is merely
+        // behind another app, not only recreate a missing window.
+        BackgroundExecutionController.shared.showMainWindow()
         return true
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        !BackgroundExecutionController.shared.keepsRunningAfterLastWindowClosed
+            && !ApplicationTerminationCoordinator.shared.hasActiveOperations
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        ApplicationTerminationCoordinator.shared.applicationShouldTerminate()
     }
 
     private func ensureWindowSoon() {
@@ -62,14 +70,17 @@ struct PhosphorApp: App {
                 .environmentObject(whatsAppVM)
                 .frame(minWidth: 960, minHeight: 640)
                 .onAppear {
+                    // Register scheduled/background ownership before the delayed
+                    // foreground discovery work. Closing the first window during
+                    // that delay must not terminate an app with enabled schedules.
+                    scheduler.attachBackupViewModel(backupVM)
+                    scheduler.startMonitoring()
                     Task {
                         // Let SwiftUI paint the first window before starting
                         // device polling and backup discovery work.
                         try? await Task.sleep(for: .milliseconds(750))
                         deviceVM.deviceManager.startPolling(interval: 4.0)
                         backupVM.loadBackups()
-                        scheduler.attachBackupViewModel(backupVM)
-                        scheduler.startMonitoring()
                     }
                 }
                 .sheet(isPresented: showOnboarding) {
