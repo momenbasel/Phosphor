@@ -248,6 +248,13 @@ struct DeviceCloneView: View {
                 .font(.system(size: 11))
                 .foregroundStyle(.orange)
 
+            if cloneService.phase == .backingUp {
+                Button("Cancel", role: .destructive) {
+                    cancelClone()
+                }
+                .buttonStyle(.bordered)
+            }
+
             Spacer()
         }
         .frame(maxWidth: .infinity)
@@ -324,6 +331,13 @@ struct DeviceCloneView: View {
         Task {
             availableDevices = await cloneService.getConnectedDevices()
             isScanning = false
+        }
+    }
+
+    private func cancelClone() {
+        cloneService.cancelClone()
+        if let sourceUDID {
+            backupVM.cancelBackup(udid: sourceUDID)
         }
     }
 
