@@ -5,6 +5,17 @@ import CommonCrypto
 ///
 /// The sms.db is stored at HomeDomain/Library/SMS/sms.db in the backup.
 /// Its SHA-1 hash in Manifest.db is the famous "3d0d7e5fb2ce288813306e4d4636395e047a3d28".
+enum MessageExportError: LocalizedError {
+    case attachmentUnavailable(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .attachmentUnavailable(let filename):
+            return "Could not read requested attachment: \(filename)"
+        }
+    }
+}
+
 struct MessageExportOptions {
     var startDate: Date? = nil
     var endDate: Date? = nil
@@ -918,10 +929,13 @@ final class MessageExporter {
         for message in messages {
             try cancellationCheck?()
             for attachment in message.attachments where !attachment.isPluginPayload {
-                guard let filename = attachment.filename,
-                      !filename.isEmpty,
-                      seenFilenames.insert(filename).inserted,
-                      let sourcePath = resolveAttachmentDiskPath(filename: filename) else { continue }
+                guard let filename = attachment.filename, !filename.isEmpty else {
+                    throw MessageExportError.attachmentUnavailable(attachment.displayName)
+                }
+                guard seenFilenames.insert(filename).inserted else { continue }
+                guard let sourcePath = resolveAttachmentDiskPath(filename: filename) else {
+                    throw MessageExportError.attachmentUnavailable(filename)
+                }
                 items.append(.init(
                     key: filename,
                     displayName: attachment.displayName,
@@ -1128,16 +1142,16 @@ final class MessageExporter {
 
             let body = msg.text ?? ""
             let inlineAttachments = msg.attachments.filter { !$0.isPluginPayload }
-            let embeddedAttachments: [(attachment: MessageAttachment, diskPath: String, data: Data)] = includeAttachments
-                ? inlineAttachments.compactMap { attachment in
-                    guard let filename = attachment.filename,
-                          let diskPath = resolveAttachmentDiskPath(filename: filename),
-                          let data = try? Data(contentsOf: URL(fileURLWithPath: diskPath)) else {
-                        return nil
+            var embeddedAttachments: [(attachment: MessageAttachment, diskPath: String)] = []
+            if includeAttachments {
+                for attachment in inlineAttachments {
+                    guard let filename = attachment.filename, !filename.isEmpty,
+                          let diskPath = resolveAttachmentDiskPath(filename: filename) else {
+                        throw MessageExportError.attachmentUnavailable(attachment.displayName)
                     }
-                    return (attachment, diskPath, data)
+                    embeddedAttachments.append((attachment, diskPath))
                 }
-                : []
+            }
 
             if !embeddedAttachments.isEmpty {
                 let boundary = "----=_Phosphor_\(mboxToken(msg.guid))"
@@ -1167,7 +1181,12 @@ final class MessageExporter {
                     append("Content-Type: \(mime); name=\"\(headerEncode(name))\"\(crlf)")
                     append("Content-Disposition: attachment; filename=\"\(headerEncode(name))\"\(crlf)")
                     append("Content-Transfer-Encoding: base64\(crlf)\(crlf)")
-                    append(embedded.data.base64EncodedString(options: [.lineLength76Characters, .endLineWithCarriageReturn, .endLineWithLineFeed]))
+                    if let writeError { throw writeError }
+                    try streamAttachmentAsBase64(
+                        at: embedded.diskPath,
+                        to: handle,
+                        cancellationCheck: cancellationCheck
+                    )
                     append(crlf)
                 }
                 append("--\(boundary)--\(crlf)\(crlf)")
@@ -1190,6 +1209,24 @@ final class MessageExporter {
         }
 
         if let writeError { throw writeError }
+    }
+
+    /// Stream MIME base64 in 57-byte blocks: each block becomes one RFC-compliant
+    /// 76-character line while keeping attachment memory bounded.
+    private func streamAttachmentAsBase64(
+        at path: String,
+        to output: FileHandle,
+        cancellationCheck: (() throws -> Void)? = nil
+    ) throws {
+        let input = try FileHandle(forReadingFrom: URL(fileURLWithPath: path))
+        defer { try? input.close() }
+        let crlf = Data("\r\n".utf8)
+        while let chunk = try input.read(upToCount: 57), !chunk.isEmpty {
+            try cancellationCheck?()
+            try output.write(contentsOf: chunk.base64EncodedData())
+            try output.write(contentsOf: crlf)
+        }
+        try cancellationCheck?()
     }
 
     /// Mbox bodies must escape lines that start with `From ` so the delimiter remains unambiguous.

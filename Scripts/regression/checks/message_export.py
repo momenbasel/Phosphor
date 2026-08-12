@@ -1175,6 +1175,29 @@ def test_csv_exports_share_formula_safe_helper(root: Path) -> None:
         assert_contains(src, "CSVExport.row", f"{rel} should use the shared CSV escaping/formula-neutralization helper")
 
 
+def test_requested_original_attachments_fail_closed_when_unavailable(root: Path) -> None:
+    src = read(root, "Sources/Phosphor/Services/MessageExporter.swift")
+    items = re.search(r"private func originalAttachmentItems.*?(?=\n    private func|\n    ///|\Z)", src, re.S)
+    assert items is not None, "originalAttachmentItems should exist"
+    assert_contains(src, "enum MessageExportError", "exports should expose a typed attachment failure")
+    assert_contains(items.group(0), "throw MessageExportError.attachmentUnavailable", "requested originals must abort before transcript publication when a source attachment is unavailable")
+    assert "let sourcePath = resolveAttachmentDiskPath(filename: filename) else { continue }" not in items.group(0), (
+        "requested original attachments must not silently disappear from a completed export"
+    )
+
+
+def test_mbox_attachment_payloads_stream_without_whole_file_reads(root: Path) -> None:
+    src = read(root, "Sources/Phosphor/Services/MessageExporter.swift")
+    mbox = re.search(r"private func exportMbox.*?(?=\n    private func|\n    ///|\Z)", src, re.S)
+    assert mbox is not None, "exportMbox should exist"
+    assert_contains(mbox.group(0), "streamAttachmentAsBase64", "MBOX attachments should be streamed in bounded chunks")
+    assert "Data(contentsOf:" not in mbox.group(0), "MBOX must not load entire attachment files into memory"
+    helper = re.search(r"private func streamAttachmentAsBase64.*?(?=\n    private func|\n    ///|\Z)", src, re.S)
+    assert helper is not None, "streamAttachmentAsBase64 helper should exist"
+    assert_contains(helper.group(0), "57", "base64 stream chunks should be 57 bytes / 76 output characters")
+    assert_contains(helper.group(0), "cancellationCheck", "MBOX attachment streaming should be cancellable")
+
+
 def test_message_export_writers_check_cancellation_inside_long_loops(root: Path) -> None:
     src = read(root, "Sources/Phosphor/Services/MessageExporter.swift")
     assert_contains(src, "cancellationCheck: (() throws -> Void)?", "Message exports should accept a cancellation checkpoint")
