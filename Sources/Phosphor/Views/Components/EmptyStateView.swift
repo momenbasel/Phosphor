@@ -29,11 +29,16 @@ struct EmptyStateView: View {
             }
             .padding(.bottom, 2)
 
-            Text(title)
+            Text(LocalizedStringKey(title))
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(.primary)
 
-            Text(subtitle)
+            // Subtitles receive both static keys and already-resolved runtime
+            // messages (e.g. error text). LocalizedStringKey would re-interpret
+            // "%" sequences in a resolved message as format specifiers, so the
+            // table lookup is explicit and the result is rendered verbatim:
+            // known keys translate, unknown runtime text passes through intact.
+            Text(verbatim: Bundle.main.localizedString(forKey: subtitle, value: subtitle, table: nil))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -41,7 +46,7 @@ struct EmptyStateView: View {
 
             if let action, let label = actionLabel {
                 Button(action: action) {
-                    Text(label)
+                    Text(LocalizedStringKey(label))
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.brandAccent)
@@ -62,7 +67,7 @@ struct LoadingOverlay: View {
             ProgressView()
                 .controlSize(.large)
                 .tint(.brandAccent)
-            Text(message)
+            Text(LocalizedStringKey(message))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
@@ -86,7 +91,7 @@ struct InfoRow: View {
                     .foregroundStyle(.secondary)
                     .frame(width: 18, alignment: .center)
             }
-            Text(label)
+            Text(LocalizedStringKey(label))
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
             Spacer(minLength: 8)
@@ -108,7 +113,7 @@ struct SectionHeader: View {
 
     var body: some View {
         HStack {
-            Text(title)
+            Text(LocalizedStringKey(title))
                 .font(.headline)
             Spacer()
             if let action {
@@ -119,7 +124,7 @@ struct SectionHeader: View {
                                 .font(.system(size: 11, weight: .medium))
                         }
                         if let label = actionLabel {
-                            Text(label)
+                            Text(LocalizedStringKey(label))
                                 .font(.system(size: 12, weight: .medium))
                         }
                     }

@@ -63,7 +63,7 @@ struct DiagnosticsView: View {
 
             Picker("Tab", selection: $activeTab) {
                 ForEach(DiagTab.allCases, id: \.self) { tab in
-                    Text(tab.rawValue).tag(tab)
+                    Text(LocalizedStringKey(tab.rawValue)).tag(tab)
                 }
             }
             .pickerStyle(.segmented)

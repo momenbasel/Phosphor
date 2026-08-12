@@ -52,7 +52,7 @@ struct HealthView: View {
             Spacer()
 
             Picker("Tab", selection: $activeTab) {
-                ForEach(HealthTab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                ForEach(HealthTab.allCases, id: \.self) { Text(LocalizedStringKey($0.rawValue)).tag($0) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
