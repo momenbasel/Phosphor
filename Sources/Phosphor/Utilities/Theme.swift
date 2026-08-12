@@ -65,6 +65,7 @@ extension SidebarSection {
         case .battery: return .green
         case .screenCapture: return .purple
         case .location: return .blue
+        case .homeScreen: return .purple
         }
     }
 }

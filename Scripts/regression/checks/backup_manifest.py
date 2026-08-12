@@ -17,8 +17,49 @@ def test_lazy_manifest_size_queries_do_not_eager_stat(root: Path) -> None:
         assert "SELECT fileID, domain, relativePath, flags" in body, f"{signature} should query metadata only"
 
     vm = read(root, "Sources/Phosphor/ViewModels/BackupViewModel.swift")
-    assert "manifest.resolvingSizes(for: try manifest.files(inDomain: domain))" in vm, "backup browser should resolve visible domain sizes"
-    assert "manifest.resolvingSizes(for: try manifest.search(query))" in vm, "backup search should resolve visible search sizes"
+    # Sizes resolve progressively through the actor store in cancellable chunks,
+    # never synchronously on the main actor inside browseDomain/searchBackup.
+    assert "store.resolveSizes(for: " in vm, "size resolution should go through the query store"
+    assert "Task.checkCancellation()" in vm, "chunked size resolution should observe cancellation"
+    assert "manifest.resolvingSizes(for: try manifest.files(inDomain: domain))" not in vm, "browseDomain must not synchronously resolve all sizes on the main actor"
+    assert "manifest.resolvingSizes(for: try manifest.search(query))" not in vm, "searchBackup must not synchronously resolve all sizes on the main actor"
+
+
+def test_preview_pane_routes_manifest_io_through_actor_and_cancels_stale_loads(root: Path) -> None:
+    """The inspector must never touch a raw manifest (it would race the size
+    resolution passes), must parse plists/SQLite off the main actor, and must
+    live inside .task(id:) so a selection change cancels the previous load
+    before a stale result can be applied."""
+    pane = read(root, "Sources/Phosphor/Views/Backup/FilePreviewPane.swift")
+    assert "let store: ManifestQueryStore" in pane, "preview I/O must go through the serialized query store"
+    assert "let manifest: BackupManifest" not in pane, "the pane must not hold a raw manifest"
+    assert "Task.detached" not in pane, "preview loads must stay inside .task(id:) so selection changes cancel them"
+    assert ".task(id: entry.id)" in pane, "preview loads must be keyed to the selected entry"
+    assert "store.readablePath(for: entry)" in pane, "path materialization/decryption must be actor-serialized"
+    assert "store.extractFile(" in pane, "extraction must be actor-serialized"
+    assert "static func parsePlist" in pane and "static func loadSQLitePreview" in pane, (
+        "plist and SQLite parsing must run in nonisolated helpers off the main actor"
+    )
+    assert pane.count("Task.isCancelled") + pane.count("Task.checkCancellation") >= 3, (
+        "every preview state application must re-check cancellation first"
+    )
+
+    browser = read(root, "Sources/Phosphor/Views/Backup/BackupBrowserView.swift")
+    assert "FilePreviewPane(entry: selection, store: store)" in browser, (
+        "the browser must hand the pane the query store, not a manifest"
+    )
+
+
+def test_home_screen_loads_confine_manifest_and_guard_stale_publishes(root: Path) -> None:
+    """Each home-screen load owns a private manifest confined to one background
+    task (web-clip reads included), and a superseded load must never publish
+    onto the state of the backup that replaced it."""
+    vm = read(root, "Sources/Phosphor/ViewModels/HomeScreenViewModel.swift")
+    assert "loadWebClipIconData" in vm, "web-clip bytes must be read inside the load task that owns the manifest"
+    assert vm.count("loadGeneration == generation") >= 3, (
+        "every published write must be guarded by the load generation token"
+    )
+    assert "loadTask?.cancel()" in vm, "switching backups must cancel the in-flight load"
 
 
 def test_manifest_open_preflights_encrypted_and_missing_backups(root: Path) -> None:

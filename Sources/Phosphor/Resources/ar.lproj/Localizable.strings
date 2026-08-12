@@ -107,3 +107,19 @@
 /* Welcome */
 "welcome.title" = "مرحبا بك في Phosphor";
 "welcome.subtitle" = "قم بتوصيل جهاز iOS او اختر قسما من الشريط الجانبي.";
+
+/* Home Screen */
+"homeScreen.homeScreen" = "الشاشة الرئيسية";
+"homeScreen.noBackupSelected" = "لم يتم تحديد نسخة احتياطية";
+"homeScreen.selectBackup" = "حدد نسخة احتياطية من قسم النسخ الاحتياطية لعرض شاشتها الرئيسية.";
+"homeScreen.noLayout" = "لا توجد بيانات شاشة رئيسية";
+"homeScreen.noLayoutDesc" = "لا تحتوي هذه النسخة الاحتياطية على IconState.plist (HomeDomain/SpringBoard).";
+"homeScreen.readFailed" = "تعذرت قراءة التخطيط";
+"homeScreen.exportPNG" = "تصدير PNG";
+"homeScreen.reload" = "إعادة تحميل";
+"homeScreen.reading" = "جارٍ قراءة تخطيط الشاشة الرئيسية…";
+"browser.allDomains" = "كل النطاقات";
+"browser.items" = "%lld عناصر";
+"browser.preview" = "تبديل المعاينة";
+"browser.extract" = "استخراج";
+

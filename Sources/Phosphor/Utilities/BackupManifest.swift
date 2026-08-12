@@ -50,7 +50,7 @@ final class BackupManifest {
     private let plaintextScratch: URL?
     private var plaintextCache: [String: String] = [:]
 
-    struct FileEntry: Identifiable, Hashable {
+    struct FileEntry: Identifiable, Hashable, Sendable {
         let id: String // fileID (SHA-1 hash)
         let domain: String
         let relativePath: String
@@ -255,6 +255,70 @@ final class BackupManifest {
             params: [pattern]
         )
         return rows.compactMap(parseFileEntry)
+    }
+
+    /// Return the immediate children (files and directories) of `path` within `domain`.
+    /// Root is represented by "" or "/". Uses a single SQL `LIKE` and filters in Swift.
+    /// Directories not stored as their own row are synthesized (flags = 2, id = "").
+    func children(ofPath path: String, inDomain domain: String) throws -> [FileEntry] {
+        let normalized = (path == "/" || path.isEmpty) ? "" : path
+        let pattern: String
+        let prefixLen: Int
+        if normalized.isEmpty {
+            pattern = "%"
+            prefixLen = 0
+        } else {
+            pattern = "\(escapeLikePattern(normalized))/%"
+            prefixLen = normalized.count + 1
+        }
+        let rows = try db.query(
+            "SELECT fileID, domain, relativePath, flags FROM Files WHERE domain = ? AND relativePath LIKE ? ESCAPE '\\' ORDER BY relativePath",
+            params: [domain, pattern]
+        )
+        var seenPaths = Set<String>()
+        var result: [FileEntry] = []
+        result.reserveCapacity(rows.count)
+        for row in rows {
+            guard let entry = parseFileEntry(row) else { continue }
+            let rel = entry.relativePath
+            guard rel.count > prefixLen else {
+                // The path itself as a directory row; skip.
+                continue
+            }
+            let suffix = rel.dropFirst(prefixLen)
+            if let slash = suffix.firstIndex(of: "/") {
+                // Descendant deeper than one level. Synthesize the intermediate
+                // directory so callers see it in the listing.
+                let parentName = String(suffix[..<slash])
+                let parentPath = normalized.isEmpty ? parentName : "\(normalized)/\(parentName)"
+                if seenPaths.insert(parentPath).inserted {
+                    result.append(FileEntry(id: "", domain: domain, relativePath: parentPath, flags: 2, size: 0))
+                }
+            } else if seenPaths.insert(rel).inserted {
+                result.append(entry)
+            }
+        }
+        return result
+    }
+
+    /// Exact lookup by (domain, relativePath).
+    func entry(domain: String, relativePath: String) throws -> FileEntry? {
+        let rows = try db.query(
+            "SELECT fileID, domain, relativePath, flags FROM Files WHERE domain = ? AND relativePath = ?",
+            params: [domain, relativePath]
+        )
+        return rows.compactMap(parseFileEntry).first
+    }
+
+    /// Escape SQLite LIKE wildcards (%, _) plus the escape char itself.
+    private func escapeLikePattern(_ s: String) -> String {
+        var out = ""
+        out.reserveCapacity(s.count)
+        for ch in s {
+            if ch == "\\" || ch == "%" || ch == "_" { out.append("\\") }
+            out.append(ch)
+        }
+        return out
     }
 
     /// Search files by name.
@@ -579,3 +643,7 @@ final class DirectoryNode: Identifiable {
         self.path = path
     }
 }
+
+/// Access is serialized by `ManifestQueryStore`, so cross-thread use is safe in
+/// practice even though the underlying SQLite handle is not Sendable itself.
+extension BackupManifest: @unchecked Sendable {}

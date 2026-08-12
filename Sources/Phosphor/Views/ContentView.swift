@@ -170,6 +170,8 @@ struct ContentView: View {
             BackupBrowserView()
         case .timeMachine:
             BackupTimeMachineView(onBrowseBackup: { selectedSection = .backupBrowser })
+        case .homeScreen:
+            HomeScreenView()
         case .unifiedSearch:
             UnifiedSearchView()
         case .messages:
