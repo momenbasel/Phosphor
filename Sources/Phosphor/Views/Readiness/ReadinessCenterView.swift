@@ -165,7 +165,8 @@ struct ReadinessCenterView: View {
         switch operation {
         case .deleteIncompleteBackupAndRunFull(let udid, let path):
             do {
-                try BackupManager.deleteIncompleteBackup(for: udid, expectedPath: path)
+                let recoveryRoot = (path as NSString).deletingLastPathComponent
+                try BackupManager.deleteIncompleteBackup(for: udid, expectedPath: path, in: recoveryRoot)
                 backupVM.loadBackups()
                 await deviceVM.refreshReadiness()
 
