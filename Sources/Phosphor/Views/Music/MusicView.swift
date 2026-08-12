@@ -8,6 +8,9 @@ struct MusicView: View {
     @StateObject private var musicManager = MusicTransferManager()
     @State private var activeTab: MusicTab = .backup
     @State private var selectedTracks: Set<String> = []
+    @State private var extractionTask: Task<Void, Never>?
+    @State private var extractionMessage = ""
+    @State private var showExtractionResult = false
 
     enum MusicTab: String, CaseIterable {
         case backup = "From Backup"
@@ -30,6 +33,17 @@ struct MusicView: View {
             if let backup = backupVM.selectedBackup {
                 Task { await musicManager.loadMusicFromBackup(backupPath: backup.path) }
             }
+        }
+        // Deliberately no .onDisappear cancel. ContentView.detailView swaps this
+        // view out whenever the sidebar selection changes, so cancelling here
+        // aborted a running extraction the moment the user clicked another
+        // section - hundreds of files in, with the result alert bound to @State
+        // on a view that no longer exists, so nothing told them. Only the
+        // explicit Cancel Extraction button cancels.
+        .alert("Music Extraction", isPresented: $showExtractionResult) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(extractionMessage)
         }
     }
 
@@ -54,7 +68,12 @@ struct MusicView: View {
             .labelsHidden()
             .frame(width: 260)
 
-            if !selectedTracks.isEmpty {
+            if extractionTask != nil {
+                ProgressView().controlSize(.small)
+                Button("Cancel Extraction", role: .cancel) {
+                    extractionTask?.cancel()
+                }
+            } else if !selectedTracks.isEmpty {
                 Button("Extract (\(selectedTracks.count))") { extractSelected() }
                     .buttonStyle(.borderedProminent)
                     .tint(.brandAccent)
@@ -213,9 +232,21 @@ struct MusicView: View {
               let backup = backupVM.selectedBackup else { return }
 
         let tracks = musicManager.tracks.filter { selectedTracks.contains($0.id) }
-        Task {
-            let count = await musicManager.extractTracks(tracks, from: backup.path, to: url.path)
-            if count > 0 { NSWorkspace.shared.open(url) }
+        extractionTask?.cancel()
+        extractionTask = Task {
+            let outcome = await musicManager.extractTracks(tracks, from: backup.path, to: url.path)
+            extractionTask = nil
+
+            var summary = "\(outcome.extracted) of \(outcome.total) tracks extracted."
+            if outcome.cancelled {
+                summary += " Extraction was cancelled."
+            }
+            if let failure = outcome.lastError, !failure.isEmpty {
+                summary += "\n\n\(failure)"
+            }
+            extractionMessage = summary
+            showExtractionResult = true
+            if outcome.extracted > 0 { NSWorkspace.shared.open(url) }
         }
     }
 

@@ -105,6 +105,17 @@ jobs:
       - name: Install Dependencies
         run: brew install libimobiledevice
 
+      - name: Stamp bundle version from tag
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF##*/}"
+          VERSION="${TAG#v}"
+          PLIST="Resources/Info.plist"
+          CURRENT_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST")"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $((CURRENT_BUILD + 1))" "$PLIST"
+          echo "Stamped $PLIST to $VERSION (build $((CURRENT_BUILD + 1)))"
+
       - name: Build Release
         run: |
           # Universal arm64 + x86_64 so the released app runs on Intel Macs (issue #44).

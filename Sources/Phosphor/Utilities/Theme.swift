@@ -46,6 +46,7 @@ extension SidebarSection {
         case .backups: return .blue
         case .backupBrowser: return .purple
         case .timeMachine: return .teal
+        case .unifiedSearch: return .indigo
         case .messages: return .green
         case .whatsapp: return Color(red: 0.12, green: 0.75, blue: 0.36) // #1EBE5D-ish
         case .photos: return .orange

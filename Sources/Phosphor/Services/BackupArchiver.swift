@@ -98,29 +98,47 @@ enum BackupArchiver {
         dateFormatter.dateFormat = "yyyy-MM-dd_HHmmss"
         let dateStr = dateFormatter.string(from: backup.lastBackupDate ?? Date())
 
-        let archiveName = "\(safeName)_\(dateStr).\(fileExtension)"
+        // Keep portable archives attributable when same-name devices create
+        // backups at similar times.
+        let archiveName = "\(safeName)_\(backup.shortUDID)_\(dateStr).\(fileExtension)"
         let archivePath = (destinationDir as NSString).appendingPathComponent(archiveName)
-
-        // Remove existing file
-        try? fm.removeItem(atPath: archivePath)
+        // Staging beside the final archive guarantees the publish is on one volume.
+        // A UUID prevents concurrent exports of the same backup from sharing output.
+        let stagingArchivePath = (destinationDir as NSString)
+            .appendingPathComponent(".\(archiveName).\(UUID().uuidString).partial")
+        defer { try? fm.removeItem(atPath: stagingArchivePath) }
 
         onProgress("Compressing backup...")
 
-        // Use tar to create archive - fast and preserves all metadata
+        // Use tar to create archive - fast and preserves all metadata. Never point tar
+        // at the published path: a failed or cancelled process must leave its prior
+        // complete archive untouched.
         let backupDir = (backup.path as NSString).lastPathComponent
         let parentDir = (backup.path as NSString).deletingLastPathComponent
 
         let result = await Shell.runAsync(
             "tar",
-            arguments: ["-czf", archivePath, "-C", parentDir, backupDir],
+            arguments: ["-czf", stagingArchivePath, "-C", parentDir, backupDir],
             timeout: 600 // 10 min for large backups
         )
 
-        if result.succeeded {
+        guard result.succeeded, !Task.isCancelled else {
+            onProgress(Task.isCancelled ? "Archive cancelled" : "Archive failed: \(result.stderr)")
+            return nil
+        }
+
+        do {
+            let stagingURL = URL(fileURLWithPath: stagingArchivePath)
+            let archiveURL = URL(fileURLWithPath: archivePath)
+            if fm.fileExists(atPath: archivePath) {
+                _ = try fm.replaceItemAt(archiveURL, withItemAt: stagingURL)
+            } else {
+                try fm.moveItem(at: stagingURL, to: archiveURL)
+            }
             onProgress("Archive created: \(archiveName)")
             return archivePath
-        } else {
-            onProgress("Archive failed: \(result.stderr)")
+        } catch {
+            onProgress("Archive failed: could not publish archive: \(error.localizedDescription)")
             return nil
         }
     }

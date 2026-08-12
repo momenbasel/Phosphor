@@ -1,6 +1,8 @@
 import Foundation
 #if canImport(SQLite3)
 import SQLite3
+
+private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 #endif
 
 /// Lightweight SQLite wrapper for reading iOS backup databases.
@@ -13,12 +15,14 @@ final class SQLiteReader {
         case openFailed(String)
         case queryFailed(String)
         case prepareFailed(String)
+        case bindFailed(String)
 
         var errorDescription: String? {
             switch self {
             case .openFailed(let msg): return "SQLite open failed: \(msg)"
             case .queryFailed(let msg): return "SQLite query failed: \(msg)"
             case .prepareFailed(let msg): return "SQLite prepare failed: \(msg)"
+            case .bindFailed(let msg): return "SQLite bind failed: \(msg)"
             }
         }
     }
@@ -70,13 +74,24 @@ final class SQLiteReader {
 
         // Bind parameters
         for (index, param) in params.enumerated() {
-            sqlite3_bind_text(statement, Int32(index + 1), (param as NSString).utf8String, -1, nil)
+            let bindResult = param.withCString { pointer in
+                sqlite3_bind_text(statement, Int32(index + 1), pointer, -1, SQLITE_TRANSIENT)
+            }
+            guard bindResult == SQLITE_OK else {
+                throw SQLiteError.bindFailed(String(cString: sqlite3_errmsg(db)))
+            }
         }
 
         var rows: [[String: Any?]] = []
         let columnCount = sqlite3_column_count(statement)
 
-        while sqlite3_step(statement) == SQLITE_ROW {
+        while true {
+            let stepResult = sqlite3_step(statement)
+            if stepResult == SQLITE_DONE { break }
+            guard stepResult == SQLITE_ROW else {
+                throw SQLiteError.queryFailed(String(cString: sqlite3_errmsg(db)))
+            }
+
             var row: [String: Any?] = [:]
             for i in 0..<columnCount {
                 let name = String(cString: sqlite3_column_name(statement, i))
@@ -141,5 +156,27 @@ final class SQLiteReader {
     func rowCount(for table: String) throws -> Int {
         let count: Int? = try scalar("SELECT COUNT(*) FROM \(table)")
         return count ?? 0
+    }
+}
+
+extension SQLiteReader {
+    /// Build a `LIKE` pattern that matches the user's text literally.
+    ///
+    /// Every search predicate in this app is parameterised, so there is no
+    /// injection here - but the parameter is still a LIKE *pattern*, and `%`,
+    /// `_` and the escape character keep their wildcard meaning inside a bound
+    /// value. Wrapping the raw term as "%term%" meant searching for `%%` built
+    /// `%%%%`, which matches every non-NULL row of every column searched, and
+    /// `50%` matched "500 dollars". Pair this with `LIKE ? ESCAPE '\'`.
+    static func containsPattern(_ term: String) -> String {
+        var escaped = ""
+        escaped.reserveCapacity(term.count + 2)
+        for character in term {
+            if character == "\\" || character == "%" || character == "_" {
+                escaped.append("\\")
+            }
+            escaped.append(character)
+        }
+        return "%\(escaped)%"
     }
 }

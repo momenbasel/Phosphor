@@ -53,33 +53,71 @@ final class BackupManager: ObservableObject {
         case incomplete(path: String)
     }
 
-    /// Active backup process for cancellation.
-    private var activeProcess: Process?
-    private var activeOperationID: UUID?
+    /// Active managed backup session leader for cancellation (#63 replaced
+    /// Foundation.Process with a posix_spawn session leader so the whole process
+    /// group can be signalled). Ownership is shared across manager instances by
+    /// device UDID, allowing different devices to run concurrently without
+    /// permitting two writers to operate on the same physical device (#60).
+    private static var operationRegistry = BackupOperationRegistry()
+    private var activeProcess: Shell.ManagedProcess?
+    private var operationCoordinator = BackupDeviceCoordinator()
     private var cancelledOperationIDs: Set<UUID> = []
+    private var cancellationDrainTasks: [UUID: Task<Void, Never>] = [:]
+    private var applicationTerminationWaiters: [CheckedContinuation<Void, Never>] = []
 
-    private func beginCancellableOperation() -> UUID {
-        let id = UUID()
-        activeOperationID = id
+    private func beginCancellableOperation(udid: String) -> UUID? {
+        // Reset before either rejection branch, not between them. With these
+        // below the first guard, a contention refusal left the PREVIOUS
+        // operation's lastBackupFailure in place, so BackupViewModel.createBackup
+        // read it and re-presented a stale "Incomplete Backup Found" recovery
+        // sheet - offering "Delete Incomplete Backup and Run Full Backup" in
+        // response to an unrelated event, while the real reason sat unread in
+        // lastError.
         lastOperationWasCancelled = false
-        return id
+        lastBackupFailure = nil
+        guard operationCoordinator.activeOperationID == nil else {
+            lastError = "Another backup or restore operation is already running."
+            return nil
+        }
+        guard let operationID = operationCoordinator.begin(
+            udid: udid,
+            registry: &Self.operationRegistry
+        ) else {
+            lastError = "Another backup or restore operation is already running for this device."
+            return nil
+        }
+        guard ApplicationTerminationCoordinator.shared.register(self) else {
+            _ = operationCoordinator.finish(operationID: operationID, registry: &Self.operationRegistry)
+            lastError = "Phosphor is quitting; no new backup or restore can start."
+            return nil
+        }
+        return operationID
     }
 
     private func operationWasCancelled(_ id: UUID) -> Bool {
         cancelledOperationIDs.contains(id)
     }
 
+    private func awaitCancellationDrain(_ id: UUID) async {
+        guard let drain = cancellationDrainTasks[id] else { return }
+        await drain.value
+        cancellationDrainTasks.removeValue(forKey: id)
+    }
+
     private func finishOperation(_ id: UUID) {
-        if activeOperationID == id {
-            activeOperationID = nil
+        if operationCoordinator.finish(operationID: id, registry: &Self.operationRegistry) {
             activeProcess = nil
             isCreatingBackup = false
+            ApplicationTerminationCoordinator.shared.unregister(self)
+            let waiters = applicationTerminationWaiters
+            applicationTerminationWaiters.removeAll()
+            waiters.forEach { $0.resume() }
         }
         cancelledOperationIDs.remove(id)
     }
 
     private func markOperationCancelled(_ id: UUID, progress: String = "Cancelled") {
-        if activeOperationID == id {
+        if operationCoordinator.activeOperationID == id {
             lastOperationWasCancelled = true
             backupProgress = progress
             lastError = nil
@@ -431,19 +469,20 @@ final class BackupManager: ObservableObject {
 
     private func finalizeSuccessfulBackup(
         udid: String,
+        directory: String,
         operationID: UUID,
         onProgress: @escaping (String) -> Void
     ) -> Bool {
-        switch Self.backupMetadataHealth(for: udid) {
+        switch Self.backupMetadataHealth(for: udid, in: directory) {
         case .complete:
             finishOperation(operationID)
             backupProgress = "Backup complete"
             backupPercent = 1.0
-            discoverBackups()
+            discoverBackups(at: directory)
             onProgress("Backup complete")
             return true
         case .missing:
-            let path = Self.backupPath(for: udid)
+            let path = Self.backupPath(for: udid, in: directory)
             finishOperation(operationID)
             backupProgress = "Backup metadata incomplete"
             lastBackupFailure = BackupFailure(
@@ -481,8 +520,17 @@ final class BackupManager: ObservableObject {
         preferNetwork: Bool = false,
         onProgress: @escaping (String) -> Void
     ) async -> Bool {
+        // Per-device ownership first (#60): if another owner already holds this
+        // UDID we must not take the comparison gate on its behalf.
+        guard let operationID = beginCancellableOperation(udid: udid) else { return false }
+        let backupRoot = Self.activeBackupDir
+        // Then the reader/writer gate (#70). beginBackup preempts any in-flight
+        // comparison rather than being refused by one, so this always succeeds.
+        let coordinatorToken = BackupOperationCoordinator.shared.beginBackup()
+        defer {
+            if let coordinatorToken { BackupOperationCoordinator.shared.endBackup(coordinatorToken) }
+        }
         isCreatingBackup = true
-        let operationID = beginCancellableOperation()
         backupProgress = "Starting backup..."
         backupPercent = 0
         lastError = nil
@@ -490,7 +538,7 @@ final class BackupManager: ObservableObject {
 
         // Preflight: bail early with a clear message when the directory is unreadable
         // (most commonly a Full Disk Access grant missing on the default location).
-        let preflight = Self.validateBackupDirectory(Self.activeBackupDir)
+        let preflight = Self.validateBackupDirectory(backupRoot)
         if !preflight.ok {
             finishOperation(operationID)
             backupProgress = "Backup failed"
@@ -498,16 +546,16 @@ final class BackupManager: ObservableObject {
             lastBackupFailure = BackupFailure(
                 title: "Backup Folder Not Accessible",
                 message: preflight.reason ?? "Phosphor cannot read or write the selected backup folder.",
-                technicalDetails: Self.activeBackupDir,
+                technicalDetails: backupRoot,
                 recoveryAction: .openBackupSettings,
                 udid: udid,
-                recoveryPath: Self.activeBackupDir
+                recoveryPath: backupRoot
             )
             onProgress(preflight.reason ?? "Backup directory is not accessible.")
             return false
         }
 
-        if case .incomplete(let path) = Self.backupMetadataHealth(for: udid) {
+        if case .incomplete(let path) = Self.backupMetadataHealth(for: udid, in: backupRoot) {
             finishOperation(operationID)
             backupProgress = "Incomplete backup found"
             lastBackupFailure = BackupFailure(
@@ -523,16 +571,22 @@ final class BackupManager: ObservableObject {
             return false
         }
 
+        if operationWasCancelled(operationID) {
+            markOperationCancelled(operationID)
+            return false
+        }
+
         // Primary: pymobiledevice3
         let pySuccess = await createBackupViaPymobiledevice(
             udid: udid,
+            directory: backupRoot,
             full: true,
             preferNetwork: preferNetwork,
             operationID: operationID,
             onProgress: onProgress
         )
         if pySuccess {
-            return finalizeSuccessfulBackup(udid: udid, operationID: operationID, onProgress: onProgress)
+            return finalizeSuccessfulBackup(udid: udid, directory: backupRoot, operationID: operationID, onProgress: onProgress)
         }
         if operationWasCancelled(operationID) {
             markOperationCancelled(operationID)
@@ -545,10 +599,15 @@ final class BackupManager: ObservableObject {
         backupProgress = "Backing up..."
         onProgress("Backing up")
 
-        let args = idevicebackupArguments(udid: udid, full: true, preferNetwork: preferNetwork)
+        let args = idevicebackupArguments(udid: udid, directory: backupRoot, full: true, preferNetwork: preferNetwork)
         var idevicebackupStderr = ""
 
         return await withCheckedContinuation { continuation in
+            guard !operationWasCancelled(operationID) else {
+                markOperationCancelled(operationID)
+                continuation.resume(returning: false)
+                return
+            }
             activeProcess = Shell.runStreaming(
                 "idevicebackup2",
                 arguments: args,
@@ -571,12 +630,13 @@ final class BackupManager: ObservableObject {
                             return
                         }
                         if self.operationWasCancelled(operationID) {
+                            await self.awaitCancellationDrain(operationID)
                             self.markOperationCancelled(operationID)
                             continuation.resume(returning: false)
                             return
                         }
                         if exitCode == 0 {
-                            let verified = self.finalizeSuccessfulBackup(udid: udid, operationID: operationID, onProgress: onProgress)
+                            let verified = self.finalizeSuccessfulBackup(udid: udid, directory: backupRoot, operationID: operationID, onProgress: onProgress)
                             continuation.resume(returning: verified)
                             return
                         } else {
@@ -589,7 +649,7 @@ final class BackupManager: ObservableObject {
                                 primary: "Both backup methods failed.",
                                 stderr: combinedStderr,
                                 udid: udid,
-                                recoveryPath: Self.backupPath(for: udid)
+                                recoveryPath: Self.backupPath(for: udid, in: backupRoot)
                             )
                             self.lastBackupFailure = failure
                             self.lastError = Self.composeFailureMessage(
@@ -604,23 +664,27 @@ final class BackupManager: ObservableObject {
         }
     }
 
-    private func idevicebackupArguments(udid: String, full: Bool, preferNetwork: Bool) -> [String] {
+    private func idevicebackupArguments(udid: String, directory: String, full: Bool, preferNetwork: Bool) -> [String] {
         var args = ["-u", udid]
         if preferNetwork { args.append("-n") }
         args.append("backup")
         if full { args.append("--full") }
-        args.append(Self.activeBackupDir)
+        args.append(directory)
         return args
     }
 
     /// Backup using pymobiledevice3.
     private func createBackupViaPymobiledevice(
         udid: String,
+        directory: String,
         full: Bool,
         preferNetwork: Bool,
         operationID: UUID,
         onProgress: @escaping (String) -> Void
     ) async -> Bool {
+        // Entering this async helper is an actor suspension point. Quit may request
+        // cancellation after ownership is acquired but before a child is assigned.
+        guard !operationWasCancelled(operationID) else { return false }
         guard PyMobileDevice.available() else {
             lastError = "pymobiledevice3 not installed. Install with: pipx install pymobiledevice3"
             return false
@@ -631,8 +695,12 @@ final class BackupManager: ObservableObject {
         pymobiledeviceStderrTail.removeAll()
 
         return await withCheckedContinuation { continuation in
+            guard !operationWasCancelled(operationID) else {
+                continuation.resume(returning: false)
+                return
+            }
             activeProcess = PyMobileDevice.backup(
-                directory: Self.activeBackupDir,
+                directory: directory,
                 udid: udid,
                 full: full,
                 preferNetwork: preferNetwork,
@@ -676,10 +744,11 @@ final class BackupManager: ObservableObject {
                             continuation.resume(returning: false)
                             return
                         }
-                        if self.activeOperationID == operationID {
+                        if self.operationCoordinator.activeOperationID == operationID {
                             self.activeProcess = nil
                         }
                         if self.operationWasCancelled(operationID) {
+                            await self.awaitCancellationDrain(operationID)
                             continuation.resume(returning: false)
                             return
                         }
@@ -696,14 +765,23 @@ final class BackupManager: ObservableObject {
         preferNetwork: Bool = false,
         onProgress: @escaping (String) -> Void
     ) async -> Bool {
+        // Per-device ownership first (#60): if another owner already holds this
+        // UDID we must not take the comparison gate on its behalf.
+        guard let operationID = beginCancellableOperation(udid: udid) else { return false }
+        let backupRoot = Self.activeBackupDir
+        // Then the reader/writer gate (#70). beginBackup preempts any in-flight
+        // comparison rather than being refused by one, so this always succeeds.
+        let coordinatorToken = BackupOperationCoordinator.shared.beginBackup()
+        defer {
+            if let coordinatorToken { BackupOperationCoordinator.shared.endBackup(coordinatorToken) }
+        }
         isCreatingBackup = true
-        let operationID = beginCancellableOperation()
         backupProgress = "Starting incremental backup..."
         backupPercent = 0
         lastError = nil
         lastBackupFailure = nil
 
-        let preflight = Self.validateBackupDirectory(Self.activeBackupDir)
+        let preflight = Self.validateBackupDirectory(backupRoot)
         if !preflight.ok {
             finishOperation(operationID)
             backupProgress = "Backup failed"
@@ -711,16 +789,16 @@ final class BackupManager: ObservableObject {
             lastBackupFailure = BackupFailure(
                 title: "Backup Folder Not Accessible",
                 message: preflight.reason ?? "Phosphor cannot read or write the selected backup folder.",
-                technicalDetails: Self.activeBackupDir,
+                technicalDetails: backupRoot,
                 recoveryAction: .openBackupSettings,
                 udid: udid,
-                recoveryPath: Self.activeBackupDir
+                recoveryPath: backupRoot
             )
             onProgress(preflight.reason ?? "Backup directory is not accessible.")
             return false
         }
 
-        switch Self.backupMetadataHealth(for: udid) {
+        switch Self.backupMetadataHealth(for: udid, in: backupRoot) {
         case .complete:
             break
         case .missing:
@@ -729,10 +807,10 @@ final class BackupManager: ObservableObject {
             lastBackupFailure = BackupFailure(
                 title: "Full Backup Required",
                 message: "No complete backup exists for this device yet. Run a full backup first; future Wi-Fi backups can be incremental.",
-                technicalDetails: Self.backupPath(for: udid),
+                technicalDetails: Self.backupPath(for: udid, in: backupRoot),
                 recoveryAction: .runFullBackup,
                 udid: udid,
-                recoveryPath: Self.backupPath(for: udid)
+                recoveryPath: Self.backupPath(for: udid, in: backupRoot)
             )
             lastError = lastBackupFailure?.message
             onProgress(lastError ?? "Run a full backup first.")
@@ -753,17 +831,23 @@ final class BackupManager: ObservableObject {
             return false
         }
 
+        if operationWasCancelled(operationID) {
+            markOperationCancelled(operationID)
+            return false
+        }
+
         // Primary: pymobiledevice3 (without --full flag)
         if PyMobileDevice.available() {
             let success = await createBackupViaPymobiledevice(
                 udid: udid,
+                directory: backupRoot,
                 full: false,
                 preferNetwork: preferNetwork,
                 operationID: operationID,
                 onProgress: onProgress
             )
             if success {
-                return finalizeSuccessfulBackup(udid: udid, operationID: operationID, onProgress: onProgress)
+                return finalizeSuccessfulBackup(udid: udid, directory: backupRoot, operationID: operationID, onProgress: onProgress)
             }
             if operationWasCancelled(operationID) {
                 markOperationCancelled(operationID)
@@ -776,9 +860,14 @@ final class BackupManager: ObservableObject {
 
         // Fallback: idevicebackup2
         return await withCheckedContinuation { continuation in
+            guard !operationWasCancelled(operationID) else {
+                markOperationCancelled(operationID)
+                continuation.resume(returning: false)
+                return
+            }
             activeProcess = Shell.runStreaming(
                 "idevicebackup2",
-                arguments: idevicebackupArguments(udid: udid, full: false, preferNetwork: preferNetwork),
+                arguments: idevicebackupArguments(udid: udid, directory: backupRoot, full: false, preferNetwork: preferNetwork),
                 timeout: Self.streamingBackupTimeout,
                 onOutput: { [weak self] output in
                     let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -798,12 +887,13 @@ final class BackupManager: ObservableObject {
                             return
                         }
                         if self.operationWasCancelled(operationID) {
+                            await self.awaitCancellationDrain(operationID)
                             self.markOperationCancelled(operationID)
                             continuation.resume(returning: false)
                             return
                         }
                         if exitCode == 0 {
-                            let verified = self.finalizeSuccessfulBackup(udid: udid, operationID: operationID, onProgress: onProgress)
+                            let verified = self.finalizeSuccessfulBackup(udid: udid, directory: backupRoot, operationID: operationID, onProgress: onProgress)
                             continuation.resume(returning: verified)
                             return
                         } else {
@@ -816,7 +906,7 @@ final class BackupManager: ObservableObject {
                                 primary: "Incremental backup failed via both backends.",
                                 stderr: combinedStderr,
                                 udid: udid,
-                                recoveryPath: Self.backupPath(for: udid)
+                                recoveryPath: Self.backupPath(for: udid, in: backupRoot)
                             )
                             self.lastBackupFailure = failure
                             self.lastError = Self.composeFailureMessage(
@@ -852,10 +942,19 @@ final class BackupManager: ObservableObject {
             return false
         }
 
-        let operationID = beginCancellableOperation()
+        guard let operationID = beginCancellableOperation(udid: targetUDID) else { return false }
+        if operationWasCancelled(operationID) {
+            markOperationCancelled(operationID, progress: "Restore cancelled")
+            return false
+        }
         // Primary: pymobiledevice3
         if PyMobileDevice.available() {
             return await withCheckedContinuation { continuation in
+                guard !operationWasCancelled(operationID) else {
+                    markOperationCancelled(operationID, progress: "Restore cancelled")
+                    continuation.resume(returning: false)
+                    return
+                }
                 activeProcess = PyMobileDevice.restore(
                     directory: backupRoot,
                     udid: targetUDID,
@@ -869,6 +968,7 @@ final class BackupManager: ObservableObject {
                                 return
                             }
                             if self.operationWasCancelled(operationID) {
+                                await self.awaitCancellationDrain(operationID)
                                 self.markOperationCancelled(operationID, progress: "Restore cancelled")
                                 continuation.resume(returning: false)
                                 return
@@ -883,6 +983,11 @@ final class BackupManager: ObservableObject {
 
         // Fallback: idevicebackup2
         return await withCheckedContinuation { continuation in
+            guard !operationWasCancelled(operationID) else {
+                markOperationCancelled(operationID, progress: "Restore cancelled")
+                continuation.resume(returning: false)
+                return
+            }
             activeProcess = Shell.runStreaming(
                 "idevicebackup2",
                 // Global options first, then the subcommand, then its options. The
@@ -899,6 +1004,7 @@ final class BackupManager: ObservableObject {
                             return
                         }
                         if self.operationWasCancelled(operationID) {
+                            await self.awaitCancellationDrain(operationID)
                             self.markOperationCancelled(operationID, progress: "Restore cancelled")
                             continuation.resume(returning: false)
                             return
@@ -913,16 +1019,40 @@ final class BackupManager: ObservableObject {
 
     /// Cancel an active backup/restore.
     func cancelBackup() {
-        if let activeOperationID {
+        if let activeOperationID = operationCoordinator.activeOperationID {
             cancelledOperationIDs.insert(activeOperationID)
+            if let activeProcess, cancellationDrainTasks[activeOperationID] == nil {
+                // Keep the per-device operation lease until every descendant is
+                // gone. The streaming leader can exit before a TERM-ignoring
+                // child, so its completion alone is not cancellation completion.
+                cancellationDrainTasks[activeOperationID] = Task {
+                    await Shell.terminateAndWait(activeProcess)
+                }
+            }
         }
         lastOperationWasCancelled = true
         lastError = nil
         lastBackupFailure = nil
-        if let activeProcess {
-            Shell.terminate(activeProcess)
-        }
         backupProgress = "Cancelled"
+    }
+
+    /// Cancel this manager's current process tree and do not return until both
+    /// process-group cleanup and the operation completion callback have finished.
+    func cancelForApplicationTermination() async {
+        guard let activeOperationID = operationCoordinator.activeOperationID else { return }
+        cancelledOperationIDs.insert(activeOperationID)
+        lastOperationWasCancelled = true
+        lastError = nil
+        lastBackupFailure = nil
+
+        if let activeProcess {
+            await Shell.terminateAndWait(activeProcess)
+        }
+
+        guard operationCoordinator.activeOperationID != nil else { return }
+        await withCheckedContinuation { continuation in
+            applicationTerminationWaiters.append(continuation)
+        }
     }
 
     // MARK: - Backup Browsing
@@ -1022,10 +1152,8 @@ final class BackupManager: ObservableObject {
     /// Toggle backup encryption without leaking the password through the process
     /// argument list. idevicebackup2 reads the password from the BACKUP_PASSWORD
     /// environment variable, which - unlike an argv value - is not printed by
-    /// `ps -axww` (issue #39), so it is tried first. pymobiledevice3 only accepts
-    /// the password as a positional CLI argument, so the fallback below runs when
-    /// the idevicebackup2 attempt fails for any reason and briefly exposes the
-    /// secret to other local processes; the common success path never does.
+    /// `ps -axww`. pymobiledevice3 accepts these passwords only as positional CLI
+    /// arguments, so a failed secure invocation deliberately fails closed.
     private func setBackupEncryption(udid: String, enabled: Bool, password: String) async -> Bool {
         let mode = enabled ? "on" : "off"
         let result = await Shell.runAsync(
@@ -1033,14 +1161,16 @@ final class BackupManager: ObservableObject {
             arguments: ["-u", udid, "encryption", mode],
             extraEnvironment: ["BACKUP_PASSWORD": password]
         )
-        if result.succeeded { return true }
-        return await PyMobileDevice.setEncryption(enabled: enabled, password: password, udid: udid)
+        guard result.succeeded else {
+            lastError = "Could not change backup encryption without exposing the password on the command line. Ensure idevicebackup2 is installed and try again."
+            return false
+        }
+        return true
     }
 
-    /// Change the backup password. Passwords are passed to idevicebackup2 via the
-    /// BACKUP_PASSWORD / BACKUP_PASSWORD_NEW environment variables so they never
-    /// appear in the argument list (issue #39); the pymobiledevice3 argv path runs
-    /// only if that attempt fails and briefly exposes the secret via argv.
+    /// Change the backup password using idevicebackup2's environment-variable
+    /// interface. pymobiledevice3 only accepts both passwords in argv, so a
+    /// failure here is reported rather than falling back to an unsafe command.
     func changeEncryptionPassword(udid: String, oldPassword: String, newPassword: String) async -> Bool {
         let result = await Shell.runAsync(
             "idevicebackup2",
@@ -1050,8 +1180,11 @@ final class BackupManager: ObservableObject {
                 "BACKUP_PASSWORD_NEW": newPassword,
             ]
         )
-        if result.succeeded { return true }
-        return await PyMobileDevice.changeEncryptionPassword(oldPassword: oldPassword, newPassword: newPassword, udid: udid)
+        guard result.succeeded else {
+            lastError = "Could not change the backup password without exposing it on the command line. Ensure idevicebackup2 is installed and try again."
+            return false
+        }
+        return true
     }
 
     func isEncryptionEnabled(udid: String) async -> Bool {

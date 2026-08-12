@@ -103,7 +103,7 @@ struct AppManagerView: View {
     private var backupPicker: some View {
         Menu {
             ForEach(backupVM.backups) { backup in
-                Button("\(backup.displayName) • iOS \(backup.iosVersion) • \(backup.relativeDate)\(backup.isEncrypted ? " • Encrypted" : "")") {
+                Button("\(backup.deviceIdentityLabel) • iOS \(backup.iosVersion) • \(backup.relativeDate)\(backup.isEncrypted ? " • Encrypted" : "")") {
                     selectBackup(backup)
                 }
             }
@@ -113,7 +113,7 @@ struct AppManagerView: View {
             HStack(spacing: 6) {
                 Image(systemName: "externaldrive.fill")
                     .foregroundStyle(.secondary)
-                Text(backupVM.selectedBackup.map { "\($0.displayName) • \($0.relativeDate)" } ?? "Choose Backup")
+                Text(backupVM.selectedBackup.map { "\($0.deviceIdentityLabel) • \($0.relativeDate)" } ?? "Choose Backup")
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 9, weight: .semibold))

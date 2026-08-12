@@ -5,6 +5,7 @@ import SwiftUI
 struct DeviceCloneView: View {
 
     @EnvironmentObject var deviceVM: DeviceViewModel
+    @EnvironmentObject var backupVM: BackupViewModel
     @StateObject private var cloneService = DeviceCloneService()
     @State private var availableDevices: [(udid: String, name: String)] = []
     @State private var sourceUDID: String?
@@ -32,7 +33,7 @@ struct DeviceCloneView: View {
         } message: {
             let srcName = availableDevices.first(where: { $0.udid == sourceUDID })?.name ?? "Unknown"
             let dstName = availableDevices.first(where: { $0.udid == destinationUDID })?.name ?? "Unknown"
-            Text("This will create a full backup of \(srcName) and restore it to \(dstName). All data on the destination device will be replaced. The destination device will restart.")
+            Text("This will create a full backup of \(srcName) · ID …\(sourceUDID?.suffix(8) ?? "Unknown") and restore it to \(dstName) · ID …\(destinationUDID?.suffix(8) ?? "Unknown"). All data on the destination device will be replaced. The destination device will restart.")
         }
     }
 
@@ -247,6 +248,13 @@ struct DeviceCloneView: View {
                 .font(.system(size: 11))
                 .foregroundStyle(.orange)
 
+            if cloneService.phase == .backingUp {
+                Button("Cancel", role: .destructive) {
+                    cancelClone()
+                }
+                .buttonStyle(.bordered)
+            }
+
             Spacer()
         }
         .frame(maxWidth: .infinity)
@@ -326,10 +334,17 @@ struct DeviceCloneView: View {
         }
     }
 
+    private func cancelClone() {
+        cloneService.cancelClone()
+        if let sourceUDID {
+            backupVM.cancelBackup(udid: sourceUDID)
+        }
+    }
+
     private func startClone() {
         guard let src = sourceUDID, let dst = destinationUDID else { return }
         Task {
-            let _ = await cloneService.clone(sourceUDID: src, destinationUDID: dst)
+            let _ = await cloneService.clone(sourceUDID: src, destinationUDID: dst, backupViewModel: backupVM)
         }
     }
 }

@@ -67,8 +67,10 @@ struct BackupBrowserView: View {
                 ForEach(backupVM.backups) { backup in
                     Label {
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(backup.deviceName)
+                            Text(backup.deviceIdentityLabel)
                                 .font(.system(size: 12, weight: .medium))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
                             Text(backup.dateString)
                                 .font(.system(size: 10))
                                 .foregroundStyle(.secondary)
@@ -156,7 +158,7 @@ struct BackupBrowserView: View {
                 Text("Backup Browser")
                     .font(.title2.weight(.semibold))
                 if let backup = backupVM.selectedBackup {
-                    Text("\(backup.deviceName) — \(backup.dateString)")
+                    Text("\(backup.deviceIdentityLabel) — \(backup.dateString)")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }

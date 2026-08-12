@@ -1,7 +1,7 @@
 import Foundation
 
 /// Represents an iOS backup stored on disk.
-struct BackupInfo: Identifiable, Hashable {
+struct BackupInfo: Identifiable, Hashable, Sendable {
     let id: String // backup directory name (usually UDID or UDID+timestamp)
     let path: String
     let deviceName: String
@@ -30,6 +30,31 @@ struct BackupInfo: Identifiable, Hashable {
             lastBackupDate: lastBackupDate,
             isEncrypted: isEncrypted
         ).modelName
+    }
+
+    /// Short, stable discriminator. Prefer the authoritative backup UDID, then
+    /// fall back to its serial or backup-folder identity for incomplete metadata.
+    var shortUDID: String {
+        let source = !udid.isEmpty ? udid : (!serialNumber.isEmpty ? serialNumber : id)
+        guard !source.isEmpty else { return "Unknown" }
+        return String(source.suffix(8))
+    }
+
+    /// Shared user-facing identity for backup lists and pickers. The identifier
+    /// suffix keeps same-name, same-model backups visibly distinct without
+    /// exposing a complete hardware identifier throughout the UI.
+    var deviceIdentityLabel: String {
+        let identifier: String
+        if !udid.isEmpty {
+            identifier = "ID …\(shortUDID)"
+        } else if !serialNumber.isEmpty {
+            identifier = "Serial …\(shortUDID)"
+        } else if !id.isEmpty {
+            identifier = "Backup …\(shortUDID)"
+        } else {
+            identifier = "Unknown device ID"
+        }
+        return "\(deviceName) • \(modelName) • \(identifier)"
     }
 
     var dateString: String {

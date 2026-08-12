@@ -265,12 +265,80 @@ final class NotesExtractor {
 
     // MARK: - Search
 
-    func searchNotes(_ query: String) throws -> [Note] {
-        let allNotes = try getNotes()
-        let q = query.lowercased()
-        return allNotes.filter {
-            $0.title.lowercased().contains(q) || $0.snippet.lowercased().contains(q)
+    func searchNotes(_ query: String, limit: Int = 250) throws -> [Note] {
+        let tables = try db.tableNames()
+        let boundedLimit = max(1, min(limit, 1_000))
+        let pattern = SQLiteReader.containsPattern(query)
+
+        if tables.contains("ZICCLOUDSYNCINGOBJECT") {
+            let rows = try db.query("""
+                SELECT
+                    n.Z_PK,
+                    n.ZTITLE1,
+                    n.ZSNIPPET,
+                    n.ZCREATIONDATE3,
+                    n.ZMODIFICATIONDATE1,
+                    n.ZISPINNED,
+                    n.ZISPASSWORDPROTECTED,
+                    n.ZHASCHECKLIST,
+                    COALESCE(f.ZTITLE2, 'Notes') as folder_name
+                FROM ZICCLOUDSYNCINGOBJECT n
+                LEFT JOIN ZICCLOUDSYNCINGOBJECT f ON n.ZFOLDER = f.Z_PK
+                WHERE n.ZTITLE1 IS NOT NULL
+                  AND (n.ZTITLE1 LIKE ? ESCAPE '\\' COLLATE NOCASE OR n.ZSNIPPET LIKE ? ESCAPE '\\' COLLATE NOCASE)
+                ORDER BY n.ZMODIFICATIONDATE1 DESC
+                LIMIT \(boundedLimit)
+            """, params: [pattern, pattern])
+            return rows.compactMap { row in
+                guard let pk = row["Z_PK"] as? Int else { return nil }
+                return Note(
+                    id: pk,
+                    title: (row["ZTITLE1"] as? String) ?? "",
+                    snippet: (row["ZSNIPPET"] as? String) ?? "",
+                    htmlBody: nil,
+                    createdDate: (row["ZCREATIONDATE3"] as? Double).map { Date(timeIntervalSinceReferenceDate: $0) },
+                    modifiedDate: (row["ZMODIFICATIONDATE1"] as? Double).map { Date(timeIntervalSinceReferenceDate: $0) },
+                    folderName: (row["folder_name"] as? String) ?? "Notes",
+                    isPinned: (row["ZISPINNED"] as? Int) == 1,
+                    isLocked: (row["ZISPASSWORDPROTECTED"] as? Int) == 1,
+                    hasChecklist: (row["ZHASCHECKLIST"] as? Int) == 1
+                )
+            }
         }
+
+        if tables.contains("ZNOTEBODY") {
+            let rows = try db.query("""
+                SELECT
+                    n.Z_PK,
+                    n.ZTITLE,
+                    n.ZSUMMARY,
+                    n.ZCREATIONDATE,
+                    n.ZMODIFICATIONDATE,
+                    COALESCE(s.ZTITLE, 'Notes') as folder_name
+                FROM ZNOTE n
+                LEFT JOIN ZSTORE s ON n.ZSTORE = s.Z_PK
+                WHERE n.ZTITLE LIKE ? ESCAPE '\\' COLLATE NOCASE OR n.ZSUMMARY LIKE ? ESCAPE '\\' COLLATE NOCASE
+                ORDER BY n.ZMODIFICATIONDATE DESC
+                LIMIT \(boundedLimit)
+            """, params: [pattern, pattern])
+            return rows.compactMap { row in
+                guard let pk = row["Z_PK"] as? Int else { return nil }
+                return Note(
+                    id: pk,
+                    title: (row["ZTITLE"] as? String) ?? "",
+                    snippet: (row["ZSUMMARY"] as? String) ?? "",
+                    htmlBody: nil,
+                    createdDate: (row["ZCREATIONDATE"] as? Double).map { Date(timeIntervalSinceReferenceDate: $0) },
+                    modifiedDate: (row["ZMODIFICATIONDATE"] as? Double).map { Date(timeIntervalSinceReferenceDate: $0) },
+                    folderName: (row["folder_name"] as? String) ?? "Notes",
+                    isPinned: false,
+                    isLocked: false,
+                    hasChecklist: false
+                )
+            }
+        }
+
+        throw NotesError.unsupportedSchema(tables: tables)
     }
 
     // MARK: - Export

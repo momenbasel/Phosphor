@@ -3,6 +3,9 @@ import SwiftUI
 /// App settings: backup location, dependencies check, about.
 struct SettingsView: View {
 
+    @EnvironmentObject private var deviceVM: DeviceViewModel
+    @EnvironmentObject private var backupVM: BackupViewModel
+    @EnvironmentObject private var updateController: UpdateViewModel
     @AppStorage("phosphor.backupDirectory") private var backupDirectory = BackupManager.defaultBackupDir
     @State private var dependencyList: [DependencyItem] = []
     @State private var isCheckingDependencies = false
@@ -34,6 +37,7 @@ struct SettingsView: View {
         }
         .frame(width: 560, height: 460)
         .task {
+            scheduler.attachBackupViewModel(backupVM)
             await refreshDependencies()
         }
     }
@@ -156,7 +160,25 @@ struct SettingsView: View {
     private var backupScheduleTab: some View {
         Form {
             Section("Automatic Backups") {
+                ScheduledBackupDevicePicker(
+                    targetUDID: Binding(
+                        get: { scheduler.schedule.targetUDID },
+                        set: { targetUDID in
+                            let targetName = deviceVM.devices.first(where: { $0.id == targetUDID })?.name
+                            scheduler.selectSchedule(targetUDID: targetUDID, targetName: targetName)
+                        }
+                    ),
+                    targetName: $scheduler.schedule.targetName,
+                    devices: deviceVM.devices,
+                    wifiOnly: scheduler.schedule.wifiOnly
+                )
+
                 Toggle("Enable scheduled backups", isOn: $scheduler.schedule.enabled)
+                    .disabled(
+                        !scheduler.schedule.enabled &&
+                        scheduler.schedule.targetUDID == nil &&
+                        deviceVM.devices.count != 1
+                    )
 
                 if scheduler.schedule.enabled {
                     Picker("Frequency", selection: $scheduler.schedule.frequency) {
@@ -285,6 +307,21 @@ struct SettingsView: View {
             Text("Version \(AppVersion.current) (\(AppVersion.build))")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+
+            HStack(spacing: 8) {
+                Button("Check for Updates") {
+                    Task { await updateController.checkForUpdates() }
+                }
+                .disabled(updateController.isChecking)
+
+                if updateController.isChecking {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Checking…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
 
             Text("Free and open-source iOS device manager for macOS.\nBattery diagnostics, screen capture, location tools, and more.")
                 .font(.system(size: 13))
