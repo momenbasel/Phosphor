@@ -175,7 +175,9 @@ def test_backup_streaming_callers_are_timeout_bounded_and_cancelable(root: Path)
     assert "if operationCoordinator.activeOperationID == id" in swift_block_after(backup, "private func markOperationCancelled"), "stale cancelled operations should not overwrite current operation UI state"
     assert "backupCancelled" not in backup, "backup/restore cancellation must not use one shared mutable boolean"
     assert "lastError = nil" in swift_block_after(backup, "func cancelBackup()"), "cancelBackup should not report user cancellation as an error"
-    assert "Shell.terminate(activeProcess)" in backup, "cancelBackup should escalate termination for stuck subprocesses"
+    assert "await Shell.terminateAndWait(activeProcess)" in backup, (
+        "cancelBackup should escalate stuck subprocesses and await descendant cleanup before releasing ownership"
+    )
 
     backup_vm = read(root, "Sources/Phosphor/ViewModels/BackupViewModel.swift")
     assert "manager.lastOperationWasCancelled" in backup_vm, "each device activity should treat its own cancellation separately from failure"
