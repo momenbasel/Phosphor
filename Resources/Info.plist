@@ -4,6 +4,16 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>zh-Hans</string>
+		<string>ja</string>
+		<string>de</string>
+		<string>es</string>
+		<string>fr</string>
+		<string>ar</string>
+	</array>
 	<key>CFBundleDisplayName</key>
 	<string>Phosphor</string>
 	<key>CFBundleDocumentTypes</key>

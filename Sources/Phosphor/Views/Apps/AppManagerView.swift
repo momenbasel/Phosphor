@@ -59,7 +59,7 @@ struct AppManagerView: View {
 
             Picker("Source", selection: $activeTab) {
                 ForEach(AppTab.allCases, id: \.self) { tab in
-                    Text(tab.rawValue).tag(tab)
+                    Text(LocalizedStringKey(tab.rawValue)).tag(tab)
                 }
             }
             .pickerStyle(.segmented)

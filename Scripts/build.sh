@@ -66,6 +66,15 @@ cp "$PROJECT_DIR/Resources/Phosphor.entitlements" "$APP_BUNDLE/Contents/Resource
 # Include licenses for source incorporated into the release binary.
 cp "$PROJECT_DIR/THIRD_PARTY_NOTICES.md" "$APP_BUNDLE/Contents/Resources/"
 
+# SwiftUI's implicit LocalizedStringKey lookup uses Bundle.main. Copy the
+# .lproj directories into the app's main resources so runtime-created labels
+# and literal Text("...") values both resolve localized strings.
+for localization in "$PROJECT_DIR/Sources/Phosphor/Resources"/*.lproj; do
+    if [ -d "$localization" ]; then
+        cp -R "$localization" "$APP_BUNDLE/Contents/Resources/"
+    fi
+done
+
 # Copy SPM resource bundle (localization strings)
 # dirname, not "$BINARY_PATH/..": the latter traverses '..' through the binary
 # file itself (ENOTDIR), so the -d test always failed and the localization
