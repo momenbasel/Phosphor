@@ -71,11 +71,7 @@ final class BackupViewModel: ObservableObject {
     @Published var isUnlocking = false
 
     let backupManager = BackupManager()
-    private var queryStore: ManifestQueryStore?
-    /// Manifest of the currently-open backup, for views that need direct file
-    /// access (preview inspector). Access is serialized by the query store's
-    /// actor; read-only file reads are safe to run from the main actor.
-    private(set) var activeManifest: BackupManifest?
+    private(set) var queryStore: ManifestQueryStore?
     private var browserLoadTask: Task<Void, Never>?
     private var domainSizeTask: Task<Void, Never>?
     private var searchSizeTask: Task<Void, Never>?
@@ -519,7 +515,6 @@ final class BackupViewModel: ObservableObject {
         searchSizeTask = nil
         selectedBackup = nil
         queryStore = nil
-        activeManifest = nil
         browserDomains = []
         browserFiles = []
         currentDomain = nil
@@ -550,7 +545,6 @@ final class BackupViewModel: ObservableObject {
         }
         let store = ManifestQueryStore(manifest: manifest)
         queryStore = store
-        activeManifest = manifest
         selectedBackup = backup
 
         browserLoadTask?.cancel()
@@ -767,5 +761,14 @@ actor ManifestQueryStore {
     func resolveSizes(for slice: [BackupManifest.FileEntry]) throws -> [BackupManifest.FileEntry] {
         try Task.checkCancellation()
         return manifest.resolvingSizes(for: slice)
+    }
+
+    func readablePath(for entry: BackupManifest.FileEntry) throws -> String {
+        try Task.checkCancellation()
+        return try manifest.readablePath(for: entry)
+    }
+
+    func extractFile(_ entry: BackupManifest.FileEntry, to destination: String) throws {
+        try manifest.extractFile(entry, to: destination)
     }
 }

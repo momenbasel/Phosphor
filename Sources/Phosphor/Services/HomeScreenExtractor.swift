@@ -269,9 +269,9 @@ final class HomeScreenExtractor {
         static func decode(_ data: Data) -> Data? {
             guard data.count > 16 else { return nil }
             var candidates: [(w: Int, h: Int, offset: Int)] = []
-            for offset in stride(from: 0, through: 48, by: 4) {
-                let w = data.withUnsafeBytes { $0.load(fromByteOffset: offset, as: UInt32.self) }.littleEndian
-                let h = data.withUnsafeBytes { $0.load(fromByteOffset: offset + 4, as: UInt32.self) }.littleEndian
+            for offset in stride(from: 0, through: 48, by: 4) where offset + 8 <= data.count {
+                let w = data.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: offset, as: UInt32.self) }.littleEndian
+                let h = data.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: offset + 4, as: UInt32.self) }.littleEndian
                 guard (256...10000).contains(Int(w)), (256...10000).contains(Int(h)) else { continue }
                 let pixelBytes = Int(w) * Int(h) * 4
                 let dataOffset = data.count - pixelBytes

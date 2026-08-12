@@ -28,35 +28,62 @@ final class HomeScreenViewModel: ObservableObject {
 
     private var loadTask: Task<Void, Never>?
     private var loadedBackupPath: String?
+    private var loadGeneration = UUID()
 
     /// Load (or reload) the layout for a backup. Safe to call repeatedly —
     /// a second call for the same backup is a no-op.
     func load(for backup: BackupInfo) {
-        guard loadedBackupPath != backup.path, state.isLoading == false else { return }
+        if loadedBackupPath == backup.path {
+            switch state {
+            case .idle: break
+            case .loading, .loaded, .notFound, .failed: return
+            }
+        }
         loadTask?.cancel()
         loadedBackupPath = backup.path
+        let generation = UUID()
+        loadGeneration = generation
         state = .loading
         icons = [:]
+        names = [:]
+        webClipIcons = [:]
+        currentPage = 0
 
-        let appInfos = PlistParser.parseApplications(backup.path)
-        var nameMap: [String: String] = [:]
-        var placeholders: [String: Data] = [:]
-        for info in appInfos {
-            if let n = info.name { nameMap[info.bundleID] = n }
-            if let d = info.placeholderIconData { placeholders[info.bundleID] = d }
-        }
-        names = nameMap
-
+        let backupPath = backup.path
         loadTask = Task.detached(priority: .userInitiated) { [weak self] in
-            guard let self else { return }
+            let appInfos = PlistParser.parseApplications(backupPath)
+            var nameMap: [String: String] = [:]
+            var placeholders: [String: Data] = [:]
+            for info in appInfos {
+                if let n = info.name { nameMap[info.bundleID] = n }
+                if let d = info.placeholderIconData { placeholders[info.bundleID] = d }
+            }
+
             do {
-                let manifest = try BackupManifest(backupPath: backup.path)
+                let manifest = try BackupManifest(backupPath: backupPath)
                 let extractor = HomeScreenExtractor(manifest: manifest)
                 let layout = try extractor.extract()
                 if Task.isCancelled { return }
-                await MainActor.run { self.state = .loaded(layout) }
-                await self.resolveWebClipIcons(for: layout, extractor: extractor)
-                await self.resolveIcons(for: layout, placeholders: placeholders, names: nameMap)
+
+                let clipIcons = Self.loadWebClipIconData(layout: layout, extractor: extractor)
+                if Task.isCancelled { return }
+
+                let publishedNames = nameMap
+                await MainActor.run { [weak self] in
+                    guard let self, self.loadGeneration == generation else { return }
+                    self.names = publishedNames
+                    self.state = .loaded(layout)
+                    for (id, data) in clipIcons {
+                        if let image = NSImage(data: data) { self.webClipIcons[id] = image }
+                    }
+                }
+                guard let self else { return }
+                await self.resolveIcons(
+                    for: layout,
+                    placeholders: placeholders,
+                    names: nameMap,
+                    generation: generation
+                )
             } catch let error as HomeScreenExtractor.ExtractorError {
                 if Task.isCancelled { return }
                 let newState: HomeScreenViewModel.LoadState = {
@@ -65,11 +92,17 @@ final class HomeScreenViewModel: ObservableObject {
                     case .unreadable(let u): return .failed(u)
                     }
                 }()
-                await MainActor.run { self.state = newState }
+                await MainActor.run { [weak self] in
+                    guard let self, self.loadGeneration == generation else { return }
+                    self.state = newState
+                }
             } catch {
                 if Task.isCancelled { return }
                 let message = error.localizedDescription
-                await MainActor.run { self.state = .failed(message) }
+                await MainActor.run { [weak self] in
+                    guard let self, self.loadGeneration == generation else { return }
+                    self.state = .failed(message)
+                }
             }
         }
     }
@@ -81,7 +114,12 @@ final class HomeScreenViewModel: ObservableObject {
 
     // MARK: - Icon resolution
 
-    private func resolveIcons(for layout: HomeScreenLayout, placeholders: [String: Data], names: [String: String]) async {
+    private func resolveIcons(
+        for layout: HomeScreenLayout,
+        placeholders: [String: Data],
+        names: [String: String],
+        generation: UUID
+    ) async {
         let bundleIDs = collectBundleIDs(from: layout)
         // Resolve icons and App Store names in parallel, publishing each as
         // it lands. Names from Manifest.plist win; otherwise the iTunes
@@ -103,7 +141,9 @@ final class HomeScreenViewModel: ObservableObject {
                 }
             }
             for await (id, image, storeName) in group {
+                if Task.isCancelled { break }
                 await MainActor.run {
+                    guard self.loadGeneration == generation else { return }
                     if let image { self.icons[id] = image }
                     if let storeName, self.names[id] == nil { self.names[id] = storeName }
                 }
@@ -111,7 +151,7 @@ final class HomeScreenViewModel: ObservableObject {
         }
     }
 
-    private func collectBundleIDs(from layout: HomeScreenLayout) -> [String] {
+    private nonisolated func collectBundleIDs(from layout: HomeScreenLayout) -> [String] {
         var ids = Set<String>()
         func visit(_ items: [HomeScreenLayout.Item]) {
             for item in items {
@@ -131,9 +171,10 @@ final class HomeScreenViewModel: ObservableObject {
         return ids.sorted()
     }
 
-    /// Load web-clip icons (icon.png inside each .webclip folder). Runs off
-    /// main; publishes each icon as it decodes.
-    private func resolveWebClipIcons(for layout: HomeScreenLayout, extractor: HomeScreenExtractor) async {
+    private nonisolated static func loadWebClipIconData(
+        layout: HomeScreenLayout,
+        extractor: HomeScreenExtractor
+    ) -> [String: Data] {
         var clipIDs = Set<String>()
         func visit(_ items: [HomeScreenLayout.Item]) {
             for item in items {
@@ -147,16 +188,10 @@ final class HomeScreenViewModel: ObservableObject {
         layout.pages.forEach { visit($0.items) }
         visit(layout.dock)
 
+        var icons: [String: Data] = [:]
         for id in clipIDs {
-            guard let data = extractor.webClipIcon(id: id), let image = NSImage(data: data) else { continue }
-            webClipIcons[id] = image
+            if let data = extractor.webClipIcon(id: id) { icons[id] = data }
         }
-    }
-}
-
-private extension HomeScreenViewModel.LoadState {
-    var isLoading: Bool {
-        if case .loading = self { return true }
-        return false
+        return icons
     }
 }

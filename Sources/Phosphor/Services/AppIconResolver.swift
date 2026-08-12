@@ -129,7 +129,8 @@ actor AppIconResolver {
     /// Fetch app artwork + trackName via iTunes Lookup. Returns nil on any
     /// failure so callers fall through to the monogram tier.
     private static func fetchArtwork(bundleID: String) async -> (image: NSImage, name: String?)? {
-        guard let url = URL(string: "https://itunes.apple.com/lookup?bundleId=\(bundleID)") else { return nil }
+        guard let encoded = bundleID.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(.init(charactersIn: ".-"))),
+              let url = URL(string: "https://itunes.apple.com/lookup?bundleId=\(encoded)") else { return nil }
         guard let (data, _) = try? await URLSession.shared.data(from: url),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let results = json["results"] as? [[String: Any]],

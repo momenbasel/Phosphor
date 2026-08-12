@@ -200,8 +200,8 @@ struct BackupBrowserView: View {
                 if showInspector,
                    selectedFileIDs.count == 1,
                    let selection = visibleFiles.first(where: { selectedFileIDs.contains($0.id) }),
-                   let manifest = backupVM.activeManifest {
-                    FilePreviewPane(entry: selection, manifest: manifest)
+                   let store = backupVM.queryStore {
+                    FilePreviewPane(entry: selection, store: store)
                 }
             }
         }
