@@ -123,3 +123,10 @@
 "browser.preview" = "تبديل المعاينة";
 "browser.extract" = "استخراج";
 
+/* مواقع النسخ الاحتياطي على الشبكة */
+"Use as Network Location" = "استخدام كموقع شبكة";
+"Stop Treating as Network Location" = "إيقاف التعامل معه كموقع شبكة";
+"Local backup location" = "موقع نسخ احتياطي محلي";
+"Network backup location available" = "موقع النسخ الاحتياطي على الشبكة متاح";
+"Network backup location offline" = "موقع النسخ الاحتياطي على الشبكة غير متصل";
+"Network backup location needs attention" = "موقع النسخ الاحتياطي على الشبكة يحتاج إلى الانتباه";

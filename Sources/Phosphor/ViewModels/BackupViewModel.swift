@@ -159,6 +159,7 @@ final class BackupViewModel: ObservableObject {
         }
 
         UserDefaults.standard.set(target, forKey: BackupManager.backupDirectoryUserDefaultsKey)
+        BackupLocationMonitor.backupDirectoryDidChange(to: target)
         loadBackups()
         if backups.isEmpty {
             alertMessage = loadError ?? "No backups found in \(target)."
@@ -472,7 +473,7 @@ final class BackupViewModel: ObservableObject {
         do {
             let request = recoveryRequest(for: issue)
             let recoveryRoot = (path as NSString).deletingLastPathComponent
-            try BackupManager.deleteIncompleteBackup(for: udid, expectedPath: path, in: recoveryRoot)
+            try await BackupManager.deleteIncompleteBackup(for: udid, expectedPath: path, in: recoveryRoot)
             backupIssue = nil
             loadBackups()
             await createBackup(
@@ -711,9 +712,9 @@ final class BackupViewModel: ObservableObject {
         }
     }
 
-    func deleteBackup(_ backup: BackupInfo) {
+    func deleteBackup(_ backup: BackupInfo) async {
         do {
-            try backupManager.deleteBackup(backup)
+            try await backupManager.deleteBackup(backup)
             loadBackups()
         } catch {
             alertMessage = "Failed to delete: \(error.localizedDescription)"

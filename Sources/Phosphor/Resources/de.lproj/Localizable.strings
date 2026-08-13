@@ -64,3 +64,10 @@
 "browser.preview" = "Vorschau ein-/ausblenden";
 "browser.extract" = "Extrahieren";
 
+/* Netzwerk-Backup-Speicherorte */
+"Use as Network Location" = "Als Netzwerkspeicherort verwenden";
+"Stop Treating as Network Location" = "Nicht mehr als Netzwerkspeicherort behandeln";
+"Local backup location" = "Lokaler Backup-Speicherort";
+"Network backup location available" = "Netzwerk-Backup-Speicherort verfügbar";
+"Network backup location offline" = "Netzwerk-Backup-Speicherort offline";
+"Network backup location needs attention" = "Netzwerk-Backup-Speicherort erfordert Aufmerksamkeit";

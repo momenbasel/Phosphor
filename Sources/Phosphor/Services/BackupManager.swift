@@ -433,7 +433,12 @@ final class BackupManager: ObservableObject {
         }
     }
 
-    static func deleteIncompleteBackup(for udid: String, expectedPath: String? = nil, in directory: String? = nil) throws {
+    static func deleteIncompleteBackup(
+        for udid: String,
+        expectedPath: String? = nil,
+        in requestedDirectory: String? = nil
+    ) async throws {
+        let directory = requestedDirectory ?? activeBackupDir
         guard case .incomplete(let path) = backupMetadataHealth(for: udid, in: directory) else { return }
         if let expectedPath, (expectedPath as NSString).standardizingPath != (path as NSString).standardizingPath {
             throw NSError(domain: "Phosphor.Backup", code: 1, userInfo: [
@@ -458,6 +463,14 @@ final class BackupManager: ObservableObject {
         guard incompleteBackupHasKnownMarkers(path) else {
             throw NSError(domain: "Phosphor.Backup", code: 4, userInfo: [
                 NSLocalizedDescriptionKey: "Refusing to delete \(path) because it does not contain recognizable iOS backup metadata. Delete it manually if you are sure it is safe."
+            ])
+        }
+
+        let locationPreflight = await BackupLocationMonitor.preflightForWrite(path: directory)
+        guard locationPreflight.canWrite else {
+            throw NSError(domain: "Phosphor.BackupLocation", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: locationPreflight.message
+                    ?? "The backup location is unavailable. Reconnect it and try again."
             ])
         }
 
@@ -538,7 +551,25 @@ final class BackupManager: ObservableObject {
 
         // Preflight: bail early with a clear message when the directory is unreadable
         // (most commonly a Full Disk Access grant missing on the default location).
-        let preflight = Self.validateBackupDirectory(backupRoot)
+        let locationPreflight = await BackupLocationMonitor.preflightForWrite(path: backupRoot)
+        if !locationPreflight.canWrite {
+            finishOperation(operationID)
+            backupProgress = locationPreflight.status == .offline ? "Network backup location offline" : "Backup failed"
+            lastError = locationPreflight.message
+            lastBackupFailure = BackupFailure(
+                title: locationPreflight.status == .offline ? "Network Backup Location Offline" : "Backup Folder Not Accessible",
+                message: locationPreflight.message ?? "Phosphor cannot safely write to the selected backup folder.",
+                technicalDetails: backupRoot,
+                recoveryAction: .openBackupSettings,
+                udid: udid,
+                recoveryPath: backupRoot
+            )
+            onProgress(lastError ?? "Backup directory is not accessible.")
+            return false
+        }
+        let preflight = locationPreflight.status == .available
+            ? (ok: true, reason: nil)
+            : Self.validateBackupDirectory(backupRoot)
         if !preflight.ok {
             finishOperation(operationID)
             backupProgress = "Backup failed"
@@ -576,6 +607,15 @@ final class BackupManager: ObservableObject {
             return false
         }
 
+        let primaryLocationPreflight = await BackupLocationMonitor.preflightForWrite(path: backupRoot)
+        guard primaryLocationPreflight.canWrite else {
+            finishOperation(operationID)
+            backupProgress = primaryLocationPreflight.status == .offline ? "Network backup location offline" : "Backup failed"
+            lastError = primaryLocationPreflight.message
+            onProgress(lastError ?? "Backup directory is not accessible.")
+            return false
+        }
+
         // Primary: pymobiledevice3
         let pySuccess = await createBackupViaPymobiledevice(
             udid: udid,
@@ -598,6 +638,15 @@ final class BackupManager: ObservableObject {
         // Fallback: idevicebackup2
         backupProgress = "Backing up..."
         onProgress("Backing up")
+
+        let fallbackLocationPreflight = await BackupLocationMonitor.preflightForWrite(path: backupRoot)
+        guard fallbackLocationPreflight.canWrite else {
+            finishOperation(operationID)
+            backupProgress = fallbackLocationPreflight.status == .offline ? "Network backup location offline" : "Backup failed"
+            lastError = fallbackLocationPreflight.message
+            onProgress(lastError ?? "Backup directory is not accessible.")
+            return false
+        }
 
         let args = idevicebackupArguments(udid: udid, directory: backupRoot, full: true, preferNetwork: preferNetwork)
         var idevicebackupStderr = ""
@@ -781,7 +830,25 @@ final class BackupManager: ObservableObject {
         lastError = nil
         lastBackupFailure = nil
 
-        let preflight = Self.validateBackupDirectory(backupRoot)
+        let locationPreflight = await BackupLocationMonitor.preflightForWrite(path: backupRoot)
+        if !locationPreflight.canWrite {
+            finishOperation(operationID)
+            backupProgress = locationPreflight.status == .offline ? "Network backup location offline" : "Backup failed"
+            lastError = locationPreflight.message
+            lastBackupFailure = BackupFailure(
+                title: locationPreflight.status == .offline ? "Network Backup Location Offline" : "Backup Folder Not Accessible",
+                message: locationPreflight.message ?? "Phosphor cannot safely write to the selected backup folder.",
+                technicalDetails: backupRoot,
+                recoveryAction: .openBackupSettings,
+                udid: udid,
+                recoveryPath: backupRoot
+            )
+            onProgress(lastError ?? "Backup directory is not accessible.")
+            return false
+        }
+        let preflight = locationPreflight.status == .available
+            ? (ok: true, reason: nil)
+            : Self.validateBackupDirectory(backupRoot)
         if !preflight.ok {
             finishOperation(operationID)
             backupProgress = "Backup failed"
@@ -836,6 +903,15 @@ final class BackupManager: ObservableObject {
             return false
         }
 
+        let primaryLocationPreflight = await BackupLocationMonitor.preflightForWrite(path: backupRoot)
+        guard primaryLocationPreflight.canWrite else {
+            finishOperation(operationID)
+            backupProgress = primaryLocationPreflight.status == .offline ? "Network backup location offline" : "Backup failed"
+            lastError = primaryLocationPreflight.message
+            onProgress(lastError ?? "Backup directory is not accessible.")
+            return false
+        }
+
         // Primary: pymobiledevice3 (without --full flag)
         if PyMobileDevice.available() {
             let success = await createBackupViaPymobiledevice(
@@ -859,6 +935,14 @@ final class BackupManager: ObservableObject {
         var idevicebackupStderr = ""
 
         // Fallback: idevicebackup2
+        let fallbackLocationPreflight = await BackupLocationMonitor.preflightForWrite(path: backupRoot)
+        guard fallbackLocationPreflight.canWrite else {
+            finishOperation(operationID)
+            backupProgress = fallbackLocationPreflight.status == .offline ? "Network backup location offline" : "Backup failed"
+            lastError = fallbackLocationPreflight.message
+            onProgress(lastError ?? "Backup directory is not accessible.")
+            return false
+        }
         return await withCheckedContinuation { continuation in
             guard !operationWasCancelled(operationID) else {
                 markOperationCancelled(operationID)
@@ -1197,7 +1281,23 @@ final class BackupManager: ObservableObject {
 
     // MARK: - Cleanup
 
-    func deleteBackup(_ backup: BackupInfo) throws {
+    func deleteBackup(_ backup: BackupInfo) async throws {
+        let backupPath = URL(fileURLWithPath: backup.path).standardizedFileURL.path
+        let backupRoot = URL(fileURLWithPath: backupPath)
+            .deletingLastPathComponent()
+            .standardizedFileURL.path
+        guard backupPath != backupRoot else {
+            throw NSError(domain: "Phosphor.Backup", code: 5, userInfo: [
+                NSLocalizedDescriptionKey: "Refusing to delete an unexpected backup path: \(backup.path)"
+            ])
+        }
+        let locationPreflight = await BackupLocationMonitor.preflightForWrite(path: backupRoot)
+        guard locationPreflight.canWrite else {
+            throw NSError(domain: "Phosphor.BackupLocation", code: 2, userInfo: [
+                NSLocalizedDescriptionKey: locationPreflight.message
+                    ?? "The backup location is unavailable. Reconnect it and try again."
+            ])
+        }
         try FileManager.default.removeItem(atPath: backup.path)
         backups.removeAll { $0.id == backup.id }
     }

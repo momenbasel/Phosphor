@@ -343,3 +343,11 @@
 /* About */
 "Free and open-source iOS device manager for macOS.\nBattery diagnostics, screen capture, location tools, and more." = "适用于 macOS 的免费开源 iOS 设备管理工具。\n提供电池诊断、屏幕录制、位置工具等功能。";
 "Built with pymobiledevice3 and SwiftUI" = "基于 pymobiledevice3 和 SwiftUI 构建";
+
+/* 网络备份位置 */
+"Use as Network Location" = "用作网络位置";
+"Stop Treating as Network Location" = "不再视为网络位置";
+"Local backup location" = "本地备份位置";
+"Network backup location available" = "网络备份位置可用";
+"Network backup location offline" = "网络备份位置离线";
+"Network backup location needs attention" = "网络备份位置需要处理";

@@ -64,3 +64,10 @@
 "browser.preview" = "Afficher/masquer l'aperçu";
 "browser.extract" = "Extraire";
 
+/* Emplacements de sauvegarde réseau */
+"Use as Network Location" = "Utiliser comme emplacement réseau";
+"Stop Treating as Network Location" = "Ne plus traiter comme emplacement réseau";
+"Local backup location" = "Emplacement de sauvegarde local";
+"Network backup location available" = "Emplacement de sauvegarde réseau disponible";
+"Network backup location offline" = "Emplacement de sauvegarde réseau hors ligne";
+"Network backup location needs attention" = "L’emplacement de sauvegarde réseau nécessite votre attention";

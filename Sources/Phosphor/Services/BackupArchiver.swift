@@ -160,6 +160,12 @@ enum BackupArchiver {
         }
         let fm = FileManager.default
 
+        let locationPreflight = await BackupLocationMonitor.preflightForWrite(path: destination)
+        guard locationPreflight.canWrite else {
+            onProgress("Import failed: \(locationPreflight.message ?? "backup destination is unavailable")")
+            return nil
+        }
+
         guard let entries = await archiveEntries(at: archivePath), !entries.isEmpty else {
             onProgress("Import failed: archive could not be read")
             return nil
@@ -169,12 +175,24 @@ enum BackupArchiver {
             return nil
         }
 
-        // Ensure destination exists
-        do {
-            try fm.createDirectory(atPath: destination, withIntermediateDirectories: true)
-        } catch {
-            onProgress("Import failed: could not create backup directory: \(error.localizedDescription)")
+        // Recheck immediately before the first destination mutation. A network
+        // share can disappear while the archive listing is being validated.
+        let createPreflight = await BackupLocationMonitor.preflightForWrite(path: destination)
+        guard createPreflight.canWrite else {
+            onProgress("Import failed: \(createPreflight.message ?? "backup destination became unavailable")")
             return nil
+        }
+
+        // A designated network directory must already exist. Never recreate a
+        // missing /Volumes path after an unmount; that could redirect writes to
+        // the Mac's internal disk. Local destinations retain the old behavior.
+        if createPreflight.status == .local {
+            do {
+                try fm.createDirectory(atPath: destination, withIntermediateDirectories: true)
+            } catch {
+                onProgress("Import failed: could not create backup directory: \(error.localizedDescription)")
+                return nil
+            }
         }
 
         // Snapshot existing directories BEFORE extraction to detect new ones
@@ -187,11 +205,25 @@ enum BackupArchiver {
 
         onProgress("Extracting backup archive...")
 
+        let extractionPreflight = await BackupLocationMonitor.preflightForWrite(path: destination)
+        guard extractionPreflight.canWrite else {
+            onProgress("Import failed: \(extractionPreflight.message ?? "backup destination became unavailable")")
+            return nil
+        }
+
         let result = await Shell.runAsync(
             "tar",
             arguments: ["-xzf", archivePath, "-C", destination],
             timeout: 600
         )
+
+        // The share can disappear or be replaced while tar is running. Do not
+        // inspect or roll back paths on a destination whose identity changed.
+        let postExtractionPreflight = await BackupLocationMonitor.preflightForWrite(path: destination)
+        guard postExtractionPreflight.canWrite else {
+            onProgress("Import failed: \(postExtractionPreflight.message ?? "backup destination became unavailable during extraction")")
+            return nil
+        }
 
         if result.succeeded {
             onProgress("Import complete")

@@ -90,7 +90,7 @@ struct BackupListView: View {
             Button("Cancel", role: .cancel) {}
             Button("Delete", role: .destructive) {
                 if let backup = backupToDelete {
-                    backupVM.deleteBackup(backup)
+                    Task { await backupVM.deleteBackup(backup) }
                 }
             }
         } message: {

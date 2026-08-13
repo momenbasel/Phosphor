@@ -332,6 +332,21 @@ final class BackupScheduler: ObservableObject {
         ) else { return }
         isRunningScheduledBackup = true
 
+        let backupRoot = BackupManager.activeBackupDir
+        let locationPreflight = await BackupLocationMonitor.preflightForWrite(path: backupRoot)
+        if ScheduledNetworkBackupPolicy.shouldKeepScheduleDue(for: locationPreflight.status) {
+            guard var updated = currentScheduleForCompletion(
+                runSchedule,
+                requiresActiveMonitoring: requiresActiveMonitoring,
+                runID: runID
+            ) else { return }
+            let failure = locationPreflight.message ?? "Waiting for network backup location"
+            updated.lastResult = "Waiting for network backup location: \(failure)"
+            storeSchedule(updated, replacingTargetUDID: runSchedule.targetUDID)
+            addLog("Waiting for network backup location: \(failure)", success: false)
+            return
+        }
+
         let discovery = await findTargetDevice(for: runSchedule)
         guard isScheduledRunStillValid(
             runSchedule,

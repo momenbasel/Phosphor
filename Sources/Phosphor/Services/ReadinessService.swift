@@ -127,7 +127,7 @@ enum ReadinessService {
 
         var items: [ReadinessItem] = []
         items.append(toolReadinessItem(dependencyMap))
-        items.append(backupFolderItem(path: backupDirectory))
+        items.append(await backupFolderItem(path: backupDirectory))
         if let warning = BackupManager.backupDirectoryWarning(for: backupDirectory) {
             items.append(ReadinessItem(
                 title: "Backup Folder Warning",
@@ -197,9 +197,37 @@ enum ReadinessService {
         )
     }
 
-    @MainActor
-    private static func backupFolderItem(path: String) -> ReadinessItem {
-        let validation = BackupManager.validateBackupDirectory(path, createIfMissing: false)
+    private static func backupFolderItem(path: String) async -> ReadinessItem {
+        let locationPreflight = await BackupLocationMonitor.preflightForWrite(path: path)
+        if locationPreflight.status == .offline {
+            return ReadinessItem(
+                title: "Network Backup Location",
+                detail: locationPreflight.message ?? "The saved network backup location is offline.",
+                status: .warning,
+                recoveryAction: "Reconnect or mount the saved network volume. Phosphor will refresh automatically when it returns.",
+                technicalDetail: path
+            )
+        }
+        if locationPreflight.status == .invalid {
+            return ReadinessItem(
+                title: "Backup Folder",
+                detail: locationPreflight.message ?? "The active backup folder is not safe to use.",
+                status: .blocked,
+                recoveryAction: "Open Settings and choose the folder again before writing backups.",
+                technicalDetail: path
+            )
+        }
+        if locationPreflight.status == .available {
+            return ReadinessItem(
+                title: "Network Backup Location",
+                detail: "The saved network backup location is mounted, readable, and writable.",
+                status: .ready,
+                technicalDetail: path
+            )
+        }
+        let validation = await MainActor.run {
+            BackupManager.validateBackupDirectory(path, createIfMissing: false)
+        }
         if validation.ok {
             return ReadinessItem(
                 title: "Backup Folder",

@@ -64,3 +64,10 @@
 "browser.preview" = "プレビュー表示切替";
 "browser.extract" = "抽出";
 
+/* ネットワークバックアップ先 */
+"Use as Network Location" = "ネットワーク保存先として使用";
+"Stop Treating as Network Location" = "ネットワーク保存先としての使用を解除";
+"Local backup location" = "ローカルバックアップ先";
+"Network backup location available" = "ネットワークバックアップ先を利用できます";
+"Network backup location offline" = "ネットワークバックアップ先はオフラインです";
+"Network backup location needs attention" = "ネットワークバックアップ先を確認してください";

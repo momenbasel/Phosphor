@@ -5,10 +5,12 @@ struct SettingsView: View {
 
     @EnvironmentObject private var deviceVM: DeviceViewModel
     @EnvironmentObject private var backupVM: BackupViewModel
+    @EnvironmentObject private var backupLocationMonitor: BackupLocationMonitor
     @EnvironmentObject private var updateController: UpdateViewModel
     @AppStorage("phosphor.backupDirectory") private var backupDirectory = BackupManager.defaultBackupDir
     @State private var dependencyList: [DependencyItem] = []
     @State private var isCheckingDependencies = false
+    @State private var networkLocationError: String?
     @AppStorage("phosphor.autoRefreshInterval") private var autoRefreshInterval: Double = 4.0
 
     @StateObject private var scheduler = BackupScheduler()
@@ -77,7 +79,35 @@ struct SettingsView: View {
                     Button("Use Apple MobileSync directory") {
                         backupDirectory = BackupManager.systemMobileSyncDir
                     }
+                    if backupLocationMonitor.isDesignatedNetworkLocation {
+                        Button("Stop Treating as Network Location") {
+                            backupLocationMonitor.clearDesignation()
+                        }
+                    } else {
+                        Button("Use as Network Location") {
+                            Task {
+                                do {
+                                    try await backupLocationMonitor.designateCurrentPath(backupDirectory)
+                                    networkLocationError = nil
+                                } catch {
+                                    networkLocationError = error.localizedDescription
+                                }
+                            }
+                        }
+                    }
                     Spacer()
+                }
+
+                if backupLocationMonitor.status != .local {
+                    Label(networkLocationStatusText, systemImage: networkLocationStatusIcon)
+                        .font(.system(size: 11))
+                        .foregroundStyle(networkLocationStatusColor)
+                }
+
+                if let networkLocationError {
+                    Text(networkLocationError)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.red)
                 }
 
                 Text("Default: ~/Documents/Phosphor Backups (no special permission required).")
@@ -153,6 +183,36 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
+        .onChange(of: backupDirectory) { _, newPath in
+            BackupLocationMonitor.backupDirectoryDidChange(to: newPath)
+            backupLocationMonitor.refresh(path: newPath)
+        }
+    }
+
+    private var networkLocationStatusText: String {
+        switch backupLocationMonitor.status {
+        case .local: return "Local backup location"
+        case .available: return "Network backup location available"
+        case .offline: return backupLocationMonitor.message ?? "Network backup location offline"
+        case .invalid: return backupLocationMonitor.message ?? "Network backup location needs attention"
+        }
+    }
+
+    private var networkLocationStatusIcon: String {
+        switch backupLocationMonitor.status {
+        case .available: return "network.badge.shield.half.filled"
+        case .offline: return "network.slash"
+        case .invalid: return "exclamationmark.triangle"
+        case .local: return "internaldrive"
+        }
+    }
+
+    private var networkLocationStatusColor: Color {
+        switch backupLocationMonitor.status {
+        case .available: return .green
+        case .offline, .invalid: return .orange
+        case .local: return .secondary
+        }
     }
 
     // MARK: - Backup Schedule

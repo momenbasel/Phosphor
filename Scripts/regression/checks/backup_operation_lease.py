@@ -78,7 +78,8 @@ def test_backup_root_snapshot_survives_settings_change_through_fallback_and_fina
         assert body.index("beginCancellableOperation(udid: udid)") < body.index("let backupRoot = Self.activeBackupDir"), (
             f"{mode} backup must snapshot root only after obtaining device ownership"
         )
-        assert "Self.validateBackupDirectory(backupRoot)" in body, f"{mode} preflight must use the snapshot"
+        assert "Self.validateBackupDirectory(backupRoot)" in body, f"{mode} local preflight must use the snapshot"
+        assert "BackupLocationMonitor.preflightForWrite(path: backupRoot)" in body, f"{mode} network preflight must use the snapshot"
         assert "Self.backupMetadataHealth(for: udid, in: backupRoot)" in body, f"{mode} metadata lookup must use the snapshot"
         assert "finalizeSuccessfulBackup(udid: udid, directory: backupRoot" in body, f"{mode} verification/finalization must use the snapshot"
         assert "idevicebackupArguments(udid: udid, directory: backupRoot, full:" in body, f"{mode} fallback arguments must use the snapshot"

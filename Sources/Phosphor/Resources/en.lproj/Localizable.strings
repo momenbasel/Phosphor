@@ -156,6 +156,14 @@
 "browser.preview" = "Toggle Preview";
 "browser.extract" = "Extract";
 
+/* Network backup locations */
+"Use as Network Location" = "Use as Network Location";
+"Stop Treating as Network Location" = "Stop Treating as Network Location";
+"Local backup location" = "Local backup location";
+"Network backup location available" = "Network backup location available";
+"Network backup location offline" = "Network backup location offline";
+"Network backup location needs attention" = "Network backup location needs attention";
+
 /* Welcome */
 "welcome.title" = "Welcome to Phosphor";
 "welcome.subtitle" = "Connect an iOS device or select a section from the sidebar.";

@@ -25,6 +25,18 @@ final class NativeBackupService: ObservableObject {
         progress = "Starting native backup..."
         lastError = nil
 
+        let backupRoot = BackupManager.activeBackupDir
+        let locationPreflight = await BackupLocationMonitor.preflightForWrite(path: backupRoot)
+        guard locationPreflight.canWrite else {
+            isRunning = false
+            progress = locationPreflight.status == .offline
+                ? "Network backup location offline"
+                : "Backup failed"
+            lastError = locationPreflight.message
+            onProgress(lastError ?? "Backup directory is not accessible.")
+            return false
+        }
+
         // Method 1: Use Apple's internal backuptool2 via MobileDevice.framework
         // The framework exposes _runBackupTool which drives the backup
         // We call it indirectly through the higher-level Python/ObjC bridge
@@ -38,7 +50,11 @@ final class NativeBackupService: ObservableObject {
         }
 
         // Method 3: Direct dylib call to AMSBackupWithOptions
-        let nativeResult = await callNativeBackup(udid: udid, onProgress: onProgress)
+        let nativeResult = await callNativeBackup(
+            udid: udid,
+            backupRoot: backupRoot,
+            onProgress: onProgress
+        )
         if nativeResult {
             isRunning = false
             progress = "Backup complete"
@@ -46,7 +62,11 @@ final class NativeBackupService: ObservableObject {
         }
 
         // Method 4: Use pymobiledevice3 (Python, supports latest iOS)
-        let pyResult = await pymobiledeviceBackup(udid: udid, onProgress: onProgress)
+        let pyResult = await pymobiledeviceBackup(
+            udid: udid,
+            backupRoot: backupRoot,
+            onProgress: onProgress
+        )
 
         isRunning = false
         if pyResult {
@@ -87,7 +107,11 @@ final class NativeBackupService: ObservableObject {
 
     // MARK: - Method 2: Native MobileDevice.framework call
 
-    private func callNativeBackup(udid: String, onProgress: @escaping (String) -> Void) async -> Bool {
+    private func callNativeBackup(
+        udid: String,
+        backupRoot: String,
+        onProgress: @escaping (String) -> Void
+    ) async -> Bool {
         onProgress("Attempting native MobileDevice backup...")
 
         // Use dlopen to load MobileDevice.framework and call AMSBackupWithOptions
@@ -111,10 +135,6 @@ final class NativeBackupService: ObservableObject {
         //                          void *callbackCtx, AMSBackupCallback callback)
         // The callback receives progress updates.
 
-        // For safety, we use the CLI wrapper approach instead of raw function pointer casting
-        // Apple ships a backup tool that uses this framework internally
-        let backupDir = BackupManager.activeBackupDir
-
         // Try using Apple's internal backup tool path
         let toolPaths = [
             "/System/Library/PrivateFrameworks/MobileDevice.framework/Versions/Current/AppleMobileDeviceHelper.app/Contents/MacOS/AppleMobileDeviceHelper",
@@ -124,7 +144,17 @@ final class NativeBackupService: ObservableObject {
 
         for toolPath in toolPaths {
             if FileManager.default.fileExists(atPath: toolPath) {
-                let result = await Shell.runAsync(toolPath, arguments: ["backup", udid, backupDir], timeout: 3600)
+                let locationPreflight = await BackupLocationMonitor.preflightForWrite(path: backupRoot)
+                guard locationPreflight.canWrite else {
+                    lastError = locationPreflight.message
+                    onProgress(lastError ?? "Backup directory is not accessible.")
+                    return false
+                }
+                let result = await Shell.runAsync(
+                    toolPath,
+                    arguments: ["backup", udid, backupRoot],
+                    timeout: 3600
+                )
                 if result.succeeded { return true }
             }
         }
@@ -134,7 +164,11 @@ final class NativeBackupService: ObservableObject {
 
     // MARK: - Method 3: pymobiledevice3
 
-    private func pymobiledeviceBackup(udid: String, onProgress: @escaping (String) -> Void) async -> Bool {
+    private func pymobiledeviceBackup(
+        udid: String,
+        backupRoot: String,
+        onProgress: @escaping (String) -> Void
+    ) async -> Bool {
         onProgress("Backing up")
 
         guard PyMobileDevice.available() else {
@@ -148,8 +182,16 @@ final class NativeBackupService: ObservableObject {
 
         onProgress("Backing up")
 
-        let backupDir = BackupManager.activeBackupDir
-        let result = await PyMobileDevice.runAsync(["backup2", "backup", "--udid", udid, "--full", backupDir], timeout: 3600)
+        let locationPreflight = await BackupLocationMonitor.preflightForWrite(path: backupRoot)
+        guard locationPreflight.canWrite else {
+            lastError = locationPreflight.message
+            onProgress(lastError ?? "Backup directory is not accessible.")
+            return false
+        }
+        let result = await PyMobileDevice.runAsync(
+            ["backup2", "backup", "--udid", udid, "--full", backupRoot],
+            timeout: 3600
+        )
 
         if result.succeeded {
             return true

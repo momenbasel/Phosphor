@@ -48,6 +48,7 @@ struct PhosphorApp: App {
     @StateObject private var messageVM = MessageViewModel()
     @StateObject private var whatsAppVM = WhatsAppViewModel()
     @StateObject private var scheduler = BackupScheduler()
+    @StateObject private var backupLocationMonitor = BackupLocationMonitor()
     @StateObject private var updateController = UpdateViewModel()
     @AppStorage("phosphor.hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @State private var selectedSection: SidebarSection? = .devices
@@ -68,6 +69,7 @@ struct PhosphorApp: App {
                 .environmentObject(updateController)
                 .environmentObject(messageVM)
                 .environmentObject(whatsAppVM)
+                .environmentObject(backupLocationMonitor)
                 .frame(minWidth: 960, minHeight: 640)
                 .onAppear {
                     // Register scheduled/background ownership before the delayed
@@ -75,12 +77,22 @@ struct PhosphorApp: App {
                     // that delay must not terminate an app with enabled schedules.
                     scheduler.attachBackupViewModel(backupVM)
                     scheduler.startMonitoring()
+                    backupLocationMonitor.start()
                     Task {
                         // Let SwiftUI paint the first window before starting
                         // device polling and backup discovery work.
                         try? await Task.sleep(for: .milliseconds(750))
                         deviceVM.deviceManager.startPolling(interval: 4.0)
                         backupVM.loadBackups()
+                    }
+                }
+                .onReceive(backupLocationMonitor.$status.removeDuplicates()) { status in
+                    backupVM.loadBackups()
+                    Task {
+                        await deviceVM.refreshReadiness()
+                        if status == .available {
+                            await scheduler.checkAndRun()
+                        }
                     }
                 }
                 .sheet(isPresented: showOnboarding) {
@@ -185,6 +197,7 @@ struct PhosphorApp: App {
             SettingsView()
                 .environmentObject(deviceVM)
                 .environmentObject(backupVM)
+                .environmentObject(backupLocationMonitor)
                 .environmentObject(updateController)
         }
     }

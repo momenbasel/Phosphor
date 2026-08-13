@@ -92,3 +92,10 @@
 "browser.preview" = "Mostrar/ocultar vista previa";
 "browser.extract" = "Extraer";
 
+/* Ubicaciones de copia en red */
+"Use as Network Location" = "Usar como ubicación de red";
+"Stop Treating as Network Location" = "Dejar de tratar como ubicación de red";
+"Local backup location" = "Ubicación de copia local";
+"Network backup location available" = "Ubicación de copia en red disponible";
+"Network backup location offline" = "Ubicación de copia en red desconectada";
+"Network backup location needs attention" = "La ubicación de copia en red requiere atención";
