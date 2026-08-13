@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -23,6 +24,184 @@ def _compile_and_run(root: Path, harness: str) -> str:
         result = subprocess.run([str(binary)], text=True, capture_output=True, timeout=30)
         assert result.returncode == 0, result.stderr
         return result.stdout
+
+
+def _archive_member_listing_is_safe(root: Path, listing: str) -> bool:
+    source = root / "Sources/Phosphor/Utilities/ArchiveMemberValidation.swift"
+    assert source.exists(), "ArchiveMemberValidation.swift must define the production member-type validator"
+    harness = r'''
+import Foundation
+
+let data = FileHandle.standardInput.readDataToEndOfFile()
+let listing = String(data: data, encoding: .utf8) ?? ""
+print(ArchiveMemberValidation.allEntriesAreRegularFilesOrDirectories(listing))
+'''
+    with tempfile.TemporaryDirectory(prefix="phosphor-archive-member-validation-") as tmp:
+        tmp_path = Path(tmp)
+        harness_path = tmp_path / "main.swift"
+        binary = tmp_path / "probe"
+        harness_path.write_text(harness)
+        compiled = subprocess.run(
+            ["swiftc", str(source), str(harness_path), "-o", str(binary)],
+            text=True,
+            capture_output=True,
+            timeout=60,
+        )
+        assert compiled.returncode == 0, compiled.stderr
+        result = subprocess.run(
+            [str(binary)],
+            input=listing,
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout.strip() == "true"
+
+
+def _archive_snapshot_probe(root: Path) -> str:
+    source = root / "Sources/Phosphor/Utilities/ArchiveSnapshot.swift"
+    assert source.exists(), "ArchiveSnapshot.swift must define the stable source-copy helper"
+    harness = r'''
+import Foundation
+
+let fm = FileManager.default
+let base = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+try fm.createDirectory(at: base, withIntermediateDirectories: true)
+defer { try? fm.removeItem(at: base) }
+let source = base.appendingPathComponent("source.phosphor")
+let replacement = base.appendingPathComponent("replacement.phosphor")
+try Data("original".utf8).write(to: source)
+let snapshot = try ArchiveSnapshot.copyRegularFile(at: source.path)
+defer { try? fm.removeItem(at: snapshot.deletingLastPathComponent()) }
+var snapshotInfo = stat()
+var directoryInfo = stat()
+_ = stat(snapshot.path, &snapshotInfo)
+_ = stat(snapshot.deletingLastPathComponent().path, &directoryInfo)
+print("snapshot-mode=\(String(snapshotInfo.st_mode & 0o777, radix: 8))")
+print("snapshot-directory-mode=\(String(directoryInfo.st_mode & 0o777, radix: 8))")
+try Data("replacement".utf8).write(to: replacement)
+_ = try fm.replaceItemAt(source, withItemAt: replacement)
+let snapshotted = String(data: try Data(contentsOf: snapshot), encoding: .utf8) ?? ""
+print("snapshot=\(snapshotted)")
+
+let target = base.appendingPathComponent("target.phosphor")
+let link = base.appendingPathComponent("link.phosphor")
+try Data("target".utf8).write(to: target)
+try fm.createSymbolicLink(at: link, withDestinationURL: target)
+do {
+    let unexpected = try ArchiveSnapshot.copyRegularFile(at: link.path)
+    try? fm.removeItem(at: unexpected.deletingLastPathComponent())
+    print("symlink=accepted")
+} catch {
+    print("symlink=rejected")
+}
+'''
+    with tempfile.TemporaryDirectory(prefix="phosphor-archive-snapshot-probe-") as tmp:
+        tmp_path = Path(tmp)
+        harness_path = tmp_path / "main.swift"
+        binary = tmp_path / "probe"
+        harness_path.write_text(harness)
+        compiled = subprocess.run(
+            ["swiftc", str(source), str(harness_path), "-o", str(binary)],
+            text=True,
+            capture_output=True,
+            timeout=60,
+        )
+        assert compiled.returncode == 0, compiled.stderr
+        result = subprocess.run([str(binary)], text=True, capture_output=True, timeout=30)
+        assert result.returncode == 0, result.stderr
+        return result.stdout
+
+
+def test_archive_import_rejects_symlink_and_hardlink_members_before_mutation(root: Path) -> None:
+    snapshot_output = _archive_snapshot_probe(root)
+    assert "snapshot=original" in snapshot_output
+    assert "snapshot-mode=600" in snapshot_output
+    assert "snapshot-directory-mode=700" in snapshot_output
+    assert "symlink=rejected" in snapshot_output
+
+    with tempfile.TemporaryDirectory(prefix="phosphor-archive-link-members-") as tmp:
+        base = Path(tmp)
+        source = base / "source" / "UDID"
+        source.mkdir(parents=True)
+        (source / "Info.plist").write_text("info")
+        (source / "Manifest.plist").write_text("manifest")
+        (source / "blob").write_text("payload")
+
+        safe_archive = base / "safe.phosphor"
+        subprocess.run(
+            ["tar", "-czf", str(safe_archive), "-C", str(base / "source"), "UDID"],
+            check=True,
+            capture_output=True,
+        )
+
+        outside = base / "outside"
+        outside.write_text("outside")
+        (source / "linkblob").symlink_to(outside)
+        symlink_archive = base / "symlink.phosphor"
+        subprocess.run(
+            ["tar", "-czf", str(symlink_archive), "-C", str(base / "source"), "UDID"],
+            check=True,
+            capture_output=True,
+        )
+        (source / "linkblob").unlink()
+
+        os.link(source / "blob", source / "hardblob")
+        hardlink_archive = base / "hardlink.phosphor"
+        subprocess.run(
+            [
+                "tar", "-czf", str(hardlink_archive), "-C", str(base / "source"),
+                "UDID/Info.plist", "UDID/Manifest.plist", "UDID/blob", "UDID/hardblob",
+            ],
+            check=True,
+            capture_output=True,
+        )
+
+        def verbose_listing(archive: Path) -> str:
+            result = subprocess.run(
+                ["tar", "-tvzf", str(archive)],
+                env={"LC_ALL": "C", "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"},
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+            assert result.returncode == 0, result.stderr
+            return result.stdout
+
+        safe_listing = verbose_listing(safe_archive)
+        symlink_listing = verbose_listing(symlink_archive)
+        hardlink_listing = verbose_listing(hardlink_archive)
+        assert any(line.startswith("l") for line in symlink_listing.splitlines()), symlink_listing
+        assert any(line.startswith("h") for line in hardlink_listing.splitlines()), hardlink_listing
+        assert _archive_member_listing_is_safe(root, safe_listing)
+        assert not _archive_member_listing_is_safe(root, symlink_listing)
+        assert not _archive_member_listing_is_safe(root, hardlink_listing)
+        for unsafe_type in ("p", "c", "b"):
+            assert not _archive_member_listing_is_safe(
+                root,
+                f"{unsafe_type}rw-r--r--  0 user group 0 Jan  1 00:00 UDID/unsafe\n",
+            )
+
+    archiver = (root / "Sources/Phosphor/Services/BackupArchiver.swift").read_text()
+    archive_entries = archiver.split("private static func archiveEntries", 1)[1].split(
+        "/// Strip a leading", 1
+    )[0]
+    assert "ArchiveMemberValidation.allEntriesAreRegularFilesOrDirectories" in archive_entries
+    assert 'extraEnvironment: ["LC_ALL": "C"]' in archive_entries
+    import_flow = archiver.split("static func importArchive(", 1)[1].split("// MARK: - Inspect", 1)[0]
+    assert "snapshotArchive(at: archivePath)" in import_flow
+    assert "archiveEntries(at: stableArchivePath)" in import_flow
+    assert 'arguments: ["-xzf", stableArchivePath, "-C", destination]' in import_flow
+    assert import_flow.count("archivePath") == 2, (
+        "archive import must mention the user-controlled source only in its parameter and stable snapshot call"
+    )
+    assert import_flow.index("archiveEntries(at: stableArchivePath)") < import_flow.index("fm.createDirectory")
+
+    inspect_flow = archiver.split("static func inspectArchive(", 1)[1]
+    assert "snapshotArchive(at: path)" in inspect_flow
+    assert "archiveEntries(at: stableArchivePath)" in inspect_flow
+    assert 'arguments: ["-xzf", stableArchivePath' in inspect_flow
 
 
 def test_network_location_identity_and_availability_are_fail_closed(root: Path) -> None:

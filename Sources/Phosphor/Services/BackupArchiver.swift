@@ -19,12 +19,28 @@ enum BackupArchiver {
     }
 
     private static func archiveEntries(at path: String) async -> [String]? {
+        let verboseResult = await Shell.runAsync(
+            "tar",
+            arguments: ["-tvzf", path],
+            extraEnvironment: ["LC_ALL": "C"]
+        )
+        guard verboseResult.succeeded,
+              ArchiveMemberValidation.allEntriesAreRegularFilesOrDirectories(verboseResult.stdout) else {
+            return nil
+        }
+
         let result = await Shell.runAsync("tar", arguments: ["-tzf", path])
         guard result.succeeded else { return nil }
         return result.output
             .components(separatedBy: "\n")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+    }
+
+    private static func snapshotArchive(at path: String) async -> URL? {
+        try? await Task.detached(priority: .utility) {
+            try ArchiveSnapshot.copyRegularFile(at: path)
+        }.value
     }
 
     /// Strip a leading `./` (repeatedly) so `./UDID/Info.plist` and `UDID/Info.plist`
@@ -160,13 +176,20 @@ enum BackupArchiver {
         }
         let fm = FileManager.default
 
+        guard let stableArchiveURL = await snapshotArchive(at: archivePath) else {
+            onProgress("Import failed: archive could not be read")
+            return nil
+        }
+        defer { try? fm.removeItem(at: stableArchiveURL.deletingLastPathComponent()) }
+        let stableArchivePath = stableArchiveURL.path
+
         let locationPreflight = await BackupLocationMonitor.preflightForWrite(path: destination)
         guard locationPreflight.canWrite else {
             onProgress("Import failed: \(locationPreflight.message ?? "backup destination is unavailable")")
             return nil
         }
 
-        guard let entries = await archiveEntries(at: archivePath), !entries.isEmpty else {
+        guard let entries = await archiveEntries(at: stableArchivePath), !entries.isEmpty else {
             onProgress("Import failed: archive could not be read")
             return nil
         }
@@ -213,7 +236,7 @@ enum BackupArchiver {
 
         let result = await Shell.runAsync(
             "tar",
-            arguments: ["-xzf", archivePath, "-C", destination],
+            arguments: ["-xzf", stableArchivePath, "-C", destination],
             timeout: 600
         )
 
@@ -264,11 +287,15 @@ enum BackupArchiver {
     static func inspectArchive(at path: String) async -> ArchiveInfo? {
         let fm = FileManager.default
 
-        // Get archive size
-        let archiveSize = (try? fm.attributesOfItem(atPath: path)[.size] as? UInt64) ?? 0
+        guard let stableArchiveURL = await snapshotArchive(at: path) else { return nil }
+        defer { try? fm.removeItem(at: stableArchiveURL.deletingLastPathComponent()) }
+        let stableArchivePath = stableArchiveURL.path
+
+        // Get archive size from the same stable bytes that are validated and inspected.
+        let archiveSize = (try? fm.attributesOfItem(atPath: stableArchivePath)[.size] as? UInt64) ?? 0
 
         // List contents to find Info.plist
-        guard let files = await archiveEntries(at: path), files.allSatisfy(archiveEntryIsSafe) else { return nil }
+        guard let files = await archiveEntries(at: stableArchivePath), files.allSatisfy(archiveEntryIsSafe) else { return nil }
         guard let infoPlistEntry = files.first(where: { $0.hasSuffix("Info.plist") && !$0.contains("/") || $0.components(separatedBy: "/").count == 2 && $0.hasSuffix("Info.plist") }) else {
             return nil
         }
@@ -280,7 +307,7 @@ enum BackupArchiver {
 
         let extractResult = await Shell.runAsync(
             "tar",
-            arguments: ["-xzf", path, "-C", tmpDir, infoPlistEntry]
+            arguments: ["-xzf", stableArchivePath, "-C", tmpDir, infoPlistEntry]
         )
         guard extractResult.succeeded else { return nil }
 
