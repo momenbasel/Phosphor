@@ -317,8 +317,8 @@ enum BackupArchiver {
 
         guard let info = PlistParser.parseBackupInfo(parentDir) else { return nil }
 
-        // Estimate original size from tar listing
-        let sizeResult = await Shell.runAsync("tar", arguments: ["-tvzf", path])
+        // Estimate original size from the same stable archive snapshot.
+        let sizeResult = await Shell.runAsync("tar", arguments: ["-tvzf", stableArchivePath])
         var originalSize: UInt64 = 0
         if sizeResult.succeeded {
             for line in sizeResult.output.components(separatedBy: "\n") {

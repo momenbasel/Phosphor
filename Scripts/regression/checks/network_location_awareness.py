@@ -198,10 +198,14 @@ def test_archive_import_rejects_symlink_and_hardlink_members_before_mutation(roo
     )
     assert import_flow.index("archiveEntries(at: stableArchivePath)") < import_flow.index("fm.createDirectory")
 
-    inspect_flow = archiver.split("static func inspectArchive(", 1)[1]
+    inspect_flow = archiver.split("static func inspectArchive(", 1)[1].split("// MARK: - Validation", 1)[0]
     assert "snapshotArchive(at: path)" in inspect_flow
     assert "archiveEntries(at: stableArchivePath)" in inspect_flow
     assert 'arguments: ["-xzf", stableArchivePath' in inspect_flow
+    assert 'arguments: ["-tvzf", stableArchivePath]' in inspect_flow
+    assert 'arguments: ["-tvzf", path]' not in inspect_flow, (
+        "archive inspection must not reopen the user-controlled source after snapshotting"
+    )
 
 
 def test_network_location_identity_and_availability_are_fail_closed(root: Path) -> None:
