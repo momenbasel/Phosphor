@@ -2,13 +2,24 @@ import Foundation
 
 @MainActor
 final class UnifiedSearchViewModel: ObservableObject {
-    @Published var query = ""
+    @Published var query = "" {
+        didSet {
+            guard query != oldValue else { return }
+            invalidateSearchState()
+        }
+    }
     @Published var selectedBackup: BackupInfo?
-    @Published var enabledSources = Set(UnifiedSearchSource.allCases)
+    @Published var enabledSources = Set(UnifiedSearchSource.allCases) {
+        didSet {
+            guard enabledSources != oldValue else { return }
+            invalidateSearchState()
+        }
+    }
     @Published private(set) var results: [UnifiedSearchResult] = []
     @Published private(set) var sourceErrors: [UnifiedSearchSource: String] = [:]
     @Published var selectedResultIDs = Set<UnifiedSearchResult.ID>()
     @Published private(set) var isSearching = false
+    @Published private(set) var hasCompletedSearch = false
     @Published private(set) var errorMessage: String?
 
     private var searchTask: Task<Void, Never>?
@@ -24,14 +35,8 @@ final class UnifiedSearchViewModel: ObservableObject {
 
     func chooseBackup(_ backup: BackupInfo?) {
         guard selectedBackup?.path != backup?.path else { return }
-        searchTask?.cancel()
-        searchOperationID = nil
+        invalidateSearchState()
         selectedBackup = backup
-        results = []
-        sourceErrors = [:]
-        selectedResultIDs = []
-        errorMessage = nil
-        isSearching = false
     }
 
     func search() {
@@ -54,6 +59,7 @@ final class UnifiedSearchViewModel: ObservableObject {
         searchOperationID = operationID
         let sources = enabledSources
         isSearching = true
+        hasCompletedSearch = false
         errorMessage = nil
         results = []
         sourceErrors = [:]
@@ -83,10 +89,12 @@ final class UnifiedSearchViewModel: ObservableObject {
 
             guard !Task.isCancelled, searchOperationID == operationID else { return }
             isSearching = false
+            searchTask = nil
             switch outcome {
             case .success(let response):
                 results = response.results
                 sourceErrors = response.sourceErrors
+                hasCompletedSearch = true
             case .failure(let failure):
                 if !Task.isCancelled && failure.message != "Search cancelled." {
                     errorMessage = failure.message
@@ -96,13 +104,19 @@ final class UnifiedSearchViewModel: ObservableObject {
     }
 
     func cancel() {
+        invalidateSearchState()
+    }
+
+    private func invalidateSearchState() {
         searchTask?.cancel()
         searchTask = nil
         searchOperationID = nil
         isSearching = false
+        hasCompletedSearch = false
         results = []
         sourceErrors = [:]
         selectedResultIDs = []
+        errorMessage = nil
     }
 
     func selectAllVisible() {

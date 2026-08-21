@@ -356,10 +356,15 @@ def test_unified_search_ui_ignores_stale_results_and_exports_selection(root: Pat
 
     assert "searchOperationID" in vm
     assert "searchOperationID == operationID" in vm
+    assert "hasCompletedSearch" in vm, "typing a query must not make the initial UI claim that a search returned no results"
+    assert "invalidateSearchState()" in vm, "query/source changes must clear stale search results"
+    assert "viewModel.hasCompletedSearch" in view, "empty-state copy must reflect completed search state, not merely non-empty query text"
     assert "Task.detached" in vm, "backup database search must not run on the main actor"
     assert "withTaskCancellationHandler" in vm
     assert "worker.cancel()" in vm
-    assert vm.count("results = []") >= 3, "backup changes, new searches, and cancellation must invalidate old results"
+    assert vm.count("invalidateSearchState()") >= 4, "query, source, backup, and cancellation changes must invalidate stale results"
+    invalidation = vm.split("private func invalidateSearchState()", 1)[1]
+    assert "results = []" in invalidation and "sourceErrors = [:]" in invalidation
     assert "selectedResultIDs" in vm
     assert "Export Selected" in view
     assert "Unified Search" in sidebar
@@ -370,6 +375,103 @@ def test_unified_search_ui_ignores_stale_results_and_exports_selection(root: Pat
     empty_results_branch = view.split("} else if viewModel.results.isEmpty {", 1)[1].split("} else {", 1)[0]
     assert "!viewModel.sourceErrors.isEmpty" in empty_results_branch
     assert "sourceWarnings" in empty_results_branch, "zero-result source failures must remain visible"
+
+
+def test_unified_search_empty_state_tracks_completed_search_behaviorally(root: Path) -> None:
+    support = r'''
+import Foundation
+
+struct BackupInfo: Sendable {
+    let id: String
+    let path: String
+}
+
+enum UnifiedSearchSource: CaseIterable, Hashable, Sendable {
+    case files
+}
+
+struct UnifiedSearchResult: Identifiable, Sendable {
+    let id: String
+}
+
+struct UnifiedSearchResponse: Sendable {
+    let results: [UnifiedSearchResult]
+    let sourceErrors: [UnifiedSearchSource: String]
+}
+
+enum UnifiedSearchService {
+    static func search(
+        query: String,
+        backupPath: String,
+        sources: Set<UnifiedSearchSource>
+    ) throws -> UnifiedSearchResponse {
+        if query == "slow" {
+            // Deliberately ignore task cancellation and complete late. This proves
+            // the view model rejects a stale success instead of relying on a
+            // cooperative service to throw CancellationError.
+            Thread.sleep(forTimeInterval: 0.2)
+            return UnifiedSearchResponse(
+                results: [UnifiedSearchResult(id: "stale")],
+                sourceErrors: [:]
+            )
+        }
+        return UnifiedSearchResponse(results: [], sourceErrors: [:])
+    }
+}
+'''
+    probe = r'''
+import Foundation
+
+@main
+struct Probe {
+    @MainActor
+    static func main() async {
+        let viewModel = UnifiedSearchViewModel()
+        viewModel.chooseBackup(BackupInfo(id: "backup", path: "/backup"))
+
+        viewModel.query = "none"
+        print("TYPED|\(viewModel.hasCompletedSearch)|\(viewModel.results.count)")
+
+        viewModel.search()
+        while viewModel.isSearching { await Task.yield() }
+        print("COMPLETED|\(viewModel.hasCompletedSearch)|\(viewModel.results.count)")
+
+        viewModel.query = "changed"
+        print("CHANGED|\(viewModel.hasCompletedSearch)|\(viewModel.results.count)")
+
+        viewModel.query = "slow"
+        viewModel.search()
+        viewModel.query = "replacement"
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        print("STALE|\(viewModel.hasCompletedSearch)|\(viewModel.isSearching)|\(viewModel.results.count)")
+    }
+}
+'''
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp = Path(temp_dir)
+        support_path = temp / "Support.swift"
+        support_path.write_text(support)
+        probe_path = temp / "Probe.swift"
+        probe_path.write_text(probe)
+        executable = temp / "unified-search-state-probe"
+        compile_result = subprocess.run(
+            [
+                "swiftc", "-parse-as-library",
+                str(root / "Sources/Phosphor/ViewModels/UnifiedSearchViewModel.swift"),
+                str(support_path), str(probe_path), "-o", str(executable),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert compile_result.returncode == 0, compile_result.stderr
+        result = subprocess.run([str(executable)], capture_output=True, text=True, timeout=10)
+
+    assert result.returncode == 0, result.stderr
+    assert "TYPED|false|0" in result.stdout, result.stdout
+    assert "COMPLETED|true|0" in result.stdout, result.stdout
+    assert "CHANGED|false|0" in result.stdout, result.stdout
+    assert "STALE|false|false|0" in result.stdout, result.stdout
 
 
 def test_unified_search_requires_an_explicit_backup(root: Path) -> None:

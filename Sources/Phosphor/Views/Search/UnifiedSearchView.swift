@@ -144,11 +144,11 @@ struct UnifiedSearchView: View {
                     Divider()
                 }
                 ContentUnavailableView(
-                    viewModel.query.isEmpty ? "Search This Backup" : "No Results",
+                    viewModel.hasCompletedSearch ? "No Results" : "Search This Backup",
                     systemImage: "text.magnifyingglass",
-                    description: Text(viewModel.query.isEmpty
-                        ? "Enter at least two characters, choose the sources, and press Search."
-                        : "No matching results were returned by the sources that could be searched.")
+                    description: Text(viewModel.hasCompletedSearch
+                        ? "No matching results were returned by the sources that could be searched."
+                        : "Enter at least two characters, choose the sources, and press Search.")
                 )
             }
         } else {
