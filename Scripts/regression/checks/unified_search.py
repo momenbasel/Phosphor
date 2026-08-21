@@ -406,10 +406,14 @@ enum UnifiedSearchService {
         sources: Set<UnifiedSearchSource>
     ) throws -> UnifiedSearchResponse {
         if query == "slow" {
-            for _ in 0..<100 {
-                try Task.checkCancellation()
-                Thread.sleep(forTimeInterval: 0.002)
-            }
+            // Deliberately ignore task cancellation and complete late. This proves
+            // the view model rejects a stale success instead of relying on a
+            // cooperative service to throw CancellationError.
+            Thread.sleep(forTimeInterval: 0.2)
+            return UnifiedSearchResponse(
+                results: [UnifiedSearchResult(id: "stale")],
+                sourceErrors: [:]
+            )
         }
         return UnifiedSearchResponse(results: [], sourceErrors: [:])
     }
