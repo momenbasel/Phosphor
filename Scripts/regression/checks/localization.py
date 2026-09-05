@@ -63,3 +63,66 @@ def test_simplified_chinese_has_core_runtime_labels(root: Path) -> None:
         "Screen Capture": "屏幕录制",
     }.items():
         assert f'"{key}" = "{value}";' in strings, f"missing Simplified Chinese translation for {key}"
+
+
+def test_lithuanian_is_declared_packaged_and_complete(root: Path) -> None:
+    info = read(root, "Resources/Info.plist")
+    build = read(root, "Scripts/build.sh")
+    english = read(root, "Sources/Phosphor/Resources/en.lproj/Localizable.strings")
+    lithuanian_path = root / "Sources/Phosphor/Resources/lt.lproj/Localizable.strings"
+
+    assert "<string>lt</string>" in info, "Info.plist must declare Lithuanian"
+    assert 'Sources/Phosphor/Resources"/*.lproj' in build, "build script must package Lithuanian"
+    assert lithuanian_path.exists(), "Lithuanian Localizable.strings must be present"
+
+    def entries(source: str) -> dict[str, str]:
+        return {
+            line.split('"', 2)[1]: line.rsplit('"', 2)[1]
+            for line in source.splitlines()
+            if line.lstrip().startswith('"') and '" =' in line
+        }
+
+    english_entries = entries(english)
+    lithuanian_entries = entries(lithuanian_path.read_text())
+    missing = english_entries.keys() - lithuanian_entries.keys()
+    assert not missing, f"Lithuanian is missing English keys: {sorted(missing)}"
+
+    for semantic_key, english_label in english_entries.items():
+        translated_label = lithuanian_entries[semantic_key]
+        assert lithuanian_entries.get(english_label) == translated_label, (
+            f"Lithuanian runtime alias missing for {english_label!r}"
+        )
+
+
+def test_german_existing_translations_have_runtime_aliases(root: Path) -> None:
+    english = read(root, "Sources/Phosphor/Resources/en.lproj/Localizable.strings")
+    german = read(root, "Sources/Phosphor/Resources/de.lproj/Localizable.strings")
+
+    def entries(source: str) -> dict[str, str]:
+        return {
+            line.split('"', 2)[1]: line.rsplit('"', 2)[1]
+            for line in source.splitlines()
+            if line.lstrip().startswith('"') and '" =' in line
+        }
+
+    english_entries = entries(english)
+    german_entries = entries(german)
+    semantic_keys = english_entries.keys() & german_entries.keys()
+    assert semantic_keys, "German must contain semantic translations"
+
+    for key, value in {
+        "sidebar.devices": "Geräte",
+        "group.device": "Gerät",
+        "action.delete": "Löschen",
+        "device.noDeviceConnected": "Kein Gerät verbunden",
+        "device.scanForDevices": "Nach Geräten suchen",
+        "welcome.subtitle": "Verbinden Sie ein iOS-Gerät oder wählen Sie einen Bereich in der Seitenleiste.",
+    }.items():
+        assert german_entries.get(key) == value, f"incorrect German translation for {key}"
+
+    for semantic_key in semantic_keys:
+        english_label = english_entries[semantic_key]
+        translated_label = german_entries[semantic_key]
+        assert german_entries.get(english_label) == translated_label, (
+            f"German runtime alias missing for {english_label!r}"
+        )

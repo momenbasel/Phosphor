@@ -1,0 +1,283 @@
+/* Phosphor - Lietuvių kalba */
+
+/* Šoninė juosta */
+"sidebar.devices" = "Įrenginiai";
+"sidebar.backups" = "Atsarginės kopijos";
+"sidebar.backupBrowser" = "Atsarginių kopijų naršyklė";
+"sidebar.timeMachine" = "Time Machine";
+"sidebar.messages" = "Žinutės";
+"sidebar.whatsapp" = "WhatsApp";
+"sidebar.photos" = "Nuotraukos";
+"sidebar.apps" = "Programos";
+"sidebar.notes" = "Užrašai";
+"sidebar.callLog" = "Skambučių žurnalas";
+"sidebar.safari" = "Safari";
+"sidebar.health" = "Sveikata";
+"sidebar.music" = "Muzika";
+"sidebar.files" = "Failų sistema";
+"sidebar.diagnostics" = "Diagnostika";
+"sidebar.watch" = "Apple Watch";
+"sidebar.contacts" = "Kontaktai";
+"sidebar.calendar" = "Kalendorius";
+
+/* Skirsnių grupės */
+"group.device" = "Įrenginys";
+"group.data" = "Duomenys";
+"group.backups" = "Atsarginės kopijos";
+"group.tools" = "Įrankiai";
+
+/* Įprasti veiksmai */
+"action.refresh" = "Atnaujinti";
+"action.export" = "Eksportuoti...";
+"action.exportAll" = "Eksportuoti viską...";
+"action.extractHere" = "Išskleisti čia";
+"action.browse" = "Naršyti";
+"action.delete" = "Ištrinti";
+"action.cancel" = "Atšaukti";
+"action.save" = "Išsaugoti";
+"action.search" = "Ieškoti...";
+"action.copyToMac" = "Kopijuoti į Mac...";
+"action.copyToDevice" = "Kopijuoti į įrenginį...";
+"action.mount" = "Prijungti įrenginį";
+"action.unmount" = "Atjungti";
+"action.restore" = "Atkurti";
+"action.pair" = "Susieti įrenginį";
+"action.newBackup" = "Nauja atsarginė kopija";
+"action.importArchive" = "Importuoti .phosphor";
+"action.exportArchive" = "Eksportuoti .phosphor";
+
+/* Įrenginys */
+"device.noDeviceConnected" = "Įrenginys neprijungtas";
+"device.connectViaUSB" = "Prijunkite savo iPhone, iPad arba iPod touch per USB, kad galėtumėte jį valdyti naudodami Phosphor.";
+"device.scanForDevices" = "Ieškoti įrenginių";
+"device.noDevice" = "Įrenginys neprijungtas";
+"device.connectViaUSBOrWiFi" = "Prijungti per USB arba Wi-Fi";
+"device.batteryHealth" = "Baterijos būklė";
+"device.storage" = "Saugykla";
+"device.deviceInfo" = "Įrenginio informacija";
+"device.quickActions" = "Spartieji veiksmai";
+"device.restart" = "Paleisti iš naujo";
+"device.sleep" = "Užmigdyti";
+"device.screenshot" = "Ekrano kopija";
+
+/* Atsarginės kopijos */
+"backup.backups" = "Atsarginės kopijos";
+"backup.noBackupsFound" = "Atsarginių kopijų nerasta";
+"backup.createBackupDesc" = "Sukurkite įrenginio atsarginę kopiją, kad galėtumėte naršyti jos turinį ir išgauti žinutes, nuotraukas bei programų duomenis.";
+"backup.createBackup" = "Sukurti atsarginę kopiją";
+"backup.deleteBackup" = "Ištrinti atsarginę kopiją?";
+"backup.deleteConfirm" = "Atsarginė kopija %@ (%@) bus ištrinta visam laikui. Šio veiksmo atšaukti negalima.";
+"backup.encrypted" = "Šifruota atsarginė kopija";
+"backup.browseContents" = "Naršyti turinį";
+"backup.showInFinder" = "Rodyti Finder";
+"backup.backupComplete" = "Atsarginė kopija sukurta";
+"backup.backupFailed" = "Nepavyko sukurti atsarginės kopijos";
+"backup.timeMachine" = "Time Machine";
+"backup.restoreThisBackup" = "Atkurti šią atsarginę kopiją";
+"backup.restoreWarning" = "Įrenginys bus atkurtas į būseną, buvusią %@. Įrenginys bus paleistas iš naujo.";
+"backup.scheduled" = "Suplanuotos atsarginės kopijos";
+
+/* Žinutės */
+"messages.messages" = "Žinutės";
+"messages.noBackupSelected" = "Nepasirinkta atsarginė kopija";
+"messages.selectBackup" = "Pasirinkite atsarginę kopiją, kad peržiūrėtumėte iMessage ir SMS pokalbius.";
+"messages.noConversations" = "Pokalbių nėra";
+"messages.exportCSV" = "Eksportuoti CSV";
+"messages.exportHTML" = "Eksportuoti HTML";
+"messages.exportJSON" = "Eksportuoti JSON";
+
+/* Nuotraukos */
+"photos.photos" = "Nuotraukos ir vaizdo įrašai";
+"photos.noPhotos" = "Nuotraukų nerasta";
+"photos.selectBackup" = "Pasirinkite atsarginę kopiją, kad galėtumėte naršyti Kameros ritinio nuotraukas ir vaizdo įrašus.";
+"photos.filter.all" = "Visos";
+"photos.filter.photos" = "Nuotraukos";
+"photos.filter.videos" = "Vaizdo įrašai";
+"photos.filter.screenshots" = "Ekrano kopijos";
+"photos.extractSelected" = "Išgauti pasirinktas";
+
+/* Programos */
+"apps.apps" = "Programos";
+"apps.installed" = "Įdiegtos";
+"apps.inBackup" = "Atsarginėje kopijoje";
+"apps.installIPA" = "Įdiegti IPA...";
+"apps.removeApp" = "Pašalinti programą";
+
+/* Failai */
+"files.fileSystem" = "Failų sistema";
+"files.notMounted" = "Įrenginys neprijungtas";
+"files.mountDesc" = "Prijunkite įrenginio failų sistemą, kad galėtumėte naršyti ir perkelti failus.";
+"files.emptyDir" = "Tuščias katalogas";
+"files.dropFilesHere" = "Nutempkite failus čia, kad perkeltumėte juos į įrenginį";
+
+/* Diagnostika */
+"diagnostics.diagnostics" = "Diagnostika";
+"diagnostics.battery" = "Baterija";
+"diagnostics.storage" = "Saugykla";
+"diagnostics.syslog" = "Sistemos žurnalas";
+"diagnostics.clear" = "Išvalyti";
+"diagnostics.startStreaming" = "Pradėti srautinį perdavimą";
+"diagnostics.stopStreaming" = "Sustabdyti srautinį perdavimą";
+
+/* Nustatymai */
+"settings.general" = "Bendrieji";
+"settings.dependencies" = "Priklausomybės";
+"settings.about" = "Apie";
+"settings.backupLocation" = "Atsarginių kopijų vieta";
+"settings.devicePolling" = "Įrenginio tikrinimas";
+"settings.autoRefresh" = "Automatinio atnaujinimo intervalas";
+"settings.backupSchedule" = "Atsarginių kopijų tvarkaraštis";
+"settings.scheduleEnabled" = "Įjungti suplanuotas atsargines kopijas";
+"settings.scheduleFrequency" = "Dažnis";
+"settings.wifiOnly" = "Tik Wi-Fi";
+
+/* Watch */
+"watch.appleWatch" = "Apple Watch";
+"watch.noWatch" = "Apple Watch nerastas";
+"watch.selectBackup" = "Pasirinkite atsarginę kopiją iš susieto iPhone, kad peržiūrėtumėte Apple Watch duomenis.";
+"watch.overview" = "Apžvalga";
+"watch.apps" = "Watch programos";
+"watch.activity" = "Aktyvumas";
+
+/* Pagrindinis ekranas */
+"homeScreen.homeScreen" = "Pagrindinis ekranas";
+"homeScreen.noBackupSelected" = "Nepasirinkta atsarginė kopija";
+"homeScreen.selectBackup" = "Pasirinkite atsarginę kopiją skiltyje „Atsarginės kopijos“, kad pamatytumėte jos pagrindinį ekraną.";
+"homeScreen.noLayout" = "Pagrindinio ekrano duomenų nėra";
+"homeScreen.noLayoutDesc" = "Šioje atsarginėje kopijoje nėra IconState.plist (HomeDomain/SpringBoard).";
+"homeScreen.readFailed" = "Nepavyko perskaityti išdėstymo";
+"homeScreen.exportPNG" = "Eksportuoti PNG";
+"homeScreen.reload" = "Įkelti iš naujo";
+"homeScreen.reading" = "Skaitomas pagrindinio ekrano išdėstymas…";
+
+/* Atsarginių kopijų naršyklė */
+"browser.allDomains" = "Visi domenai";
+"browser.items" = "%lld elementų";
+"browser.preview" = "Rodyti / slėpti peržiūrą";
+"browser.extract" = "Išgauti";
+
+/* Pasisveikinimas */
+"welcome.title" = "Sveiki atvykę į Phosphor";
+"welcome.subtitle" = "Prijunkite iOS įrenginį arba pasirinkite skiltį šoninėje juostoje.";
+
+/* Runtime aliases for SwiftUI English literal keys */
+"Devices" = "Įrenginiai";
+"Backups" = "Atsarginės kopijos";
+"Backup Browser" = "Atsarginių kopijų naršyklė";
+"Time Machine" = "Time Machine";
+"Messages" = "Žinutės";
+"WhatsApp" = "WhatsApp";
+"Photos" = "Nuotraukos";
+"Apps" = "Programos";
+"Notes" = "Užrašai";
+"Call Log" = "Skambučių žurnalas";
+"Safari" = "Safari";
+"Health" = "Sveikata";
+"Music" = "Muzika";
+"File System" = "Failų sistema";
+"Diagnostics" = "Diagnostika";
+"Apple Watch" = "Apple Watch";
+"Contacts" = "Kontaktai";
+"Calendar" = "Kalendorius";
+"Device" = "Įrenginys";
+"Data" = "Duomenys";
+"Tools" = "Įrankiai";
+"Refresh" = "Atnaujinti";
+"Export..." = "Eksportuoti...";
+"Export All..." = "Eksportuoti viską...";
+"Extract Here" = "Išskleisti čia";
+"Browse" = "Naršyti";
+"Delete" = "Ištrinti";
+"Cancel" = "Atšaukti";
+"Save" = "Išsaugoti";
+"Search..." = "Ieškoti...";
+"Copy to Mac..." = "Kopijuoti į Mac...";
+"Copy to Device..." = "Kopijuoti į įrenginį...";
+"Mount Device" = "Prijungti įrenginį";
+"Unmount" = "Atjungti";
+"Restore" = "Atkurti";
+"Pair Device" = "Susieti įrenginį";
+"New Backup" = "Nauja atsarginė kopija";
+"Import .phosphor" = "Importuoti .phosphor";
+"Export .phosphor" = "Eksportuoti .phosphor";
+"No Device Connected" = "Įrenginys neprijungtas";
+"Connect your iPhone, iPad, or iPod touch via USB to manage it with Phosphor." = "Prijunkite savo iPhone, iPad arba iPod touch per USB, kad galėtumėte jį valdyti naudodami Phosphor.";
+"Scan for Devices" = "Ieškoti įrenginių";
+"No device connected" = "Įrenginys neprijungtas";
+"Connect via USB or Wi-Fi" = "Prijungti per USB arba Wi-Fi";
+"Battery Health" = "Baterijos būklė";
+"Storage" = "Saugykla";
+"Device Information" = "Įrenginio informacija";
+"Quick Actions" = "Spartieji veiksmai";
+"Restart" = "Paleisti iš naujo";
+"Sleep" = "Užmigdyti";
+"Screenshot" = "Ekrano kopija";
+"No Backups Found" = "Atsarginių kopijų nerasta";
+"Back up your device to browse its contents, extract messages, photos, and app data." = "Sukurkite įrenginio atsarginę kopiją, kad galėtumėte naršyti jos turinį ir išgauti žinutes, nuotraukas bei programų duomenis.";
+"Create Backup" = "Sukurti atsarginę kopiją";
+"Delete Backup?" = "Ištrinti atsarginę kopiją?";
+"This will permanently delete the backup of %@ (%@). This cannot be undone." = "Atsarginė kopija %@ (%@) bus ištrinta visam laikui. Šio veiksmo atšaukti negalima.";
+"Encrypted backup" = "Šifruota atsarginė kopija";
+"Browse Contents" = "Naršyti turinį";
+"Show in Finder" = "Rodyti Finder";
+"Backup completed" = "Atsarginė kopija sukurta";
+"Backup failed" = "Nepavyko sukurti atsarginės kopijos";
+"Restore This Backup" = "Atkurti šią atsarginę kopiją";
+"This will restore your device to the state from %@. The device will restart." = "Įrenginys bus atkurtas į būseną, buvusią %@. Įrenginys bus paleistas iš naujo.";
+"Scheduled Backups" = "Suplanuotos atsarginės kopijos";
+"No Backup Selected" = "Nepasirinkta atsarginė kopija";
+"Select a backup to view iMessage and SMS conversations." = "Pasirinkite atsarginę kopiją, kad peržiūrėtumėte iMessage ir SMS pokalbius.";
+"No Conversations" = "Pokalbių nėra";
+"Export CSV" = "Eksportuoti CSV";
+"Export HTML" = "Eksportuoti HTML";
+"Export JSON" = "Eksportuoti JSON";
+"Photos & Videos" = "Nuotraukos ir vaizdo įrašai";
+"No Photos Found" = "Nuotraukų nerasta";
+"Select a backup to browse Camera Roll photos and videos." = "Pasirinkite atsarginę kopiją, kad galėtumėte naršyti Kameros ritinio nuotraukas ir vaizdo įrašus.";
+"All" = "Visos";
+"Videos" = "Vaizdo įrašai";
+"Screenshots" = "Ekrano kopijos";
+"Extract Selected" = "Išgauti pasirinktas";
+"Applications" = "Programos";
+"Installed" = "Įdiegtos";
+"In Backup" = "Atsarginėje kopijoje";
+"Install IPA..." = "Įdiegti IPA...";
+"Remove App" = "Pašalinti programą";
+"Device Not Mounted" = "Įrenginys neprijungtas";
+"Mount the device filesystem to browse and transfer files." = "Prijunkite įrenginio failų sistemą, kad galėtumėte naršyti ir perkelti failus.";
+"Empty Directory" = "Tuščias katalogas";
+"Drop files here to transfer to device" = "Nutempkite failus čia, kad perkeltumėte juos į įrenginį";
+"Battery" = "Baterija";
+"System Log" = "Sistemos žurnalas";
+"Clear" = "Išvalyti";
+"Start Streaming" = "Pradėti srautinį perdavimą";
+"Stop Streaming" = "Sustabdyti srautinį perdavimą";
+"General" = "Bendrieji";
+"Dependencies" = "Priklausomybės";
+"About" = "Apie";
+"Backup Location" = "Atsarginių kopijų vieta";
+"Device Polling" = "Įrenginio tikrinimas";
+"Auto-refresh interval" = "Automatinio atnaujinimo intervalas";
+"Backup Schedule" = "Atsarginių kopijų tvarkaraštis";
+"Enable scheduled backups" = "Įjungti suplanuotas atsargines kopijas";
+"Frequency" = "Dažnis";
+"Wi-Fi only" = "Tik Wi-Fi";
+"No Apple Watch Found" = "Apple Watch nerastas";
+"Select a backup from a paired iPhone to view Apple Watch data." = "Pasirinkite atsarginę kopiją iš susieto iPhone, kad peržiūrėtumėte Apple Watch duomenis.";
+"Overview" = "Apžvalga";
+"Watch Apps" = "Watch programos";
+"Activity" = "Aktyvumas";
+"Home Screen" = "Pagrindinis ekranas";
+"Select a backup from the Backups section to see its home screen." = "Pasirinkite atsarginę kopiją skiltyje „Atsarginės kopijos“, kad pamatytumėte jos pagrindinį ekraną.";
+"No Home Screen Data" = "Pagrindinio ekrano duomenų nėra";
+"This backup does not contain IconState.plist (HomeDomain/SpringBoard)." = "Šioje atsarginėje kopijoje nėra IconState.plist (HomeDomain/SpringBoard).";
+"Could Not Read Layout" = "Nepavyko perskaityti išdėstymo";
+"Export PNG" = "Eksportuoti PNG";
+"Reload" = "Įkelti iš naujo";
+"Reading home screen layout…" = "Skaitomas pagrindinio ekrano išdėstymas…";
+"All Domains" = "Visi domenai";
+"%lld items" = "%lld elementų";
+"Toggle Preview" = "Rodyti / slėpti peržiūrą";
+"Extract" = "Išgauti";
+"Welcome to Phosphor" = "Sveiki atvykę į Phosphor";
+"Connect an iOS device or select a section from the sidebar." = "Prijunkite iOS įrenginį arba pasirinkite skiltį šoninėje juostoje.";
