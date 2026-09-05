@@ -15,6 +15,7 @@ final class WhatsAppExporter {
 
     private let db: SQLiteReader
     private let manifest: BackupManifest?
+    private let source: BackupManifest.WhatsAppSource?
     private var mediaPathCache: [String: String] = [:]
     private var missingMediaPaths: Set<String> = []
 
@@ -79,38 +80,39 @@ final class WhatsAppExporter {
         }
     }
 
-    init(databasePath: String, manifest: BackupManifest? = nil) throws {
+    init(
+        databasePath: String,
+        manifest: BackupManifest? = nil,
+        source: BackupManifest.WhatsAppSource? = nil
+    ) throws {
         self.db = try SQLiteReader(path: databasePath)
         self.manifest = manifest
+        self.source = source
     }
 
-    /// Initialize from a backup by finding WhatsApp's ChatStorage.sqlite.
-    convenience init(backupPath: String) throws {
+    /// Initialize from a backup and a specific WhatsApp source. When callers do
+    /// not specify one, Personal is chosen first by BackupManifest's stable order.
+    convenience init(backupPath: String, source: BackupManifest.WhatsAppSource? = nil) throws {
         let manifest = try BackupManifest(backupPath: backupPath)
-
-        // Try AppDomainGroup first (newer WhatsApp versions)
-        if let entry = try manifest.whatsAppDatabase() {
-            let filePath = try manifest.readablePath(for: entry)
-            guard FileManager.default.fileExists(atPath: filePath) else {
-                throw NSError(domain: "Phosphor", code: 404,
-                              userInfo: [NSLocalizedDescriptionKey: "WhatsApp database file not found on disk"])
-            }
-            try self.init(databasePath: filePath, manifest: manifest)
-            return
+        let databases = try manifest.whatsAppDatabases()
+        let database = source.flatMap { requested in
+            databases.first { $0.source == requested }
+        } ?? (source == nil ? databases.first : nil)
+        guard let database else {
+            let label = source?.displayName ?? ""
+            throw NSError(
+                domain: "Phosphor",
+                code: 404,
+                userInfo: [NSLocalizedDescriptionKey: "\(label.isEmpty ? "WhatsApp" : label + " WhatsApp") ChatStorage.sqlite not found in backup."]
+            )
         }
 
-        // Try direct search
-        let candidates = try manifest.search("ChatStorage.sqlite")
-        for candidate in candidates where candidate.isFile {
-            let filePath = try manifest.readablePath(for: candidate)
-            if FileManager.default.fileExists(atPath: filePath) {
-                try self.init(databasePath: filePath, manifest: manifest)
-                return
-            }
+        let filePath = try manifest.readablePath(for: database.entry)
+        guard FileManager.default.fileExists(atPath: filePath) else {
+            throw NSError(domain: "Phosphor", code: 404,
+                          userInfo: [NSLocalizedDescriptionKey: "WhatsApp database file not found on disk"])
         }
-
-        throw NSError(domain: "Phosphor", code: 404,
-                      userInfo: [NSLocalizedDescriptionKey: "WhatsApp ChatStorage.sqlite not found in backup. Is WhatsApp installed?"])
+        try self.init(databasePath: filePath, manifest: manifest, source: database.source)
     }
 
     // MARK: - Chats
@@ -439,7 +441,7 @@ final class WhatsAppExporter {
     private func resolveMediaDiskPath(_ localPath: String) -> String? {
         if let cached = mediaPathCache[localPath] { return cached }
         if missingMediaPaths.contains(localPath) { return nil }
-        guard let manifest else { return nil }
+        guard let manifest, let selectedSource = source else { return nil }
 
         let normalized = localPath
             .replacingOccurrences(of: "file://", with: "")
@@ -448,7 +450,7 @@ final class WhatsAppExporter {
         let filename = (normalized as NSString).lastPathComponent
         let candidates = ((try? manifest.search(filename)) ?? []).filter {
             $0.isFile
-                && $0.domain.localizedCaseInsensitiveContains("whatsapp")
+                && selectedSource.domains.contains($0.domain)
                 && $0.fileName == filename
         }
         let exactEntry = candidates.first {
