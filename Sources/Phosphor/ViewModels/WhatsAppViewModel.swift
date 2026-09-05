@@ -14,6 +14,8 @@ final class WhatsAppViewModel: ObservableObject {
     @Published var exportResult: MessageExportResult?
     @Published var showAlert = false
     @Published var alertMessage = ""
+    @Published private(set) var availableSources: [BackupManifest.WhatsAppSource] = []
+    @Published private(set) var selectedSource: BackupManifest.WhatsAppSource?
 
     private var exporter: WhatsAppExporter?
     private var backupPath: String?
@@ -29,6 +31,8 @@ final class WhatsAppViewModel: ObservableObject {
         exportOperationID = nil
         exporter = nil
         backupPath = nil
+        availableSources = []
+        selectedSource = nil
         chats = []
         selectedChat = nil
         messages = []
@@ -40,11 +44,17 @@ final class WhatsAppViewModel: ObservableObject {
         exportResult = nil
     }
 
-    func loadChats(from backupPath: String) {
-        if self.backupPath != backupPath {
+    func loadChats(from backupPath: String, source requestedSource: BackupManifest.WhatsAppSource? = nil) {
+        let isNewBackup = self.backupPath != backupPath
+        let sourceChanged = requestedSource != nil && requestedSource != selectedSource
+        if isNewBackup || sourceChanged {
             exportTask?.cancel()
             exportOperationID = nil
             isExporting = false
+        }
+        if isNewBackup {
+            availableSources = []
+            selectedSource = nil
         }
         self.backupPath = backupPath
         selectedChat = nil
@@ -53,7 +63,15 @@ final class WhatsAppViewModel: ObservableObject {
         errorMessage = nil
         isLoading = true
         do {
-            let exporter = try WhatsAppExporter(backupPath: backupPath)
+            let sources = try BackupManifest(backupPath: backupPath).whatsAppDatabases().map(\.source)
+            availableSources = sources
+            guard let source = requestedSource ?? selectedSource ?? sources.first,
+                  sources.contains(source) else {
+                throw NSError(domain: "Phosphor", code: 404,
+                              userInfo: [NSLocalizedDescriptionKey: "WhatsApp ChatStorage.sqlite not found in backup."])
+            }
+            selectedSource = source
+            let exporter = try WhatsAppExporter(backupPath: backupPath, source: source)
             self.exporter = exporter
             chats = try exporter.getChats()
         } catch {
@@ -61,6 +79,11 @@ final class WhatsAppViewModel: ObservableObject {
             errorMessage = error.localizedDescription
         }
         isLoading = false
+    }
+
+    func selectSource(_ source: BackupManifest.WhatsAppSource) {
+        guard let backupPath, availableSources.contains(source), source != selectedSource else { return }
+        loadChats(from: backupPath, source: source)
     }
 
     func selectChat(_ chat: WhatsAppExporter.WAChat) {
@@ -103,11 +126,11 @@ final class WhatsAppViewModel: ObservableObject {
         customEnd: Date = Date(),
         visibleMessages: [WhatsAppExporter.WAMessage]? = nil
     ) {
-        guard let chat = selectedChat, let backupPath else { return }
+        guard let chat = selectedChat, let backupPath, let source = selectedSource else { return }
         let range = dateFilter.range(customStart: customStart, customEnd: customEnd)
         let options = MessageExportOptions(startDate: range.start, endDate: range.end, includeAttachments: true)
         let sourceMessages = visibleMessages ?? messages
-        startExport(text: "Creating PDF bundle for \(chat.displayName)…", backupPath: backupPath) { exporter, _ in
+        startExport(text: "Creating PDF bundle for \(chat.displayName)…", backupPath: backupPath, source: source) { exporter, _ in
             let result = try exporter.exportChatPDFBundle(
                 chat: chat,
                 messages: sourceMessages,
@@ -131,12 +154,12 @@ final class WhatsAppViewModel: ObservableObject {
         includeAttachments: Bool = true,
         visibleMessages: [WhatsAppExporter.WAMessage]? = nil
     ) {
-        guard let chat = selectedChat, let backupPath else { return }
+        guard let chat = selectedChat, let backupPath, let source = selectedSource else { return }
         let range = dateFilter.range(customStart: customStart, customEnd: customEnd)
         let options = MessageExportOptions(startDate: range.start, endDate: range.end, includeAttachments: includeAttachments)
         let sourceMessages = visibleMessages ?? messages
         let outputPath = ensureExtension(path, for: format)
-        startExport(text: "Exporting \(chat.displayName)…", backupPath: backupPath) { exporter, _ in
+        startExport(text: "Exporting \(chat.displayName)…", backupPath: backupPath, source: source) { exporter, _ in
             try exporter.exportMessages(
                 sourceMessages,
                 title: chat.displayName,
@@ -160,10 +183,10 @@ final class WhatsAppViewModel: ObservableObject {
         customEnd: Date = Date(),
         includeAttachments: Bool = true
     ) {
-        guard let backupPath else { return }
+        guard let backupPath, let source = selectedSource else { return }
         let range = dateFilter.range(customStart: customStart, customEnd: customEnd)
         let options = MessageExportOptions(startDate: range.start, endDate: range.end, includeAttachments: includeAttachments)
-        startExport(text: "Preparing WhatsApp export…", backupPath: backupPath) { exporter, progress in
+        startExport(text: "Preparing WhatsApp export…", backupPath: backupPath, source: source) { exporter, progress in
             let result = try exporter.exportAllChats(
                 format: format,
                 to: directory,
@@ -184,10 +207,10 @@ final class WhatsAppViewModel: ObservableObject {
         customStart: Date = Date(),
         customEnd: Date = Date()
     ) {
-        guard let backupPath else { return }
+        guard let backupPath, let source = selectedSource else { return }
         let range = dateFilter.range(customStart: customStart, customEnd: customEnd)
         let options = MessageExportOptions(startDate: range.start, endDate: range.end, includeAttachments: true)
-        startExport(text: "Preparing complete WhatsApp export…", backupPath: backupPath) { exporter, progress in
+        startExport(text: "Preparing complete WhatsApp export…", backupPath: backupPath, source: source) { exporter, progress in
             let result = try exporter.exportAllChatsAllFormats(
                 to: parentDirectory,
                 options: options,
@@ -214,6 +237,7 @@ final class WhatsAppViewModel: ObservableObject {
     private func startExport(
         text: String,
         backupPath: String,
+        source: BackupManifest.WhatsAppSource,
         operation: @escaping (WhatsAppExporter, @escaping (Int, Int, String) throws -> Void) throws -> MessageExportResult
     ) {
         exportTask?.cancel()
@@ -223,16 +247,17 @@ final class WhatsAppViewModel: ObservableObject {
         let operationID = UUID()
         exportOperationID = operationID
 
-        exportTask = Task.detached(priority: .userInitiated) { [weak self, backupPath, operationID] in
+        exportTask = Task.detached(priority: .userInitiated) { [weak self, backupPath, source, operationID] in
             do {
-                let exporter = try WhatsAppExporter(backupPath: backupPath)
+                let exporter = try WhatsAppExporter(backupPath: backupPath, source: source)
                 let result = try operation(exporter) { completed, total, title in
                     try Task.checkCancellation()
                     let progress = total == 0 ? 0 : Double(completed) / Double(total)
                     Task { @MainActor [weak self] in
                         guard let self,
                               self.exportOperationID == operationID,
-                              self.backupPath == backupPath else { return }
+                              self.backupPath == backupPath,
+                              self.selectedSource == source else { return }
                         self.exportProgress = progress
                         self.exportProgressText = completed >= total
                             ? "Export complete"
@@ -242,7 +267,8 @@ final class WhatsAppViewModel: ObservableObject {
                 await MainActor.run { [weak self] in
                     guard let self,
                           self.exportOperationID == operationID,
-                          self.backupPath == backupPath else { return }
+                          self.backupPath == backupPath,
+                          self.selectedSource == source else { return }
                     self.isExporting = false
                     self.exportOperationID = nil
                     self.exportProgress = 1
@@ -252,7 +278,8 @@ final class WhatsAppViewModel: ObservableObject {
                 await MainActor.run { [weak self] in
                     guard let self,
                           self.exportOperationID == operationID,
-                          self.backupPath == backupPath else { return }
+                          self.backupPath == backupPath,
+                          self.selectedSource == source else { return }
                     self.isExporting = false
                     self.exportOperationID = nil
                     self.alertMessage = "Export cancelled"
@@ -262,7 +289,8 @@ final class WhatsAppViewModel: ObservableObject {
                 await MainActor.run { [weak self] in
                     guard let self,
                           self.exportOperationID == operationID,
-                          self.backupPath == backupPath else { return }
+                          self.backupPath == backupPath,
+                          self.selectedSource == source else { return }
                     self.isExporting = false
                     self.exportOperationID = nil
                     self.alertMessage = "Export failed: \(error.localizedDescription)"
