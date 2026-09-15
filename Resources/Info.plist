@@ -13,6 +13,7 @@
 		<string>es</string>
 		<string>fr</string>
 		<string>ar</string>
+		<string>lt</string>
 	</array>
 	<key>CFBundleDisplayName</key>
 	<string>Phosphor</string>

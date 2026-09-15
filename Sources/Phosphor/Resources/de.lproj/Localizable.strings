@@ -1,7 +1,7 @@
 /* Phosphor - German */
 
 /* Sidebar */
-"sidebar.devices" = "Gerate";
+"sidebar.devices" = "Geräte";
 "sidebar.backups" = "Backups";
 "sidebar.backupBrowser" = "Backup-Browser";
 "sidebar.timeMachine" = "Time Machine";
@@ -19,7 +19,7 @@
 "sidebar.watch" = "Apple Watch";
 
 /* Section Groups */
-"group.device" = "Gerat";
+"group.device" = "Gerät";
 "group.data" = "Daten";
 "group.backups" = "Backups";
 "group.tools" = "Werkzeuge";
@@ -28,7 +28,7 @@
 "action.refresh" = "Aktualisieren";
 "action.export" = "Exportieren...";
 "action.browse" = "Durchsuchen";
-"action.delete" = "Loschen";
+"action.delete" = "Löschen";
 "action.cancel" = "Abbrechen";
 "action.save" = "Speichern";
 "action.search" = "Suchen...";
@@ -36,9 +36,9 @@
 "action.newBackup" = "Neues Backup";
 
 /* Device */
-"device.noDeviceConnected" = "Kein Gerat verbunden";
+"device.noDeviceConnected" = "Kein Gerät verbunden";
 "device.connectViaUSB" = "Verbinden Sie Ihr iPhone, iPad oder iPod touch per USB, um es mit Phosphor zu verwalten.";
-"device.scanForDevices" = "Nach Geraten suchen";
+"device.scanForDevices" = "Nach Geräten suchen";
 
 /* Backups */
 "backup.backups" = "Backups";
@@ -47,7 +47,56 @@
 
 /* Welcome */
 "welcome.title" = "Willkommen bei Phosphor";
-"welcome.subtitle" = "Verbinden Sie ein iOS-Gerat oder wahlen Sie einen Bereich in der Seitenleiste.";
+"welcome.subtitle" = "Verbinden Sie ein iOS-Gerät oder wählen Sie einen Bereich in der Seitenleiste.";
+
+/* Runtime aliases for SwiftUI English literal keys */
+"%lld items" = "%lld Objekte";
+"All Domains" = "Alle Domänen";
+"Apple Watch" = "Apple Watch";
+"Apps" = "Apps";
+"Backup Browser" = "Backup-Browser";
+"Backups" = "Backups";
+"Browse" = "Durchsuchen";
+"Call Log" = "Anrufliste";
+"Cancel" = "Abbrechen";
+"Connect an iOS device or select a section from the sidebar." = "Verbinden Sie ein iOS-Gerät oder wählen Sie einen Bereich in der Seitenleiste.";
+"Connect your iPhone, iPad, or iPod touch via USB to manage it with Phosphor." = "Verbinden Sie Ihr iPhone, iPad oder iPod touch per USB, um es mit Phosphor zu verwalten.";
+"Could Not Read Layout" = "Layout konnte nicht gelesen werden";
+"Data" = "Daten";
+"Delete" = "Löschen";
+"Device" = "Gerät";
+"Devices" = "Geräte";
+"Diagnostics" = "Diagnose";
+"Export PNG" = "PNG exportieren";
+"Export..." = "Exportieren...";
+"Extract" = "Extrahieren";
+"File System" = "Dateisystem";
+"Health" = "Gesundheit";
+"Home Screen" = "Home-Bildschirm";
+"Messages" = "Nachrichten";
+"Music" = "Musik";
+"New Backup" = "Neues Backup";
+"No Backup Selected" = "Kein Backup ausgewählt";
+"No Backups Found" = "Keine Backups gefunden";
+"No Device Connected" = "Kein Gerät verbunden";
+"No Home Screen Data" = "Keine Home-Bildschirm-Daten";
+"Notes" = "Notizen";
+"Photos" = "Fotos";
+"Reading home screen layout…" = "Home-Bildschirm-Layout wird gelesen…";
+"Refresh" = "Aktualisieren";
+"Reload" = "Neu laden";
+"Restore" = "Wiederherstellen";
+"Safari" = "Safari";
+"Save" = "Speichern";
+"Scan for Devices" = "Nach Geräten suchen";
+"Search..." = "Suchen...";
+"Select a backup from the Backups section to see its home screen." = "Wähle ein Backup im Bereich „Backups“, um den Home-Bildschirm zu sehen.";
+"This backup does not contain IconState.plist (HomeDomain/SpringBoard)." = "Dieses Backup enthält keine IconState.plist (HomeDomain/SpringBoard).";
+"Time Machine" = "Time Machine";
+"Toggle Preview" = "Vorschau ein-/ausblenden";
+"Tools" = "Werkzeuge";
+"Welcome to Phosphor" = "Willkommen bei Phosphor";
+"WhatsApp" = "WhatsApp";
 
 /* Home Screen */
 "homeScreen.homeScreen" = "Home-Bildschirm";
