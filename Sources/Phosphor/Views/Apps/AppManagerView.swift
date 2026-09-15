@@ -9,6 +9,8 @@ struct AppManagerView: View {
     @StateObject private var appVM = AppViewModel()
     @State private var activeTab: AppTab = .backup
     @State private var searchText = ""
+    @State private var selectedAppIDs: Set<String> = []
+    @State private var showBulkUninstallConfirmation = false
 
     enum AppTab: String, CaseIterable {
         case device = "On Device"
@@ -35,14 +37,37 @@ struct AppManagerView: View {
             guard activeTab == .backup else { return }
             reloadBackupApps()
         }
-        .onChange(of: deviceVM.selectedDevice?.id) { _, _ in
+        .onChange(of: deviceVM.selectedDevice?.id) { _, newDeviceID in
+            selectedAppIDs.removeAll()
+            appVM.prepareForInstalledDevice(newDeviceID, isDeviceTabActive: activeTab == .device)
             guard activeTab == .device else { return }
             loadApps()
+        }
+        .onChange(of: appVM.installedApps.map(\.id)) { _, currentIDs in
+            selectedAppIDs.formIntersection(currentIDs)
         }
         .alert("Apps", isPresented: $appVM.showAlert) {
             Button("OK") {}
         } message: {
             Text(appVM.alertMessage)
+        }
+        .confirmationDialog(
+            "Uninstall \(selectedAppIDs.count) \(selectedAppIDs.count == 1 ? "App" : "Apps")?",
+            isPresented: $showBulkUninstallConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Uninstall Selected", role: .destructive) {
+                guard let udid = deviceVM.selectedDevice?.id else { return }
+                let appIDs = Array(selectedAppIDs)
+                Task {
+                    let successfulIDs = await appVM.uninstall(bundleIds: appIDs, udid: udid)
+                    selectedAppIDs.subtract(successfulIDs)
+                }
+            }
+            .disabled(appVM.isUninstalling)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This cannot be undone. System apps are never selected.")
         }
     }
 
@@ -148,6 +173,8 @@ struct AppManagerView: View {
                 )
             } else {
                 VStack(spacing: 0) {
+                    bulkUninstallControls
+
                     // The device list cannot extract anything - app containers only
                     // exist in a backup. Say so here instead of leaving people
                     // hunting for a button that is on the other tab (issue #46).
@@ -176,8 +203,57 @@ struct AppManagerView: View {
         }
     }
 
+    private var bulkUninstallControls: some View {
+        HStack(spacing: 10) {
+            Text(selectedAppIDs.isEmpty ? "Select user apps to uninstall" : "\(selectedAppIDs.count) selected")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+
+            Button(selectedAppIDs.isEmpty ? "Select All User Apps" : "Clear Selection") {
+                if selectedAppIDs.isEmpty {
+                    selectedAppIDs = Set(appVM.installedApps.filter { $0.appType == .user }.map(\.id))
+                } else {
+                    selectedAppIDs.removeAll()
+                }
+            }
+            .controlSize(.small)
+            .disabled(appVM.isUninstalling)
+
+            Button("Uninstall Selected", role: .destructive) {
+                showBulkUninstallConfirmation = true
+            }
+            .controlSize(.small)
+            .disabled(selectedAppIDs.isEmpty || deviceVM.selectedDevice == nil || appVM.isUninstalling)
+
+            Spacer()
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 8)
+        .background(.quaternary.opacity(0.4))
+    }
+
     private func installedAppRow(_ app: InstalledApp) -> some View {
         HStack(spacing: 12) {
+            if app.appType == .user {
+                Toggle(
+                    "Select \(app.displayName)",
+                    isOn: Binding(
+                        get: { selectedAppIDs.contains(app.id) },
+                        set: { isSelected in
+                            if isSelected {
+                                selectedAppIDs.insert(app.id)
+                            } else {
+                                selectedAppIDs.remove(app.id)
+                            }
+                        }
+                    )
+                )
+                .labelsHidden()
+                .toggleStyle(.checkbox)
+                .accessibilityLabel("Select \(app.displayName) for uninstall")
+                .disabled(appVM.isUninstalling)
+            }
+
             ZStack {
                 RoundedRectangle(cornerRadius: 10)
                     .fill(app.appType == .system ? Color.gray.opacity(0.1) : Color.brandAccent.opacity(0.1))
@@ -216,6 +292,7 @@ struct AppManagerView: View {
                 }
                 .menuStyle(.borderlessButton)
                 .frame(width: 24)
+                .disabled(appVM.isUninstalling)
             }
         }
         .padding(.vertical, 3)

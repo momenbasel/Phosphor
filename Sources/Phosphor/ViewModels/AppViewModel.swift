@@ -11,8 +11,11 @@ final class AppViewModel: ObservableObject {
     @Published var searchQuery = ""
     @Published var showAlert = false
     @Published var alertMessage = ""
+    @Published private(set) var isUninstalling = false
 
     let appManager = AppManager()
+    private var activeInstalledDeviceID: String?
+    private var installedAppsLoadID: UUID?
 
     var filteredInstalled: [InstalledApp] {
         guard !searchQuery.isEmpty else { return installedApps }
@@ -30,9 +33,23 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    func prepareForInstalledDevice(_ udid: String?, isDeviceTabActive: Bool) {
+        guard activeInstalledDeviceID != udid else { return }
+        activeInstalledDeviceID = udid
+        installedAppsLoadID = nil
+        installedApps = []
+        if isDeviceTabActive && udid == nil {
+            isLoading = false
+        }
+    }
+
     func loadInstalledApps(udid: String) async {
+        activeInstalledDeviceID = udid
+        let loadID = UUID()
+        installedAppsLoadID = loadID
         isLoading = true
         await appManager.listInstalledApps(udid: udid)
+        guard activeInstalledDeviceID == udid, installedAppsLoadID == loadID else { return }
         installedApps = appManager.installedApps
         isLoading = false
     }
@@ -61,10 +78,58 @@ final class AppViewModel: ObservableObject {
     }
 
     func uninstall(bundleId: String, udid: String) async {
+        guard !isUninstalling else { return }
+        guard activeInstalledDeviceID == udid,
+              let app = installedApps.first(where: { $0.id == bundleId }),
+              app.appType == .user else {
+            alertMessage = "Only user-installed apps can be removed"
+            showAlert = true
+            return
+        }
+
+        isUninstalling = true
+        defer { isUninstalling = false }
         let ok = await appManager.uninstallApp(bundleId: bundleId, udid: udid)
+        guard activeInstalledDeviceID == udid else { return }
         alertMessage = ok ? "App removed" : (appManager.lastError ?? "Removal failed")
         showAlert = true
-        if ok { await loadInstalledApps(udid: udid) }
+        if ok { installedApps.removeAll { $0.id == bundleId } }
+    }
+
+    /// Removes the requested user apps one at a time so failures can be reported
+    /// honestly and left selected for a retry. Successful rows are removed in
+    /// place, preserving the List's current scroll position.
+    func uninstall(bundleIds: [String], udid: String) async -> Set<String> {
+        guard !isUninstalling else { return [] }
+        guard activeInstalledDeviceID == udid else { return [] }
+        let removableIDs = bundleIds.filter { bundleId in
+            installedApps.first(where: { $0.id == bundleId })?.appType == .user
+        }
+        guard !removableIDs.isEmpty else { return [] }
+        isUninstalling = true
+        defer { isUninstalling = false }
+        var successfulIDs = Set<String>()
+        var failedCount = 0
+
+        for bundleId in removableIDs {
+            guard activeInstalledDeviceID == udid else { break }
+            if await appManager.uninstallApp(bundleId: bundleId, udid: udid) {
+                successfulIDs.insert(bundleId)
+            } else {
+                failedCount += 1
+            }
+        }
+
+        guard activeInstalledDeviceID == udid else { return successfulIDs }
+        installedApps.removeAll { successfulIDs.contains($0.id) }
+        let removedCount = successfulIDs.count
+        if failedCount == 0 {
+            alertMessage = "Removed \(removedCount) \(removedCount == 1 ? "app" : "apps")"
+        } else {
+            alertMessage = "Removed \(removedCount) \(removedCount == 1 ? "app" : "apps"). Failed to remove \(failedCount) \(failedCount == 1 ? "app" : "apps"); keep them selected and try again."
+        }
+        showAlert = true
+        return successfulIDs
     }
 
     func extractAppData(bundleId: String, backupPath: String, to dest: String) async {
