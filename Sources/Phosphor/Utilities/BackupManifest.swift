@@ -347,12 +347,89 @@ final class BackupManifest {
         return rows.first.flatMap(parseFileEntry)
     }
 
-    /// Get WhatsApp ChatStorage.sqlite.
-    func whatsAppDatabase() throws -> FileEntry? {
+    enum WhatsAppSource: String, CaseIterable, Identifiable, Hashable {
+        case personal
+        case business
+
+        var id: String { rawValue }
+
+        var displayName: String {
+            switch self {
+            case .personal: return "Personal"
+            case .business: return "Business"
+            }
+        }
+
+        var domains: Set<String> {
+            switch self {
+            case .personal:
+                return [
+                    "AppDomainGroup-group.net.whatsapp.WhatsApp.shared",
+                    "AppDomain-net.whatsapp.WhatsApp"
+                ]
+            case .business:
+                return [
+                    "AppDomainGroup-group.net.whatsapp.WhatsAppSMB.shared",
+                    "AppDomain-net.whatsapp.WhatsAppSMB"
+                ]
+            }
+        }
+    }
+
+    struct WhatsAppDatabase: Identifiable, Hashable {
+        let source: WhatsAppSource
+        let entry: FileEntry
+
+        var id: String { entry.id }
+    }
+
+    /// Discover one ChatStorage.sqlite for each supported WhatsApp app, in a
+    /// stable order. App Group locations take precedence over legacy app-domain
+    /// copies so a source never changes merely because SQLite returned rows in a
+    /// different order.
+    func whatsAppDatabases() throws -> [WhatsAppDatabase] {
         let rows = try db.query(
-            "SELECT fileID, domain, relativePath, flags FROM Files WHERE relativePath LIKE '%ChatStorage.sqlite' AND domain LIKE '%whatsapp%'"
+            """
+            SELECT fileID, domain, relativePath, flags
+            FROM Files
+            WHERE flags = 1
+              AND (
+                relativePath = 'ChatStorage.sqlite'
+                OR relativePath LIKE '%/ChatStorage.sqlite'
+              )
+              AND domain IN (
+                'AppDomainGroup-group.net.whatsapp.WhatsApp.shared',
+                'AppDomain-net.whatsapp.WhatsApp',
+                'AppDomainGroup-group.net.whatsapp.WhatsAppSMB.shared',
+                'AppDomain-net.whatsapp.WhatsAppSMB'
+              )
+            ORDER BY CASE domain
+                WHEN 'AppDomainGroup-group.net.whatsapp.WhatsApp.shared' THEN 0
+                WHEN 'AppDomain-net.whatsapp.WhatsApp' THEN 1
+                WHEN 'AppDomainGroup-group.net.whatsapp.WhatsAppSMB.shared' THEN 2
+                WHEN 'AppDomain-net.whatsapp.WhatsAppSMB' THEN 3
+            END, relativePath, fileID
+            """
         )
-        return rows.first.flatMap(parseFileEntry)
+        var seen = Set<WhatsAppSource>()
+        return rows.compactMap(parseFileEntry).compactMap { entry in
+            let source: WhatsAppSource?
+            switch entry.domain {
+            case "AppDomainGroup-group.net.whatsapp.WhatsApp.shared", "AppDomain-net.whatsapp.WhatsApp":
+                source = .personal
+            case "AppDomainGroup-group.net.whatsapp.WhatsAppSMB.shared", "AppDomain-net.whatsapp.WhatsAppSMB":
+                source = .business
+            default:
+                source = nil
+            }
+            guard let source, seen.insert(source).inserted else { return nil }
+            return WhatsAppDatabase(source: source, entry: entry)
+        }
+    }
+
+    /// The deterministic default is Personal when it exists, then Business.
+    func whatsAppDatabase() throws -> FileEntry? {
+        try whatsAppDatabases().first?.entry
     }
 
     /// Get all photo files from Camera Roll.
