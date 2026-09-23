@@ -1,302 +1,994 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Phosphor - Free iOS Device Manager for macOS</title>
-<meta name="description" content="Free and open-source iOS device manager for macOS. Full backups, message export, photo extraction, app management, Time Machine restore, device clone. No subscriptions.">
-<meta property="og:title" content="Phosphor - Free iOS Device Manager for macOS">
-<meta property="og:description" content="Open-source replacement for iMazing. 18 features, 7 languages, zero cost.">
-<meta property="og:type" content="website">
-<meta property="og:url" content="https://momenbasel.github.io/Phosphor/">
-<meta property="og:image" content="https://momenbasel.github.io/Phosphor/og-image.png">
-<meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="630">
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Phosphor - Free iOS Device Manager for macOS">
-<meta name="twitter:description" content="Open-source replacement for iMazing. 18 features, 7 languages, zero cost.">
-<meta name="twitter:image" content="https://momenbasel.github.io/Phosphor/og-image.png">
-<meta name="theme-color" content="#5856D6">
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1024 1024'><rect width='1024' height='1024' rx='230' fill='%235856D6'/><text x='512' y='512' font-family='-apple-system,Helvetica,Arial,sans-serif' font-size='620' font-weight='800' fill='%23fff' text-anchor='middle' dominant-baseline='central'>P</text></svg>">
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Phosphor Website</title>
+<meta name="description" content="Phosphor — a free, open-source iOS device manager. Backups, messages, photos, app management, device cloning, and more. No subscriptions. No iCloud. No compromises." />
+<meta name="theme-color" content="#121214" />
+<link rel="icon" href="assets/app-icon.png" />
+<meta property="og:title" content="Phosphor" />
+<meta property="og:description" content="A free, open-source iOS device manager that replaces $50/year tools." />
+<meta property="og:image" content="assets/og-image.png" />
+<meta property="og:type" content="website" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" integrity="sha512-SnH5WK+bZxgPHs44uWIX+LLJAJ9/2PkPKZ5QiAj6Ta86w+fsb2TkcmfRyVX3pBnMFcV7oQPJkl9QevSCWr3W6A==" crossorigin="anonymous" referrerpolicy="no-referrer" />
 <style>
+  @font-face {
+    font-family: 'Atrissi-Farsi';
+    src: url('assets/Atrissi-Farsi.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+  }
+
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Atrissi-Farsi', Arial, sans-serif;
+    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.01);
+  }
+
   :root {
-    --indigo: #5856D6;
-    --indigo-light: #7B79E0;
-    --indigo-dark: #3D3BBF;
-    --bg: #0D0D12;
-    --bg-card: #16161F;
-    --text: #F5F5F7;
-    --text-secondary: #86868B;
-    --border: #2A2A35;
-    --green: #34C759;
-    --red: #FF3B30;
-    --orange: #FF9500;
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    --bg: #121214;
+    --paper: #e9e9ec;
+    --paper-rgb: 233, 233, 236;
+    --ink: #26262b;
+    --ink-rgb: 38, 38, 43;
+    --text: #c9c9cf;
+    --surface-rgb: 23, 23, 26;
+    --surface-hi-rgb: 32, 32, 36;
+    --search-rgb: 36, 36, 40;
+    --search-text: #aeaeb6;
   }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
   body {
-    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif;
-    background: var(--bg); color: var(--text); line-height: 1.6; -webkit-font-smoothing: antialiased;
+    background-color: var(--bg);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
   }
-  .container { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
 
-  /* Nav */
-  nav {
-    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
-    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-    background: rgba(13,13,18,0.85); border-bottom: 1px solid var(--border);
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background-image: url('assets/background.jpg');
+    background-size: cover;
+    background-position: center;
+    filter: blur(50px) brightness(0.65);
+    transform: scale(1.05);
+    z-index: -2;
   }
-  nav .container { display: flex; align-items: center; justify-content: space-between; height: 56px; }
-  nav .logo {
-    font-size: 18px; font-weight: 700; color: var(--text);
-    text-decoration: none; display: flex; align-items: center; gap: 8px;
-  }
-  nav .logo .icon {
-    width: 28px; height: 28px; background: var(--indigo);
-    border-radius: 7px; display: flex; align-items: center; justify-content: center;
-    font-size: 16px; font-weight: 800; color: white;
-  }
-  nav .links { display: flex; gap: 24px; align-items: center; }
-  nav .links a { color: var(--text-secondary); text-decoration: none; font-size: 14px; transition: color 0.2s; }
-  nav .links a:hover { color: var(--text); }
-  .btn {
-    display: inline-flex; align-items: center; gap: 8px;
-    padding: 10px 20px; border-radius: 10px; font-size: 14px; font-weight: 600;
-    text-decoration: none; transition: all 0.2s; cursor: pointer;
-  }
-  .btn-primary { background: var(--indigo); color: white; }
-  .btn-primary:hover { background: var(--indigo-light); transform: translateY(-1px); }
-  .btn-secondary { background: transparent; color: var(--text); border: 1px solid var(--border); }
-  .btn-secondary:hover { border-color: var(--indigo); color: var(--indigo-light); }
 
-  /* Hero */
-  .hero {
-    padding: 140px 0 80px; text-align: center;
-    background: radial-gradient(ellipse at 50% 0%, rgba(88,86,214,0.15) 0%, transparent 60%);
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background-color: rgba(18, 18, 20, 0.35);
+    z-index: -1;
   }
-  .hero .badge {
-    display: inline-block; padding: 6px 14px; border-radius: 20px;
-    background: rgba(88,86,214,0.15); color: var(--indigo-light);
-    font-size: 13px; font-weight: 600; margin-bottom: 20px;
-    border: 1px solid rgba(88,86,214,0.25);
-  }
-  .hero h1 {
-    font-size: clamp(40px, 6vw, 64px); font-weight: 800;
-    letter-spacing: -0.03em; line-height: 1.1; margin-bottom: 16px;
-  }
-  .hero h1 .gradient {
-    background: linear-gradient(135deg, var(--indigo-light), #A78BFA, var(--indigo));
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
-  }
-  .hero p { font-size: 18px; color: var(--text-secondary); max-width: 600px; margin: 0 auto 32px; }
-  .hero .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
-  .hero .install-cmd {
-    display: inline-flex; align-items: center; gap: 8px;
-    background: var(--bg-card); border: 1px solid var(--border);
-    padding: 12px 20px; border-radius: 10px; font-family: 'SF Mono', ui-monospace, monospace;
-    font-size: 14px; color: var(--text-secondary); margin-top: 24px;
-    cursor: pointer; transition: border-color 0.2s;
-  }
-  .hero .install-cmd:hover { border-color: var(--indigo); }
-  .hero .install-cmd code { color: var(--text); }
-  .hero .stats {
-    display: flex; gap: 40px; justify-content: center; margin-top: 40px;
-  }
-  .hero .stat { text-align: center; }
-  .hero .stat .num { font-size: 28px; font-weight: 800; color: var(--indigo-light); }
-  .hero .stat .label { font-size: 12px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; }
 
-  /* Features */
-  .features { padding: 80px 0; }
-  .features h2 { font-size: 36px; font-weight: 700; text-align: center; margin-bottom: 12px; letter-spacing: -0.02em; }
-  .features .subtitle { text-align: center; color: var(--text-secondary); margin-bottom: 48px; font-size: 16px; }
-  .feature-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+  header {
+    background-color: rgba(var(--paper-rgb), 0.9);
+    backdrop-filter: blur(100px);
+    box-shadow: 0 1px 8px rgba(0, 0, 0, 0.2);
+    width: 100%;
+    height: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 0 184px 0 208px;
+    gap: 16px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .app-icon {
+    height: 72px;
+    width: auto;
+    display: block;
+    opacity: 0.85;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-right: auto;
+    margin-left: 32px;
+  }
+
+  .brand span {
+    font-size: 28px;
+    font-weight: 600;
+    color: var(--ink);
+    font-family: 'Atrissi-Farsi', Arial, sans-serif;
+    line-height: 1;
+  }
+
+  .github-btn {
+    height: 48px;
+    padding: 0 16px;
+    background-color: transparent;
+    color: var(--ink);
+    border: none;
+    outline: none;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 17px;
+    cursor: pointer;
+    transition: transform 0.1s var(--ease-out), background-color 0.1s ease;
+    text-decoration: none;
+  }
+
+  .github-btn:active {
+    transform: scale(0.98);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .github-btn:hover {
+      background-color: rgba(var(--ink-rgb), 0.12);
+    }
+  }
+
+  .github-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .github-icon i {
+    font-family: 'Font Awesome 6 Brands';
+    font-weight: 400;
+    font-size: 32px;
+    color: var(--ink);
+  }
+
+  .search-bar {
+    width: 280px;
+    height: 48px;
+    background-color: rgba(var(--search-rgb), 0.95);
+    border: none;
+    border-radius: 8px;
+    padding: 0 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    transition: width 0.22s var(--ease-out);
+  }
+
+  .search-bar:focus-within {
+    width: 424px;
+  }
+
+  .search-bar svg {
+    flex-shrink: 0;
+  }
+
+  .search-bar input {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--search-text);
+    font-size: 17px;
+  }
+
+  .search-bar input::placeholder {
+    color: var(--search-text);
+    opacity: 1;
+  }
+
+  .search-bar input::-webkit-search-cancel-button {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23e9e9ec' stroke-width='4.5' stroke-linecap='round'%3E%3Cline x1='18' y1='6' x2='6' y2='18'/%3E%3Cline x1='6' y1='6' x2='18' y2='18'/%3E%3C/svg%3E");
+    background-size: contain;
+    background-repeat: no-repeat;
+    cursor: pointer;
+  }
+
+  main {
+    flex: 1;
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: 40px;
+    padding: 24px 184px 40px 240px;
+  }
+
+  .content-box {
+    background-color: rgba(var(--paper-rgb), 0.9);
+    width: 250px;
+    min-height: 280px;
+    border-radius: 8px;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    position: fixed;
+    left: 240px;
+    top: 108px;
+    flex-shrink: 0;
+    z-index: 50;
+  }
+
+  .side-btn {
+    width: 100%;
+    padding: 6px 16px;
+    background-color: transparent;
+    color: var(--ink);
+    border: none;
+    outline: none;
+    border-radius: 8px;
+    font-size: 22px;
+    text-align: left;
+    cursor: pointer;
+    transition: transform 0.1s var(--ease-out), background-color 0.1s ease;
+    text-decoration: none;
+    display: block;
+  }
+
+  .side-btn:active {
+    transform: scale(0.985);
+  }
+
+  .side-btn.active {
+    background-color: rgba(var(--ink-rgb), 0.18);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .side-btn:hover {
+      background-color: rgba(var(--ink-rgb), 0.12);
+    }
+  }
+
+  .content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+    min-width: 0;
+    margin-left: 290px;
+  }
+
+  .content section {
+    scroll-margin-top: 100px;
+  }
+
+  #phosphor {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  #features,
+  #whats-new,
+  #compare {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    padding-top: 16px;
+  }
+
+  #compare {
+    padding-bottom: 40px;
+  }
+
+  .section-headline {
+    color: var(--text);
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1.3;
+    max-width: 700px;
+    margin-left: 24px;
+  }
+
+  .features-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 16px;
+    margin-left: 24px;
+    max-width: 1000px;
+  }
+
   .feature-card {
-    background: var(--bg-card); border: 1px solid var(--border);
-    border-radius: 16px; padding: 28px; transition: border-color 0.3s, transform 0.3s;
+    background-color: rgba(var(--surface-rgb), 0.9);
+    border-radius: 8px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
   }
-  .feature-card:hover { border-color: rgba(88,86,214,0.4); transform: translateY(-2px); }
+
+  .feature-card .icon-wrap,
+  .new-item .emoji {
+    line-height: 1;
+    color: var(--text);
+  }
+
   .feature-card .icon-wrap {
-    width: 44px; height: 44px; border-radius: 12px;
-    background: rgba(88,86,214,0.12); display: flex;
-    align-items: center; justify-content: center; font-size: 20px; margin-bottom: 16px;
+    font-size: 24px;
   }
-  .feature-card h3 { font-size: 17px; font-weight: 600; margin-bottom: 8px; }
-  .feature-card p { font-size: 14px; color: var(--text-secondary); line-height: 1.5; }
 
-  /* New section */
-  .new-features { padding: 60px 0; }
-  .new-features h2 { font-size: 28px; font-weight: 700; text-align: center; margin-bottom: 32px; }
-  .new-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+  .new-item .emoji {
+    font-size: 22px;
+    flex-shrink: 0;
+    width: 28px;
+    text-align: center;
+  }
+
+  .feature-card .icon-wrap i,
+  .new-item .emoji i {
+    font-family: 'Font Awesome 6 Free';
+    font-weight: 900;
+  }
+
+  .feature-card h3,
+  .new-item h4 {
+    color: var(--text);
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 1.3;
+  }
+
+  .feature-card p,
+  .new-item p {
+    color: var(--text);
+    font-size: 16px;
+    font-weight: 400;
+    line-height: 1.5;
+  }
+
+  .new-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 16px;
+    margin-left: 24px;
+    max-width: 1000px;
+  }
+
   .new-item {
-    background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
-    padding: 20px; display: flex; align-items: flex-start; gap: 12px;
+    background-color: rgba(var(--surface-rgb), 0.9);
+    border-radius: 8px;
+    padding: 16px 20px;
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
   }
-  .new-item .emoji { font-size: 24px; flex-shrink: 0; }
-  .new-item h4 { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
-  .new-item p { font-size: 12px; color: var(--text-secondary); }
 
-  /* Comparison */
-  .comparison { padding: 80px 0; }
-  .comparison h2 { font-size: 36px; font-weight: 700; text-align: center; margin-bottom: 40px; letter-spacing: -0.02em; }
-  table {
-    width: 100%; border-collapse: collapse;
-    background: var(--bg-card); border-radius: 16px; overflow: hidden; border: 1px solid var(--border);
+  .new-item p {
+    margin-top: 4px;
   }
-  th {
-    text-align: left; padding: 16px 20px; font-size: 13px;
-    text-transform: uppercase; letter-spacing: 0.05em;
-    color: var(--text-secondary); background: rgba(0,0,0,0.3); border-bottom: 1px solid var(--border);
+
+  .compare-table-wrap {
+    margin-left: 24px;
+    max-width: 1000px;
+    overflow-x: auto;
+    border-radius: 8px;
   }
-  td { padding: 14px 20px; font-size: 14px; border-bottom: 1px solid var(--border); }
-  tr:last-child td { border-bottom: none; }
-  .check { color: var(--green); }
-  .cross { color: var(--red); }
-  .highlight-col { background: rgba(88,86,214,0.06); }
 
-  /* CTA */
-  .cta-section { padding: 80px 0; text-align: center; border-top: 1px solid var(--border); }
-  .cta-section h2 { font-size: 32px; font-weight: 700; margin-bottom: 12px; }
-  .cta-section p { color: var(--text-secondary); margin-bottom: 28px; font-size: 16px; }
+  .compare-table {
+    width: 100%;
+    border-collapse: collapse;
+    background-color: rgba(var(--surface-rgb), 0.9);
+    border-radius: 8px;
+    overflow: hidden;
+  }
 
-  /* Footer */
-  footer { padding: 32px 0; border-top: 1px solid var(--border); text-align: center; color: var(--text-secondary); font-size: 13px; }
-  footer a { color: var(--indigo-light); text-decoration: none; }
+  .compare-table th,
+  .compare-table td {
+    padding: 10px 14px;
+    text-align: left;
+    font-size: 16px;
+    color: var(--text);
+    white-space: nowrap;
+  }
 
-  @media (max-width: 640px) {
-    .feature-grid, .new-grid { grid-template-columns: 1fr; }
-    table { font-size: 12px; }
-    th, td { padding: 10px 12px; }
-    .hero .stats { gap: 20px; }
+  .compare-table thead th {
+    font-size: 18px;
+    font-weight: 700;
+  }
+
+  .compare-table .highlight-col {
+    background-color: rgba(var(--surface-hi-rgb), 0.9);
+    font-weight: 700;
+  }
+
+  .compare-table .check {
+    color: #4ade80;
+  }
+
+  .compare-table .cross {
+    color: #f87171;
+  }
+
+  .accent-blue {
+    color: #60a5fa;
+  }
+
+  .compare-table .accent-blue,
+  .compare-table .accent-blue strong {
+    color: #60a5fa;
+  }
+
+  .compare-table a {
+    color: #60a5fa;
+  }
+
+  .cta {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 16px;
+    padding: 40px 24px 20px 24px;
+  }
+
+  .cta h2 {
+    color: var(--text);
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1.3;
+  }
+
+  .cta p {
+    color: var(--text);
+    font-size: 16px;
+    font-weight: 400;
+    line-height: 1.5;
+  }
+
+  .cta-buttons {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  footer {
+    padding: 24px 184px 24px 530px;
+    text-align: center;
+  }
+
+  footer p {
+    color: var(--text);
+    font-size: 16px;
+    line-height: 1.5;
+  }
+
+  footer p:first-child {
+    font-size: 18px;
+  }
+
+  footer a {
+    color: #60a5fa;
+  }
+
+  .search-mark {
+    background-color: #e9e9ec;
+    color: var(--ink);
+    border-radius: 3px;
+    padding: 0 2px;
+  }
+
+  .banner {
+    width: 75%;
+    max-width: 700px;
+    height: auto;
+    border-radius: 8px;
+    display: block;
+    opacity: 0.8;
+  }
+
+  .section-text {
+    color: var(--text);
+    font-size: 24px;
+    font-weight: 700;
+    line-height: 1.3;
+    max-width: 700px;
+    margin-left: 24px;
+    margin-top: -8px;
+  }
+
+  .action-row {
+    display: flex;
+    gap: 16px;
+    margin-left: 24px;
+  }
+
+  .action-btn {
+    height: 48px;
+    padding: 0 20px;
+    background-color: rgba(var(--paper-rgb), 0.9);
+    color: var(--ink);
+    border: none;
+    outline: none;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 18px;
+    cursor: pointer;
+    text-decoration: none;
+    transition: transform 0.1s var(--ease-out), background-color 0.1s ease;
+  }
+
+  .action-btn:active {
+    transform: scale(0.98);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .action-btn:hover {
+      background-color: rgba(220, 220, 224, 0.9);
+    }
+  }
+
+  .action-btn .fa-solid {
+    font-family: 'Font Awesome 6 Free';
+    font-weight: 900;
+  }
+
+  .action-btn .fa-brands {
+    font-family: 'Font Awesome 6 Brands';
+    font-weight: 400;
+    font-size: 22px;
+  }
+
+  .cmd-box {
+    margin-left: 24px;
+    max-width: 700px;
+    background-color: rgba(var(--paper-rgb), 0.9);
+    border-radius: 8px;
+    padding: 0 12px 0 16px;
+    min-height: 48px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .cmd-text {
+    flex: 1;
+    color: var(--ink);
+    font-size: 15px;
+    font-family: 'Cascadia Code', 'JetBrains Mono', 'Fira Code', Consolas, 'SF Mono', monospace;
+    white-space: nowrap;
+    overflow-x: auto;
+  }
+
+  .copy-btn {
+    background: transparent;
+    border: none;
+    outline: none;
+    cursor: pointer;
+    padding: 8px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    position: relative;
+    width: 36px;
+    height: 36px;
+    transition: transform 0.1s var(--ease-out), background-color 0.1s ease;
+  }
+
+  .copy-btn:active {
+    transform: scale(0.96);
+  }
+
+  .copy-btn svg,
+  .copy-btn i {
+    position: absolute;
+    transition: opacity 0.12s ease-out, transform 0.16s var(--ease-out);
+  }
+
+  .copy-btn i {
+    font-size: 20px;
+    color: var(--ink);
+    font-family: 'Font Awesome 6 Free';
+    font-weight: 900;
+  }
+
+  .copy-btn .copy-icon {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  .copy-btn .check-icon {
+    opacity: 0;
+    transform: translateY(-3px) scale(0.96);
+  }
+
+  .copy-btn.copied .copy-icon {
+    opacity: 0;
+    transform: translateY(3px) scale(0.96);
+    transition-delay: 0ms;
+  }
+
+  .copy-btn.copied .check-icon {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    transition-delay: 30ms;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .copy-btn:hover {
+      background-color: rgba(var(--ink-rgb), 0.12);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .copy-btn,
+    .copy-btn svg,
+    .copy-btn i,
+    .github-btn,
+    .side-btn,
+    .action-btn,
+    .search-bar {
+      transition-duration: 0.01ms;
+    }
+    .copy-btn:active,
+    .github-btn:active,
+    .side-btn:active,
+    .action-btn:active {
+      transform: none;
+    }
+    html {
+      scroll-behavior: auto;
+    }
+  }
+
+  @media (max-width: 1200px) {
+    header {
+      padding: 0 32px;
+    }
+    .brand {
+      margin-left: 0;
+    }
+    main {
+      padding: 24px 32px 40px 32px;
+    }
+    .content-box {
+      left: 32px;
+    }
+    footer {
+      padding: 24px 32px 24px 322px;
+    }
+  }
+
+  @media (max-width: 860px) {
+    header {
+      height: 64px;
+      padding: 0 16px;
+      gap: 10px;
+    }
+    .brand span {
+      display: none;
+    }
+    .app-icon {
+      height: 44px;
+    }
+    .github-btn {
+      font-size: 0;
+      gap: 0;
+      padding: 0 10px;
+    }
+    .search-bar {
+      width: 150px;
+    }
+    .search-bar:focus-within {
+      width: 190px;
+    }
+    main {
+      flex-direction: column;
+      padding: 16px;
+      gap: 16px;
+    }
+    .content-box {
+      position: static;
+      width: 100%;
+      min-height: 0;
+      flex-direction: row;
+      overflow-x: auto;
+      gap: 8px;
+    }
+    .side-btn {
+      width: auto;
+      white-space: nowrap;
+      font-size: 18px;
+    }
+    .content {
+      margin-left: 0;
+    }
+    .content section {
+      scroll-margin-top: 80px;
+    }
+    .section-headline,
+    .section-text,
+    .action-row,
+    .cmd-box,
+    .compare-table-wrap,
+    .features-grid,
+    .new-grid {
+      margin-left: 0;
+    }
+    .features-grid,
+    .new-grid {
+      grid-template-columns: 1fr;
+    }
+    .banner {
+      width: 100%;
+    }
+    .action-row {
+      flex-wrap: wrap;
+    }
+    footer {
+      padding: 24px 16px;
+    }
   }
 </style>
 </head>
 <body>
-
-<nav>
-  <div class="container">
-    <a href="/" class="logo"><span class="icon">P</span> Phosphor</a>
-    <div class="links">
-      <a href="#features">Features</a>
-      <a href="#new">What's New</a>
-      <a href="#comparison">Compare</a>
-      <a href="https://github.com/momenbasel/Phosphor">GitHub</a>
-      <a href="https://github.com/momenbasel/Phosphor/releases/latest" class="btn btn-primary">Download</a>
-    </div>
-  </div>
+<header>
+<div class="brand">
+<img src="assets/app-icon.png" alt="App icon" class="app-icon" />
+<span>Phosphor</span>
+</div>
+<a class="github-btn" href="https://github.com/momenbasel/Phosphor" target="_blank" rel="noopener">
+<span class="github-icon"><i class="fa-brands fa-github"></i></span>
+Github
+</a>
+<div class="search-bar">
+<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#e9e9ec" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16" y2="16"></line></svg>
+<input type="search" id="site-search" placeholder="Search..." autocomplete="off" />
+</div>
+</header>
+<main>
+<nav class="content-box">
+<a class="side-btn" href="#phosphor">Phosphor</a>
+<a class="side-btn" href="#features">Features</a>
+<a class="side-btn" href="#whats-new">What's New</a>
+<a class="side-btn" href="#compare">Compare</a>
 </nav>
-
-<section class="hero">
-  <div class="container">
-    <span class="badge">v1.0 - First Release</span>
-    <h1>Your iPhone.<br><span class="gradient">Your rules.</span></h1>
-    <p>A free, open-source iOS device manager that replaces $50/year tools. Backups, messages, photos, app management, device cloning, and more. No subscriptions. No iCloud. No compromises.</p>
-    <div class="cta">
-      <a href="https://github.com/momenbasel/Phosphor/releases/latest" class="btn btn-primary">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 12l-4-4h2.5V4h3v4H12L8 12z"/><path d="M2 14h12v-1.5H2V14z"/></svg>
-        Download DMG
-      </a>
-      <a href="https://github.com/momenbasel/Phosphor" class="btn btn-secondary">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-        View Source
-      </a>
-    </div>
-    <div class="install-cmd" onclick="navigator.clipboard.writeText('brew tap momenbasel/phosphor && brew install --cask phosphor')">
-      $ <code>brew tap momenbasel/phosphor && brew install --cask phosphor</code>
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" opacity="0.5"><path d="M4 4v10h8V4H4zm7 9H5V5h6v8zM6 2v1h5v1h1V2c0-.6-.4-1-1-1H7c-.6 0-1 .4-1 1z"/></svg>
-    </div>
-    <div class="stats">
-      <div class="stat"><div class="num">18</div><div class="label">Features</div></div>
-      <div class="stat"><div class="num">62</div><div class="label">Source Files</div></div>
-      <div class="stat"><div class="num">7</div><div class="label">Languages</div></div>
-      <div class="stat"><div class="num">0</div><div class="label">Dependencies</div></div>
-    </div>
-  </div>
+<div class="content">
+<section id="phosphor">
+<img src="assets/og-banner.png" onerror="this.onerror=null;this.src='assets/og-image.png';" alt="Phosphor banner" class="banner" />
+<p class="section-text">A free, <a class="accent-blue" href="https://github.com/momenbasel/Phosphor" target="_blank" rel="noopener">open-source</a> iOS device manager that replaces $50/year tools. Backups, messages, photos, app management, device cloning, and more. No subscriptions. No iCloud. No compromises.</p>
+<div class="action-row">
+<a href="https://github.com/momenbasel/Phosphor/releases/latest" class="action-btn" target="_blank" rel="noopener">
+<i class="fa-solid fa-download"></i>
+Download DMG
+</a>
+<a href="https://github.com/momenbasel/Phosphor" class="action-btn" target="_blank" rel="noopener">
+<i class="fa-brands fa-github"></i>
+View Source
+</a>
+</div>
+<div class="cmd-box">
+<code class="cmd-text" id="brew-cmd">brew tap momenbasel/phosphor &amp;&amp; brew install --cask phosphor</code>
+<button class="copy-btn" id="copy-btn" aria-label="Copy command">
+<i class="fa-solid fa-clipboard copy-icon"></i>
+<i class="fa-solid fa-check check-icon"></i>
+</button>
+</div>
 </section>
-
-<section id="features" class="features">
-  <div class="container">
-    <h2>Everything you need. Nothing you don't.</h2>
-    <p class="subtitle">Built natively with SwiftUI. Powered by libimobiledevice. Zero external dependencies.</p>
-    <div class="feature-grid">
-      <div class="feature-card"><div class="icon-wrap">&#128241;</div><h3>Device Dashboard</h3><p>Auto-detect connected devices. View model, iOS version, serial, UDID, IMEI, battery health, and storage breakdown. Supports iPhone, iPad, and iPod touch.</p></div>
-      <div class="feature-card"><div class="icon-wrap">&#128190;</div><h3>Smart Backups</h3><p>Full and incremental backups. Browse contents via Manifest.db. Extract individual files. Scheduled automatic backups via USB or Wi-Fi.</p></div>
-      <div class="feature-card"><div class="icon-wrap">&#9200;</div><h3>Time Machine Restore</h3><p>3D animated backup browser inspired by macOS Time Machine. Scroll through backup history and restore any snapshot with one click.</p></div>
-      <div class="feature-card"><div class="icon-wrap">&#128172;</div><h3>Message Export</h3><p>iMessage, SMS, and WhatsApp conversations. Export to CSV, HTML, JSON, or plain text. HTML styled with native chat bubbles.</p></div>
-      <div class="feature-card"><div class="icon-wrap">&#127748;</div><h3>Photo Extraction</h3><p>Browse Camera Roll from backup. Filter by type. Batch extract with original filenames and structure preserved.</p></div>
-      <div class="feature-card"><div class="icon-wrap">&#128230;</div><h3>App Management</h3><p>Install/remove IPAs. Browse app data in backups. Extract individual app containers. Fallback chain supports all ideviceinstaller versions.</p></div>
-      <div class="feature-card"><div class="icon-wrap">&#128196;</div><h3>File Browser + Drag-and-Drop</h3><p>Mount device filesystem via AFC. Navigate, copy, delete files. Drop files from Finder to transfer directly to device.</p></div>
-      <div class="feature-card"><div class="icon-wrap">&#128260;</div><h3>Device Clone</h3><p>Transfer all data between two devices. Backup source, restore to destination. Progress tracking through both phases.</p></div>
-      <div class="feature-card"><div class="icon-wrap">&#9889;</div><h3>Diagnostics</h3><p>Battery health with mAh details. Storage breakdown by category. Real-time syslog streaming with color-coded levels.</p></div>
-      <div class="feature-card"><div class="icon-wrap">&#9961;</div><h3>Health Data</h3><p>Browse all HealthKit data types. View samples, workouts, and activity summaries. Apple Watch Activity rings included.</p></div>
-      <div class="feature-card"><div class="icon-wrap">&#128221;</div><h3>Notes, Contacts, Calendar</h3><p>Apple Notes with folder browsing. Contacts with vCard export. Calendar events with ICS export. Call log and Safari history.</p></div>
-      <div class="feature-card"><div class="icon-wrap">&#127760;</div><h3>Localized</h3><p>Available in English, Arabic, Spanish, French, German, Japanese, and Chinese. .phosphor archive format for portable backups.</p></div>
-    </div>
-  </div>
+<section id="features">
+<h2 class="section-headline">Everything you need. Nothing you don't.</h2>
+<div class="features-grid">
+<div class="feature-card"><div class="icon-wrap"><i class="fa-solid fa-mobile-screen"></i></div><h3>Device Dashboard</h3><p>Auto-detect connected devices. View model, iOS version, serial, UDID, IMEI, battery health, and storage breakdown. Supports iPhone, iPad, and iPod touch.</p></div>
+<div class="feature-card"><div class="icon-wrap"><i class="fa-solid fa-floppy-disk"></i></div><h3>Smart Backups</h3><p>Full and incremental backups. Browse contents via Manifest.db. Extract individual files. Scheduled automatic backups via USB or Wi-Fi.</p></div>
+<div class="feature-card"><div class="icon-wrap"><i class="fa-solid fa-clock-rotate-left"></i></div><h3>Time Machine Restore</h3><p>3D animated backup browser inspired by macOS Time Machine. Scroll through backup history and restore any snapshot with one click.</p></div>
+<div class="feature-card"><div class="icon-wrap"><i class="fa-solid fa-message"></i></div><h3>Message Export</h3><p>iMessage, SMS, and WhatsApp conversations. Export to CSV, HTML, JSON, or plain text. HTML styled with native chat bubbles.</p></div>
+<div class="feature-card"><div class="icon-wrap"><i class="fa-solid fa-image"></i></div><h3>Photo Extraction</h3><p>Browse Camera Roll from backup. Filter by type. Batch extract with original filenames and structure preserved.</p></div>
+<div class="feature-card"><div class="icon-wrap"><i class="fa-solid fa-box"></i></div><h3>App Management</h3><p>Install/remove IPAs. Browse app data in backups. Extract individual app containers. Fallback chain supports all ideviceinstaller versions.</p></div>
+<div class="feature-card"><div class="icon-wrap"><i class="fa-solid fa-folder-open"></i></div><h3>File Browser + Drag-and-Drop</h3><p>Mount device filesystem via AFC. Navigate, copy, delete files. Drop files from Finder to transfer directly to device.</p></div>
+<div class="feature-card"><div class="icon-wrap"><i class="fa-solid fa-clone"></i></div><h3>Device Clone</h3><p>Transfer all data between two devices. Backup source, restore to destination. Progress tracking through both phases.</p></div>
+<div class="feature-card"><div class="icon-wrap"><i class="fa-solid fa-bolt"></i></div><h3>Diagnostics</h3><p>Battery health with mAh details. Storage breakdown by category. Real-time syslog streaming with color-coded levels.</p></div>
+<div class="feature-card"><div class="icon-wrap"><i class="fa-solid fa-heart-pulse"></i></div><h3>Health Data</h3><p>Browse all HealthKit data types. View samples, workouts, and activity summaries. Apple Watch Activity rings included.</p></div>
+<div class="feature-card"><div class="icon-wrap"><i class="fa-solid fa-note-sticky"></i></div><h3>Notes, Contacts, Calendar</h3><p>Apple Notes with folder browsing. Contacts with vCard export. Calendar events with ICS export. Call log and Safari history.</p></div>
+<div class="feature-card"><div class="icon-wrap"><i class="fa-solid fa-globe"></i></div><h3>Localized</h3><p>Available in English, Arabic, Spanish, French, German, Japanese, and Chinese. .phosphor archive format for portable backups.</p></div>
+</div>
 </section>
-
-<section id="new" class="new-features">
-  <div class="container">
-    <h2>New in v1.2.0</h2>
-    <div class="new-grid">
-      <div class="new-item"><div class="emoji">&#9200;</div><div><h4>Time Machine Restore</h4><p>3D animated backup browser with star field</p></div></div>
-      <div class="new-item"><div class="emoji">&#128197;</div><div><h4>Scheduled Backups</h4><p>Hourly, daily, weekly, monthly via USB or Wi-Fi</p></div></div>
-      <div class="new-item"><div class="emoji">&#128260;</div><div><h4>Device Clone</h4><p>Full device-to-device data transfer</p></div></div>
-      <div class="new-item"><div class="emoji">&#9961;</div><div><h4>Apple Watch</h4><p>Watch info, apps, Activity ring history</p></div></div>
-      <div class="new-item"><div class="emoji">&#128101;</div><div><h4>Contacts</h4><p>Browse and export as vCard or CSV</p></div></div>
-      <div class="new-item"><div class="emoji">&#128197;</div><div><h4>Calendar</h4><p>Events with ICS and CSV export</p></div></div>
-      <div class="new-item"><div class="emoji">&#128230;</div><div><h4>.phosphor Archives</h4><p>Portable backup export/import format</p></div></div>
-      <div class="new-item"><div class="emoji">&#127760;</div><div><h4>7 Languages</h4><p>EN, AR, ES, FR, DE, JA, ZH</p></div></div>
-      <div class="new-item"><div class="emoji">&#128295;</div><div><h4>12 Bug Fixes</h4><p>Triple-reviewed by Gemini, Codex, and manual trace</p></div></div>
-    </div>
-  </div>
+<section id="whats-new">
+<h2 class="section-headline">New in v1.2.0</h2>
+<div class="new-grid">
+<div class="new-item"><div class="emoji"><i class="fa-solid fa-clock-rotate-left"></i></div><div><h4>Time Machine Restore</h4><p>3D animated backup browser with star field</p></div></div>
+<div class="new-item"><div class="emoji"><i class="fa-solid fa-calendar-check"></i></div><div><h4>Scheduled Backups</h4><p>Hourly, daily, weekly, monthly via USB or Wi-Fi</p></div></div>
+<div class="new-item"><div class="emoji"><i class="fa-solid fa-clone"></i></div><div><h4>Device Clone</h4><p>Full device-to-device data transfer</p></div></div>
+<div class="new-item"><div class="emoji"><i class="fa-solid fa-stopwatch"></i></div><div><h4>Apple Watch</h4><p>Watch info, apps, Activity ring history</p></div></div>
+<div class="new-item"><div class="emoji"><i class="fa-solid fa-users"></i></div><div><h4>Contacts</h4><p>Browse and export as vCard or CSV</p></div></div>
+<div class="new-item"><div class="emoji"><i class="fa-solid fa-calendar-days"></i></div><div><h4>Calendar</h4><p>Events with ICS and CSV export</p></div></div>
+<div class="new-item"><div class="emoji"><i class="fa-solid fa-box-archive"></i></div><div><h4>.phosphor Archives</h4><p>Portable backup export/import format</p></div></div>
+<div class="new-item"><div class="emoji"><i class="fa-solid fa-globe"></i></div><div><h4>7 Languages</h4><p>EN, AR, ES, FR, DE, JA, ZH</p></div></div>
+<div class="new-item"><div class="emoji"><i class="fa-solid fa-wrench"></i></div><div><h4>12 Bug Fixes</h4><p>Triple-reviewed by Gemini, Codex, and manual trace</p></div></div>
+</div>
 </section>
-
-<section id="comparison" class="comparison">
-  <div class="container">
-    <h2>How Phosphor compares</h2>
-    <table>
-      <thead>
-        <tr><th>Feature</th><th>Finder</th><th>iMazing ($50/yr)</th><th class="highlight-col">Phosphor (Free)</th></tr>
-      </thead>
-      <tbody>
-        <tr><td>Full device backup</td><td class="check">Yes</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
-        <tr><td>Incremental backup</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
-        <tr><td>Scheduled Wi-Fi backup</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
-        <tr><td>Time Machine restore</td><td class="cross">No</td><td class="cross">No</td><td class="highlight-col check"><strong>Yes</strong></td></tr>
-        <tr><td>Device-to-device clone</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
-        <tr><td>Browse backup files</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
-        <tr><td>Export iMessages</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
-        <tr><td>Export WhatsApp</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
-        <tr><td>Photo extraction</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
-        <tr><td>Contacts/Calendar export</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
-        <tr><td>Apple Watch data</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
-        <tr><td>Drag-and-drop transfer</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
-        <tr><td>Backup archive format</td><td class="cross">No</td><td>.imazing</td><td class="highlight-col"><strong>.phosphor</strong></td></tr>
-        <tr><td>Localization</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">7 languages</td></tr>
-        <tr><td>Battery diagnostics</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
-        <tr><td>Open source</td><td class="cross">No</td><td class="cross">No</td><td class="highlight-col check"><strong>MIT</strong></td></tr>
-        <tr><td>Price</td><td>Free</td><td>$49.99/yr</td><td class="highlight-col"><strong>Free forever</strong></td></tr>
-      </tbody>
-    </table>
-  </div>
+<section id="compare">
+<h2 class="section-headline">How Phosphor compares</h2>
+<div class="compare-table-wrap">
+<table class="compare-table">
+<thead>
+<tr><th scope="col">Feature</th><th scope="col">Finder</th><th scope="col">iMazing ($50/yr)</th><th scope="col" class="highlight-col">Phosphor (Free)</th></tr>
+</thead>
+<tbody>
+<tr><td>Full device backup</td><td class="check">Yes</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
+<tr><td>Incremental backup</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
+<tr><td>Scheduled Wi-Fi backup</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
+<tr><td>Time Machine restore</td><td class="cross">No</td><td class="cross">No</td><td class="highlight-col check"><strong>Yes</strong></td></tr>
+<tr><td>Device-to-device clone</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
+<tr><td>Browse backup files</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
+<tr><td>Export iMessages</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
+<tr><td>Export WhatsApp</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
+<tr><td>Photo extraction</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
+<tr><td>Contacts/Calendar export</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
+<tr><td>Apple Watch data</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
+<tr><td>Drag-and-drop transfer</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
+<tr><td>Backup archive format</td><td class="cross">No</td><td>.imazing</td><td class="highlight-col"><strong>.phosphor</strong></td></tr>
+<tr><td>Localization</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col">7 languages</td></tr>
+<tr><td>Battery diagnostics</td><td class="cross">No</td><td class="check">Yes</td><td class="highlight-col check">Yes</td></tr>
+<tr><td>Open source</td><td class="cross">No</td><td class="cross">No</td><td class="highlight-col"><a href="https://github.com/momenbasel/Phosphor/blob/main/LICENSE" target="_blank" rel="noopener">MIT</a></td></tr>
+<tr><td>Price</td><td class="check">Free</td><td class="cross">$49.99/yr</td><td class="highlight-col check"><strong>Free forever</strong></td></tr>
+</tbody>
+</table>
+</div>
 </section>
-
-<section class="cta-section">
-  <div class="container">
-    <h2>Take control of your device.</h2>
-    <p>No sign-up. No payment. No lock-in. Just download and go.</p>
-    <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
-      <a href="https://github.com/momenbasel/Phosphor/releases/latest" class="btn btn-primary">Download Phosphor</a>
-      <a href="https://github.com/momenbasel/Phosphor" class="btn btn-secondary">Star on GitHub</a>
-    </div>
-  </div>
+<section class="cta">
+<h2>Take control of your device.</h2>
+<p>No sign-up. No payment. No lock-in. Just download and go.</p>
+<div class="cta-buttons">
+<a href="https://github.com/momenbasel/Phosphor/releases/latest" class="action-btn" target="_blank" rel="noopener"><i class="fa-solid fa-download"></i>Download Phosphor</a>
+<a href="https://github.com/momenbasel/Phosphor" class="action-btn" target="_blank" rel="noopener"><i class="fa-brands fa-github"></i>Star on GitHub</a>
+</div>
 </section>
-
+</div>
+</main>
 <footer>
-  <div class="container">
-    <p>Phosphor is open source under the <a href="https://github.com/momenbasel/Phosphor/blob/main/LICENSE">MIT License</a>. Built by <a href="https://github.com/momenbasel">Moamen Basel</a>.</p>
-  </div>
+<p>Website and designs by <a href="https://github.com/CHE3MZ" target="_blank" rel="noopener">CHE3MZ</a>.</p>
+<p>Phosphor is open source under the <a href="https://github.com/momenbasel/Phosphor/blob/main/LICENSE">MIT License</a>. Built by <a href="https://github.com/momenbasel">Moamen Basel</a>.</p>
 </footer>
-
+<script>
+(function() {
+  var btn = document.getElementById('copy-btn');
+  var timer = null;
+  btn.addEventListener('click', function() {
+    var cmdEl = document.getElementById('brew-cmd');
+    var cmd = cmdEl ? cmdEl.textContent : 'brew tap momenbasel/phosphor && brew install --cask phosphor';
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(cmd);
+    }
+    btn.classList.add('copied');
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(function() { btn.classList.remove('copied'); }, 1500);
+  });
+})();
+(function() {
+  var input = document.getElementById('site-search');
+  if (!input) return;
+  function clearMarks(root) {
+    root.querySelectorAll('mark.search-mark').forEach(function(m) {
+      m.replaceWith(document.createTextNode(m.textContent));
+    });
+    root.normalize();
+  }
+  function highlightIn(el, q) {
+    var lower = q.toLowerCase();
+    var found = false;
+    var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    var nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    nodes.forEach(function(node) {
+      var text = node.nodeValue;
+      var t = text.toLowerCase();
+      var idx = t.indexOf(lower);
+      if (idx === -1) return;
+      found = true;
+      var frag = document.createDocumentFragment();
+      var last = 0;
+      while (idx !== -1) {
+        frag.appendChild(document.createTextNode(text.slice(last, idx)));
+        var mark = document.createElement('mark');
+        mark.className = 'search-mark';
+        mark.textContent = text.slice(idx, idx + q.length);
+        frag.appendChild(mark);
+        last = idx + q.length;
+        idx = t.indexOf(lower, last);
+      }
+      frag.appendChild(document.createTextNode(text.slice(last)));
+      node.parentNode.replaceChild(frag, node);
+    });
+    return found;
+  }
+  function applySearch() {
+    var raw = input.value.trim();
+    clearMarks(document.querySelector('.content'));
+    var staticEls = document.querySelectorAll('#phosphor .banner, #phosphor .action-row, #phosphor .cmd-box, .cta-buttons');
+    if (!raw) {
+      document.querySelectorAll('.feature-card, .new-item, .compare-table tbody tr, .content section, .section-headline, .section-text').forEach(function(el) { el.style.display = ''; });
+      staticEls.forEach(function(el) { el.style.display = ''; });
+      return;
+    }
+    staticEls.forEach(function(el) { el.style.display = 'none'; });
+    var cards = document.querySelectorAll('.feature-card');
+    cards.forEach(function(card) {
+      var h3 = card.querySelector('h3');
+      var p = card.querySelector('p');
+      var m1 = h3 ? highlightIn(h3, raw) : false;
+      var m2 = p ? highlightIn(p, raw) : false;
+      card.style.display = (m1 || m2) ? '' : 'none';
+    });
+    var news = document.querySelectorAll('.new-item');
+    news.forEach(function(item) {
+      var h4 = item.querySelector('h4');
+      var p = item.querySelector('p');
+      var m1 = h4 ? highlightIn(h4, raw) : false;
+      var m2 = p ? highlightIn(p, raw) : false;
+      item.style.display = (m1 || m2) ? '' : 'none';
+    });
+    var rows = document.querySelectorAll('.compare-table tbody tr');
+    rows.forEach(function(tr) {
+      var tds = tr.querySelectorAll('td');
+      var any = false;
+      tds.forEach(function(td) { if (highlightIn(td, raw)) any = true; });
+      tr.style.display = any ? '' : 'none';
+    });
+    document.querySelectorAll('.section-headline, .section-text, .cta h2, .cta p').forEach(function(el) {
+      var hit = highlightIn(el, raw);
+      el.style.display = hit ? '' : 'none';
+    });
+    document.querySelectorAll('.content section').forEach(function(sec) {
+      var visible = sec.querySelectorAll('.feature-card:not([style*="none"]), .new-item:not([style*="none"]), tbody tr:not([style*="none"])');
+      var headlineVisible = false;
+      sec.querySelectorAll('.section-headline, .section-text').forEach(function(h) { if (h.style.display !== 'none') headlineVisible = true; });
+      var hasVisible = headlineVisible || visible.length > 0;
+      if (sec.id === 'phosphor') {
+        var p = sec.querySelector('.section-text');
+        hasVisible = (p && p.style.display !== 'none');
+      }
+      sec.style.display = hasVisible ? '' : 'none';
+    });
+  }
+  function firstMatch() {
+    var items = document.querySelectorAll('.feature-card, .new-item, .compare-table tbody tr, .section-text');
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].style.display !== 'none' && items[i].offsetParent !== null) return items[i];
+    }
+    return null;
+  }
+  input.addEventListener('input', applySearch);
+  input.addEventListener('search', applySearch);
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+      applySearch();
+      var m = firstMatch();
+      if (m) m.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  });
+})();
+(function() {
+  var links = Array.prototype.slice.call(document.querySelectorAll('.side-btn'));
+  if (!links.length || !('IntersectionObserver' in window)) return;
+  function setActive(id) {
+    links.forEach(function(a) { a.classList.toggle('active', a.getAttribute('href') === '#' + id); });
+  }
+  var obs = new IntersectionObserver(function(entries) {
+    entries.forEach(function(e) { if (e.isIntersecting) setActive(e.target.id); });
+  }, { rootMargin: '-30% 0px -60% 0px' });
+  document.querySelectorAll('.content section[id]').forEach(function(s) { obs.observe(s); });
+})();
+</script>
 </body>
 </html>
