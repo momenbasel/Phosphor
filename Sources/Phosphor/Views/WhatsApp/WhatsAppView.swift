@@ -23,6 +23,10 @@ struct WhatsAppView: View {
         .onAppear(perform: loadIfNeeded)
         .onChange(of: backupVM.selectedBackup?.id) { _, _ in handleSelectedBackupChange() }
         .onChange(of: backupVM.backups.map(\.path)) { _, _ in reconcileLoadedBackup() }
+        .onChange(of: whatsAppVM.selectedSource) { _, _ in
+            chatSearchText = ""
+            messageSearchText = ""
+        }
         .alert("WhatsApp", isPresented: $whatsAppVM.showAlert) {
             Button("OK") {}
         } message: {
@@ -62,6 +66,12 @@ struct WhatsAppView: View {
 
             if !backupVM.backups.isEmpty {
                 backupPicker
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+            }
+
+            if whatsAppVM.availableSources.count > 1 {
+                sourcePicker
                     .padding(.horizontal, 16)
                     .padding(.bottom, 8)
             }
@@ -154,6 +164,19 @@ struct WhatsAppView: View {
         .padding(.vertical, 6)
         .background(.quaternary)
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var sourcePicker: some View {
+        Picker("WhatsApp", selection: Binding(
+            get: { whatsAppVM.selectedSource ?? .personal },
+            set: { whatsAppVM.selectSource($0) }
+        )) {
+            ForEach(whatsAppVM.availableSources) { source in
+                Text(source.displayName).tag(source)
+            }
+        }
+        .pickerStyle(.segmented)
+        .accessibilityLabel("WhatsApp source")
     }
 
     private var exportAllMenu: some View {
