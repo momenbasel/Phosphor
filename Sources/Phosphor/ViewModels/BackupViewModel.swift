@@ -19,7 +19,15 @@ final class BackupViewModel: ObservableObject {
         var state: State
         var progressText: String
         var progressFraction: Double?
+        var eta: String?
+        var speed: String?
+        var isResume: Bool = false
+        var resumeBaselineFraction: Double = 0.0
+        var isCancelling: Bool = false
+        var isAwaitingPasscode: Bool = false
         var errorMessage: String?
+
+        var finalizationMetrics: FinalizationProgressTracker.Metrics?
 
         var isActive: Bool {
             switch state {
@@ -28,21 +36,100 @@ final class BackupViewModel: ObservableObject {
             }
         }
 
+        var isFinalizing: Bool {
+            if case .running = state {
+                return (progressFraction ?? 0.0) >= 0.99 || finalizationMetrics != nil
+            }
+            return false
+        }
+
+        var isNonResumableFinalizationPhase: Bool {
+            if case .running = state, isFinalizing {
+                return true
+            }
+            return false
+        }
+
         var displayProgressText: String {
             switch state {
             case .queued(let position): return "Queued · #\(position)"
             case .running:
-                guard let progressFraction else { return "Backing up" }
-                return "Backing up \(Int(progressFraction * 100))%"
+                if isCancelling {
+                    return "Pausing (Saving progress)..."
+                }
+                var components: [String] = []
+                if isFinalizing {
+                    let pct = Int(displayProgressFraction * 100)
+                    if let metrics = finalizationMetrics {
+                        switch metrics.stage {
+                        case .moving:
+                            components.append("Finalizing \(pct)%")
+                            components.append("\(metrics.filesMoved.formatted()) / ~\(metrics.totalFiles.formatted()) files")
+                            if let speed = metrics.formattedSpeed {
+                                components.append(speed)
+                            }
+                            if let eta = metrics.formattedETA {
+                                components.append("ETA: \(eta)")
+                            }
+                        case .verifying(let scanned, let total):
+                            components.append("Verifying \(Int(metrics.phaseFraction * 100))%")
+                            components.append("Bucket \(scanned)/\(total)")
+                            if let eta = metrics.formattedETA {
+                                components.append("ETA: \(eta)")
+                            }
+                        }
+                    } else {
+                        components.append("Finalizing \(pct)%")
+                        components.append("Reorganizing & verifying files...")
+                    }
+                } else if isResume && speed == nil && eta == nil && (progressFraction ?? 0.0) <= resumeBaselineFraction {
+                    components.append("Resuming · Preparing...")
+                } else {
+                    let pct = Int(displayProgressFraction * 100)
+                    components.append("Backing up \(pct)%")
+                }
+                if !isFinalizing {
+                    if let speed, !speed.isEmpty {
+                        components.append(speed)
+                    }
+                    if let eta, !eta.isEmpty {
+                        components.append("ETA: \(eta)")
+                    }
+                }
+                return components.joined(separator: " · ")
             case .completed: return "Completed"
             case .failed: return "Failed"
-            case .cancelled: return "Cancelled"
+            case .cancelled:
+                let pct = Int(displayProgressFraction * 100)
+                if pct > 0 {
+                    return "Paused at \(pct)% · Progress saved"
+                }
+                return "Paused · Progress saved"
             }
         }
 
         var displayProgressFraction: Double {
-            guard let progressFraction else { return 0.05 }
-            return min(max(progressFraction, 0.05), 1)
+            if isFinalizing {
+                if let metrics = finalizationMetrics {
+                    // Smoothly map phase fraction across the 0.90 -> 0.99 window
+                    let scaled = 0.90 + (metrics.phaseFraction * 0.09)
+                    return min(max(scaled, 0.90), 0.99)
+                }
+                return 0.99
+            }
+            guard let progressFraction else {
+                return resumeBaselineFraction > 0 ? resumeBaselineFraction : 0.05
+            }
+            if isResume && resumeBaselineFraction > 0 {
+                // Compute progress over total: baseline + remaining * sessionFraction
+                let remainingFraction = 1.0 - resumeBaselineFraction
+                let totalFraction = resumeBaselineFraction + (remainingFraction * progressFraction)
+                let bounded = min(max(totalFraction, resumeBaselineFraction), 1.0)
+                // Cap in-progress running state at 0.99 so 100% is only shown when state becomes .completed
+                return state == .completed ? 1.0 : min(bounded, 0.99)
+            }
+            let bounded = min(max(progressFraction, 0.05), 1.0)
+            return state == .completed ? 1.0 : min(bounded, 0.99)
         }
     }
 
@@ -85,6 +172,7 @@ final class BackupViewModel: ObservableObject {
     private var pendingBackupRequests: [String: BackupRequest] = [:]
     private var backupManagers: [String: BackupManager] = [:]
     private var backupJobTasks: [String: Task<Void, Never>] = [:]
+    private var finalizationTasks: [String: Task<Void, Never>] = [:]
     private var backupCompletionContinuations: [String: CheckedContinuation<Void, Never>] = [:]
     private var backupJobWaiters: [String: [BackupJobWaiter]] = [:]
 
@@ -94,6 +182,26 @@ final class BackupViewModel: ObservableObject {
         let incremental: Bool
         let preferNetwork: Bool
         let encrypted: Bool
+        let isResume: Bool
+        let device: DeviceInfo?
+
+        init(
+            id: UUID = UUID(),
+            udid: String,
+            incremental: Bool = false,
+            preferNetwork: Bool = false,
+            encrypted: Bool = false,
+            isResume: Bool = false,
+            device: DeviceInfo? = nil
+        ) {
+            self.id = id
+            self.udid = udid
+            self.incremental = incremental
+            self.preferNetwork = preferNetwork
+            self.encrypted = encrypted
+            self.isResume = isResume
+            self.device = device
+        }
     }
 
     private struct BackupJobWaiter {
@@ -101,13 +209,20 @@ final class BackupViewModel: ObservableObject {
         let continuation: CheckedContinuation<Void, Never>
     }
 
+    private var backupDiscoveryTask: Task<Void, Never>?
+
     func loadBackups() {
         sizeResolutionTask?.cancel()
-        backupManager.discoverBackups()
-        backups = backupManager.backups
-        loadError = backupManager.lastError
-        reconcileSelectedBackupAfterReload()
-        resolveBackupSizesInBackground(for: backups)
+        backupDiscoveryTask?.cancel()
+        backupDiscoveryTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.backupManager.discoverBackupsAsync()
+            guard !Task.isCancelled else { return }
+            self.backups = self.backupManager.backups
+            self.loadError = self.backupManager.lastError
+            self.reconcileSelectedBackupAfterReload()
+            self.resolveBackupSizesInBackground(for: self.backups)
+        }
     }
 
     private func reconcileSelectedBackupAfterReload() {
@@ -166,13 +281,15 @@ final class BackupViewModel: ObservableObject {
         }
     }
 
-    func createBackup(udid: String, incremental: Bool = false, preferNetwork: Bool = false, encrypted: Bool = false) async {
+    func createBackup(udid: String, incremental: Bool = false, preferNetwork: Bool = false, encrypted: Bool = false, isResume: Bool = false, device: DeviceInfo? = nil) async {
         let request = BackupRequest(
             id: UUID(),
             udid: udid,
             incremental: incremental,
             preferNetwork: preferNetwork,
-            encrypted: encrypted
+            encrypted: encrypted,
+            isResume: isResume,
+            device: device
         )
         latestBackupRequests[udid] = request
 
@@ -198,6 +315,7 @@ final class BackupViewModel: ObservableObject {
                     state: .queued(position: position),
                     progressText: "Queued",
                     progressFraction: nil,
+                    isResume: request.isResume,
                     errorMessage: nil
                 )
                 refreshLegacyProgressState()
@@ -213,16 +331,13 @@ final class BackupViewModel: ObservableObject {
                 backupActivities[udid] = BackupActivity(
                     udid: udid,
                     state: .running,
-                    progressText: "Preparing...",
+                    progressText: request.isResume ? "Preparing to resume..." : "Preparing...",
                     progressFraction: nil,
+                    isResume: request.isResume,
                     errorMessage: nil
                 )
                 refreshLegacyProgressState()
                 await withCheckedContinuation { continuation in
-                    // Every caller owns a detachable completion path, including
-                    // the request that starts the shared job. Keep the physical
-                    // backup in its own task so cancelling this request can return
-                    // immediately when another coalesced caller still authorizes it.
                     backupCompletionContinuations[udid] = continuation
                     let task = Task { [weak self] in
                         guard let self else { return }
@@ -249,6 +364,10 @@ final class BackupViewModel: ObservableObject {
         backupActivities[udid]?.isActive == true
     }
 
+    func dismissActivity(for udid: String) {
+        backupActivities.removeValue(forKey: udid)
+    }
+
     func cancelBackup(udid: String) {
         switch jobQueue.cancel(udid: udid) {
         case .removedQueued:
@@ -271,10 +390,33 @@ final class BackupViewModel: ObservableObject {
                 // that handoff instead of letting the promoted job start anyway.
                 backupJobTasks[udid]?.cancel()
             }
-            updateActivity(udid: udid) { $0.progressText = "Cancelling..." }
+            updateActivity(udid: udid) {
+                $0.isCancelling = true
+                $0.isAwaitingPasscode = false
+                $0.progressText = "Cancelling..."
+            }
         case .notFound:
             break
         }
+    }
+
+    func resumeBackup(udid: String, preferNetwork: Bool = false, encrypted: Bool = false, device: DeviceInfo? = nil) async {
+        // If a stale .cancelled activity exists the job slot may still be held
+        // in jobQueue (finishBackupJob not yet called from runBackupJob because
+        // the drain task is still in-flight). Force-eject it so enqueue returns
+        // .started instead of .duplicate — which would silently discard the resume.
+        if backupActivities[udid]?.state == .cancelled {
+            jobQueue.finish(udid: udid)
+            backupActivities.removeValue(forKey: udid)
+        }
+        await createBackup(
+            udid: udid,
+            incremental: false,
+            preferNetwork: preferNetwork,
+            encrypted: encrypted,
+            isResume: true,
+            device: device
+        )
     }
 
     private func cancelBackupRequest(udid: String, requestID: UUID) {
@@ -312,14 +454,48 @@ final class BackupViewModel: ObservableObject {
 
         let manager = BackupManager()
         backupManagers[udid] = manager
+        let isResume = request.isResume
+        var baselineFraction: Double = 0.0
+        if isResume {
+            let stats = await Task.detached(priority: .utility) {
+                BackupManager.incompleteBackupStats(for: udid)
+            }.value
+            if let stats {
+                if let device = request.device, let calculatedFraction = stats.completionFraction(for: device) {
+                    // Accurately reflect preserved progress up to 99%
+                    baselineFraction = min(max(calculatedFraction, 0.05), 0.99)
+                } else if stats.totalBytes > 1_000_000_000 {
+                    // Fallback when device capacity is unknown: scale generously up to 95%
+                    baselineFraction = min(Double(stats.totalBytes) / 70_000_000_000.0, 0.95)
+                    baselineFraction = max(baselineFraction, 0.10)
+                } else if stats.fileCount > 5000 {
+                    baselineFraction = 0.10
+                } else {
+                    baselineFraction = 0.05
+                }
+            } else {
+                baselineFraction = 0.05
+            }
+        }
         updateActivity(udid: udid) {
             $0.state = .running
-            $0.progressText = "Preparing..."
+            $0.isResume = isResume
+            $0.resumeBaselineFraction = baselineFraction
+            $0.progressText = isResume ? "Resuming..." : "Preparing..."
         }
         refreshLegacyProgressState()
 
         let success: Bool
-        if request.incremental {
+        if request.isResume {
+            success = await manager.resumeIncompleteBackup(
+                udid: udid,
+                encrypted: request.encrypted,
+                preferNetwork: request.preferNetwork
+            ) { [weak self, weak manager] text in
+                guard let manager else { return }
+                self?.updateBackupProgress(udid: udid, text: text, manager: manager)
+            }
+        } else if request.incremental {
             success = await manager.createIncrementalBackup(udid: udid, preferNetwork: request.preferNetwork) { [weak self, weak manager] text in
                 guard let manager else { return }
                 self?.updateBackupProgress(udid: udid, text: text, manager: manager)
@@ -333,6 +509,7 @@ final class BackupViewModel: ObservableObject {
 
         if success {
             updateActivity(udid: udid) {
+                $0.isCancelling = false
                 $0.state = .completed
                 $0.progressText = "Completed"
                 $0.progressFraction = 1
@@ -340,12 +517,14 @@ final class BackupViewModel: ObservableObject {
             loadBackups()
         } else if manager.lastOperationWasCancelled {
             updateActivity(udid: udid) {
+                $0.isCancelling = false
                 $0.state = .cancelled
-                $0.progressText = "Cancelled"
+                $0.progressText = "Stopped (Progress Saved)"
             }
         } else {
             let error = manager.lastBackupFailure?.message ?? manager.lastError ?? "Backup failed"
             updateActivity(udid: udid) {
+                $0.isCancelling = false
                 $0.state = .failed
                 $0.progressText = "Failed"
                 $0.errorMessage = error
@@ -360,6 +539,7 @@ final class BackupViewModel: ObservableObject {
     }
 
     private func finishBackupJob(udid: String) {
+        finalizationTasks.removeValue(forKey: udid)?.cancel()
         requestTracker.finish(udid: udid)
         pendingBackupRequests.removeValue(forKey: udid)
         backupManagers.removeValue(forKey: udid)
@@ -381,6 +561,7 @@ final class BackupViewModel: ObservableObject {
 
     private func updateActivity(udid: String, update: (inout BackupActivity) -> Void) {
         guard var activity = backupActivities[udid] else { return }
+        guard !activity.isCancelling else { return }
         update(&activity)
         backupActivities[udid] = activity
     }
@@ -428,15 +609,76 @@ final class BackupViewModel: ObservableObject {
     }
 
     private func updateBackupProgress(udid: String, text: String, manager: BackupManager) {
+        let lower = text.lowercased()
+        let awaitingPasscode = lower.contains("passcode")
+            || lower.contains("pin")
+            || lower.contains("trust")
+            || lower.contains("unlock")
+            || lower.contains("not paired")
+            || lower.contains("pairing")
         updateActivity(udid: udid) { activity in
             activity.progressText = text
-            if let pct = PyMobileDevice.parseProgress(from: text) {
-                activity.progressFraction = pct
+            if awaitingPasscode {
+                activity.isAwaitingPasscode = true
+            }
+            if let details = PyMobileDevice.parseProgressDetails(from: text) {
+                // If we receive active transfer speed or progress, user has completed unlocking
+                if details.speed != nil || details.fraction > 0.001 {
+                    activity.isAwaitingPasscode = false
+                }
+                // Ignore transient sub-phase 100% resets unless truly completing
+                if details.fraction >= 0.99 && activity.progressFraction ?? 0 < 0.85 {
+                    // Transient 100% on metadata preparation phase - do not jump UI to 100%
+                } else {
+                    let current = activity.progressFraction ?? 0.0
+                    activity.progressFraction = max(current, details.fraction)
+                }
+                if let eta = details.eta { activity.eta = eta }
+                if let speed = details.speed { activity.speed = speed }
+            } else if let pct = PyMobileDevice.parseProgress(from: text) {
+                if pct > 0.001 {
+                    activity.isAwaitingPasscode = false
+                }
+                if pct >= 0.99 && activity.progressFraction ?? 0 < 0.85 {
+                    // Transient subphase
+                } else {
+                    let current = activity.progressFraction ?? 0.0
+                    activity.progressFraction = max(current, pct)
+                }
             } else if manager.backupPercent > 0 {
-                activity.progressFraction = manager.backupPercent
+                activity.isAwaitingPasscode = false
+                let current = activity.progressFraction ?? 0.0
+                activity.progressFraction = max(current, manager.backupPercent)
+            }
+
+            if activity.isFinalizing {
+                startFinalizationWatchdogIfNeeded(udid: udid)
             }
         }
         refreshLegacyProgressState()
+    }
+
+    private func startFinalizationWatchdogIfNeeded(udid: String) {
+        guard finalizationTasks[udid] == nil else { return }
+        let backupDir = BackupManager.activeBackupDir
+        let tracker = FinalizationProgressTracker(backupDirectory: backupDir, udid: udid)
+
+        finalizationTasks[udid] = Task.detached(priority: .utility) { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                if Task.isCancelled { break }
+                let metrics = tracker.sampleMetrics()
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    guard let metrics else { return }
+                    self.updateActivity(udid: udid) { activity in
+                        guard case .running = activity.state else { return }
+                        activity.finalizationMetrics = metrics
+                    }
+                    self.refreshLegacyProgressState()
+                }
+            }
+        }
     }
 
     func runFullBackup(for issue: BackupManager.BackupFailure) async {
@@ -454,6 +696,25 @@ final class BackupViewModel: ObservableObject {
         await createBackup(
             udid: udid,
             incremental: false,
+            preferNetwork: request?.preferNetwork ?? false,
+            encrypted: request?.encrypted ?? false
+        )
+    }
+
+    func resumeBackup(for issue: BackupManager.BackupFailure) async {
+        guard let udid = recoveryUdid(for: issue) else {
+            backupIssue = BackupManager.BackupFailure(
+                title: "Could Not Resume Backup",
+                message: "Phosphor could not identify which device needs to resume the backup. Re-select the device and start a backup manually.",
+                technicalDetails: issue.technicalDetails,
+                recoveryAction: nil
+            )
+            return
+        }
+        let request = recoveryRequest(for: issue)
+        backupIssue = nil
+        await resumeBackup(
+            udid: udid,
             preferNetwork: request?.preferNetwork ?? false,
             encrypted: request?.encrypted ?? false
         )

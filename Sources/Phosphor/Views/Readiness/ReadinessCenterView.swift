@@ -104,11 +104,11 @@ struct ReadinessCenterView: View {
         }
         .alert(item: $pendingRecovery) { recovery in
             Alert(
-                title: Text("Move Incomplete Backup to Trash?"),
+                title: Text(recovery.title),
                 message: Text(recovery.confirmationMessage),
-                primaryButton: .destructive(Text("Move to Trash")) {
-                    Task { await performRecovery(recovery.operation) }
-                },
+                primaryButton: recovery.isDestructive
+                    ? .destructive(Text(recovery.actionTitle)) { Task { await performRecovery(recovery.operation) } }
+                    : .default(Text(recovery.actionTitle)) { Task { await performRecovery(recovery.operation) } },
                 secondaryButton: .cancel()
             )
         }
@@ -163,6 +163,15 @@ struct ReadinessCenterView: View {
 
     private func performRecovery(_ operation: ReadinessOperation) async {
         switch operation {
+        case .resumeBackup(let udid, _):
+            guard let device = deviceVM.devices.first(where: { $0.id == udid }) else {
+                recoveryMessage = "Reconnect the device to resume the backup."
+                return
+            }
+            recoveryMessage = "Resuming backup for \(device.name)…"
+            await backupVM.resumeBackup(udid: udid, preferNetwork: device.connectionType == .wifi, device: device)
+            await deviceVM.refreshReadiness()
+
         case .deleteIncompleteBackupAndRunFull(let udid, let path):
             do {
                 let recoveryRoot = (path as NSString).deletingLastPathComponent
@@ -247,13 +256,27 @@ private struct ReadinessRow: View {
                         .foregroundStyle(.secondary)
                 }
                 if let operation = item.operation {
-                    Button {
-                        actionHandler(operation)
-                    } label: {
-                        Label("Move Incomplete Backup to Trash", systemImage: "trash")
+                    HStack(spacing: 8) {
+                        if item.isResumable, case .deleteIncompleteBackupAndRunFull(let udid, let path) = operation {
+                            Button {
+                                actionHandler(.resumeBackup(udid: udid, path: path))
+                            } label: {
+                                Label("Resume Backup", systemImage: "play.circle.fill")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.brandAccent)
+                            .controlSize(.small)
+                        }
+
+                        Button {
+                            actionHandler(operation)
+                        } label: {
+                            Label("Move Incomplete Backup to Trash", systemImage: "trash")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .padding(.top, 2)
                 }
             }
             Spacer()
@@ -283,8 +306,37 @@ private struct PendingReadinessRecovery: Identifiable {
     let id = UUID()
     let operation: ReadinessOperation
 
+    var title: String {
+        switch operation {
+        case .resumeBackup:
+            return "Resume Incomplete Backup?"
+        case .deleteIncompleteBackupAndRunFull:
+            return "Move Incomplete Backup to Trash?"
+        }
+    }
+
+    var isDestructive: Bool {
+        switch operation {
+        case .resumeBackup:
+            return false
+        case .deleteIncompleteBackupAndRunFull:
+            return true
+        }
+    }
+
+    var actionTitle: String {
+        switch operation {
+        case .resumeBackup:
+            return "Resume Backup"
+        case .deleteIncompleteBackupAndRunFull:
+            return "Move to Trash"
+        }
+    }
+
     var confirmationMessage: String {
         switch operation {
+        case .resumeBackup(_, let path):
+            return "Phosphor will resume the backup from the saved files in:\n\n\(path)\n\nEnsure your device is connected and unlocked."
         case .deleteIncompleteBackupAndRunFull(_, let path):
             return "This will move the incomplete backup folder to Trash, not permanently delete it:\n\n\(path)\n\nIf the matching device is connected over USB, Phosphor will start a fresh full backup afterward."
         }

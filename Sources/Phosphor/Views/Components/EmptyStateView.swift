@@ -49,7 +49,7 @@ struct EmptyStateView: View {
                     Text(LocalizedStringKey(label))
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(.brandAccent)
+                .tint(color)
                 .controlSize(.regular)
                 .padding(.top, 4)
             }

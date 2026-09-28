@@ -11,6 +11,7 @@ enum ReadinessStatus: String {
 /// Recovery operation that can be launched directly from a readiness row after user confirmation.
 enum ReadinessOperation: Hashable {
     case deleteIncompleteBackupAndRunFull(udid: String, path: String)
+    case resumeBackup(udid: String, path: String)
 }
 
 /// One actionable readiness row shown in the Readiness Center and diagnostic report.
@@ -22,6 +23,7 @@ struct ReadinessItem: Identifiable, Hashable {
     let recoveryAction: String?
     let technicalDetail: String?
     let operation: ReadinessOperation?
+    let isResumable: Bool
 
     init(
         title: String,
@@ -29,7 +31,8 @@ struct ReadinessItem: Identifiable, Hashable {
         status: ReadinessStatus,
         recoveryAction: String? = nil,
         technicalDetail: String? = nil,
-        operation: ReadinessOperation? = nil
+        operation: ReadinessOperation? = nil,
+        isResumable: Bool = false
     ) {
         self.title = title
         self.detail = detail
@@ -37,6 +40,7 @@ struct ReadinessItem: Identifiable, Hashable {
         self.recoveryAction = recoveryAction
         self.technicalDetail = technicalDetail
         self.operation = operation
+        self.isResumable = isResumable
     }
 }
 
@@ -234,13 +238,23 @@ enum ReadinessService {
             guard case .incomplete(let path) = BackupManager.backupMetadataHealth(for: udid, in: directory) else {
                 return nil
             }
+            let hasPayload = BackupManager.incompleteBackupHasPayloadData(path)
+            let title = hasPayload ? "Incomplete Backup (Resumable)" : "Incomplete Backup Found"
+            let detail = hasPayload
+                ? "A previous backup for this device was interrupted, but downloaded data was safely preserved. You can resume without starting from scratch."
+                : "A previous backup for this device did not finish, so iOS may reject another backup in this folder."
+            let recoveryAction = hasPayload
+                ? "Resume the backup to continue from saved progress, or move the folder to Trash if you prefer a clean start."
+                : "Move the incomplete folder to Trash, then run a fresh full backup with the device unlocked and connected over USB when possible."
+
             return ReadinessItem(
-                title: "Incomplete Backup Found",
-                detail: "A previous backup for this device did not finish, so iOS may reject another backup in this folder.",
-                status: .blocked,
-                recoveryAction: "Move the incomplete folder to Trash, then run a fresh full backup with the device unlocked and connected over USB when possible.",
+                title: title,
+                detail: detail,
+                status: hasPayload ? .warning : .blocked,
+                recoveryAction: recoveryAction,
                 technicalDetail: path,
-                operation: .deleteIncompleteBackupAndRunFull(udid: udid, path: path)
+                operation: .deleteIncompleteBackupAndRunFull(udid: udid, path: path),
+                isResumable: hasPayload
             )
         }
         .sorted { ($0.technicalDetail ?? $0.title) < ($1.technicalDetail ?? $1.title) }
