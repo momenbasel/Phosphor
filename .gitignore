@@ -7,3 +7,4 @@ DerivedData/
 .netrc
 *.xcodeproj
 *.xcworkspace
+__pycache__/
