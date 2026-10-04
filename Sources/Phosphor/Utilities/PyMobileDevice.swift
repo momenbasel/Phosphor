@@ -604,7 +604,7 @@ enum PyMobileDevice {
     /// run while the device is reachable over USB/lockdown; Bonjour-only devices are
     /// discovery hints and cannot be promoted to backup-capable Wi-Fi targets here.
     static func setWiFiConnections(udid: String? = nil, enabled: Bool) async -> Shell.Result {
-        var args = ["lockdown", "wifi-connections", "--state", enabled ? "on" : "off"]
+        var args = ["lockdown", "wifi-connections", enabled ? "on" : "off"]
         if let udid { args += ["--udid", udid] }
         let result = await runAsync(args, timeout: 20)
         return normalizeLockdownResult(result)

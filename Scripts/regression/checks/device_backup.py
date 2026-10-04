@@ -67,7 +67,7 @@ def test_mobdev2_wireless_discovery_is_a_non_backup_hint(root: Path) -> None:
 
 def test_finder_wifi_sync_can_be_enabled_from_usb_device(root: Path) -> None:
     py = read(root, "Sources/Phosphor/Utilities/PyMobileDevice.swift")
-    assert_contains(py, '"lockdown", "wifi-connections", "--state"', "Phosphor should call pymobiledevice3's Finder-style Wi-Fi toggle")
+    assert_contains(py, '"lockdown", "wifi-connections"', "Phosphor should call pymobiledevice3's Finder-style Wi-Fi toggle")
     assert_contains(py, 'enabled ? "on" : "off"', "Wi-Fi connection toggle should support the on state explicitly")
     assert_contains(py, "run while the device is reachable over USB/lockdown", "Wi-Fi enablement should be documented as USB/lockdown-only")
     assert_contains(py, "normalizeLockdownResult", "pymobiledevice3 lockdown commands can emit ERROR on stderr with exit code 0 and must be normalized")
