@@ -1,68 +1,21 @@
 /* Phosphor - Simplified Chinese */
 
-/* Sidebar */
-"sidebar.devices" = "设备";
-"sidebar.backups" = "备份";
-"sidebar.backupBrowser" = "备份浏览器";
-"sidebar.timeMachine" = "时间机器";
-"sidebar.messages" = "信息";
-"sidebar.whatsapp" = "WhatsApp";
-"sidebar.photos" = "照片";
-"sidebar.apps" = "应用";
-"sidebar.notes" = "备忘录";
-"sidebar.callLog" = "通话记录";
-"sidebar.safari" = "Safari";
-"sidebar.health" = "健康";
-"sidebar.music" = "音乐";
-"sidebar.files" = "文件系统";
-"sidebar.diagnostics" = "诊断";
-"sidebar.watch" = "Apple Watch";
-
-/* Section Groups */
-"group.device" = "设备";
-"group.data" = "数据";
-"group.backups" = "备份";
-"group.tools" = "工具";
-
 /* Common Actions */
-"action.refresh" = "刷新";
-"action.export" = "导出...";
-"action.browse" = "浏览";
-"action.delete" = "删除";
-"action.cancel" = "取消";
-"action.save" = "保存";
-"action.search" = "搜索...";
-"action.restore" = "恢复";
-"action.newBackup" = "新建备份";
-
-/* Device */
-"device.noDeviceConnected" = "未连接设备";
-"device.connectViaUSB" = "通过USB连接您的iPhone、iPad或iPod touch，使用Phosphor进行管理。";
-"device.scanForDevices" = "扫描设备";
-
-/* Backups */
-"backup.backups" = "备份";
-"backup.noBackupsFound" = "未找到备份";
-"backup.timeMachine" = "时间机器";
-
-/* Welcome */
-"welcome.title" = "欢迎使用Phosphor";
-"welcome.subtitle" = "连接iOS设备或从侧边栏选择一个部分。";
+"Search..." = "搜索...";
 
 /* Home Screen */
-"homeScreen.homeScreen" = "主屏幕";
-"homeScreen.noBackupSelected" = "未选择备份";
-"homeScreen.selectBackup" = "在“备份”部分中选择一个备份以查看其主屏幕。";
-"homeScreen.noLayout" = "无主屏幕数据";
-"homeScreen.noLayoutDesc" = "此备份不包含 IconState.plist（HomeDomain/SpringBoard）。";
-"homeScreen.readFailed" = "无法读取布局";
-"homeScreen.exportPNG" = "导出 PNG";
-"homeScreen.reload" = "重新加载";
-"homeScreen.reading" = "正在读取主屏幕布局…";
-"browser.allDomains" = "所有域";
-"browser.items" = "%lld 个项目";
-"browser.preview" = "切换预览";
-"browser.extract" = "提取";
+"Home Screen" = "主屏幕";
+"Select a backup from the Backups section to see its home screen." = "在“备份”部分中选择一个备份以查看其主屏幕。";
+"No Home Screen Data" = "无主屏幕数据";
+"This backup does not contain IconState.plist (HomeDomain/SpringBoard)." = "此备份不包含 IconState.plist（HomeDomain/SpringBoard）。";
+"Could Not Read Layout" = "无法读取布局";
+"Export PNG" = "导出 PNG";
+"Reload" = "重新加载";
+"Reading home screen layout…" = "正在读取主屏幕布局…";
+"All Domains" = "所有域";
+"%lld items" = "%lld 个项目";
+"Toggle Preview" = "切换预览";
+"Extract" = "提取";
 
 /* Runtime labels used by the SwiftUI views. The upstream release shipped
    these strings but did not include this table in the app bundle. */

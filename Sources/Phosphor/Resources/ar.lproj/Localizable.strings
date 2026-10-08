@@ -1,125 +1,117 @@
 /* Phosphor - Arabic */
 
 /* Sidebar */
-"sidebar.devices" = "الاجهزة";
-"sidebar.backups" = "النسخ الاحتياطية";
-"sidebar.backupBrowser" = "متصفح النسخ";
-"sidebar.timeMachine" = "آلة الزمن";
-"sidebar.messages" = "الرسائل";
-"sidebar.whatsapp" = "واتساب";
-"sidebar.photos" = "الصور";
-"sidebar.apps" = "التطبيقات";
-"sidebar.notes" = "الملاحظات";
-"sidebar.callLog" = "سجل المكالمات";
-"sidebar.safari" = "سفاري";
-"sidebar.health" = "الصحة";
-"sidebar.music" = "الموسيقى";
-"sidebar.files" = "نظام الملفات";
-"sidebar.diagnostics" = "التشخيصات";
-"sidebar.watch" = "ساعة ابل";
-"sidebar.contacts" = "جهات الاتصال";
-"sidebar.calendar" = "التقويم";
+"Devices" = "الاجهزة";
+"Backups" = "النسخ الاحتياطية";
+"Backup Browser" = "متصفح النسخ";
+"Time Machine" = "آلة الزمن";
+"Messages" = "الرسائل";
+"WhatsApp" = "واتساب";
+"Photos" = "الصور";
+"Apps" = "التطبيقات";
+"Notes" = "الملاحظات";
+"Call Log" = "سجل المكالمات";
+"Safari" = "سفاري";
+"Health" = "الصحة";
+"Music" = "الموسيقى";
+"File System" = "نظام الملفات";
+"Diagnostics" = "التشخيصات";
+"Apple Watch" = "ساعة ابل";
+"Contacts" = "جهات الاتصال";
+"Calendar" = "التقويم";
 
 /* Section Groups */
-"group.device" = "الجهاز";
-"group.data" = "البيانات";
-"group.backups" = "النسخ الاحتياطية";
-"group.tools" = "الادوات";
+"Device" = "الجهاز";
+"Data" = "البيانات";
+"Tools" = "الادوات";
 
 /* Common Actions */
-"action.refresh" = "تحديث";
-"action.export" = "تصدير...";
-"action.exportAll" = "تصدير الكل...";
-"action.extractHere" = "استخراج هنا";
-"action.browse" = "تصفح";
-"action.delete" = "حذف";
-"action.cancel" = "الغاء";
-"action.save" = "حفظ";
-"action.search" = "بحث...";
-"action.copyToMac" = "نسخ الى الماك...";
-"action.copyToDevice" = "نسخ الى الجهاز...";
-"action.mount" = "تحميل الجهاز";
-"action.unmount" = "الغاء التحميل";
-"action.restore" = "استعادة";
-"action.pair" = "اقتران الجهاز";
-"action.newBackup" = "نسخة جديدة";
-"action.importArchive" = "استيراد .phosphor";
-"action.exportArchive" = "تصدير .phosphor";
+"Refresh" = "تحديث";
+"Export..." = "تصدير...";
+"Export All..." = "تصدير الكل...";
+"Extract Here" = "استخراج هنا";
+"Browse" = "تصفح";
+"Delete" = "حذف";
+"Cancel" = "الغاء";
+"Save" = "حفظ";
+"Search..." = "بحث...";
+"Copy to Mac..." = "نسخ الى الماك...";
+"Copy to Device..." = "نسخ الى الجهاز...";
+"Mount Device" = "تحميل الجهاز";
+"Unmount" = "الغاء التحميل";
+"Restore" = "استعادة";
+"Pair Device" = "اقتران الجهاز";
+"New Backup" = "نسخة جديدة";
+"Import .phosphor" = "استيراد .phosphor";
+"Export .phosphor" = "تصدير .phosphor";
 
 /* Device */
-"device.noDeviceConnected" = "لا يوجد جهاز متصل";
-"device.connectViaUSB" = "قم بتوصيل iPhone او iPad او iPod touch عبر USB لادارته باستخدام Phosphor.";
-"device.scanForDevices" = "البحث عن اجهزة";
-"device.noDevice" = "لا يوجد جهاز متصل";
-"device.connectViaUSBOrWiFi" = "اتصل عبر USB او Wi-Fi";
-"device.batteryHealth" = "صحة البطارية";
-"device.storage" = "التخزين";
-"device.deviceInfo" = "معلومات الجهاز";
-"device.quickActions" = "اجراءات سريعة";
-"device.restart" = "اعادة تشغيل";
-"device.sleep" = "سكون";
-"device.screenshot" = "لقطة شاشة";
+"No Device Connected" = "لا يوجد جهاز متصل";
+"Connect your iPhone, iPad, or iPod touch via USB to manage it with Phosphor." = "قم بتوصيل iPhone او iPad او iPod touch عبر USB لادارته باستخدام Phosphor.";
+"Scan for Devices" = "البحث عن اجهزة";
+"No device connected" = "لا يوجد جهاز متصل";
+"Connect via USB or Wi-Fi" = "اتصل عبر USB او Wi-Fi";
+"Battery Health" = "صحة البطارية";
+"Storage" = "التخزين";
+"Device Information" = "معلومات الجهاز";
+"Quick Actions" = "اجراءات سريعة";
+"Restart" = "اعادة تشغيل";
+"Sleep" = "سكون";
+"Screenshot" = "لقطة شاشة";
 
 /* Backups */
-"backup.backups" = "النسخ الاحتياطية";
-"backup.noBackupsFound" = "لا توجد نسخ احتياطية";
-"backup.createBackupDesc" = "انشئ نسخة احتياطية لتصفح المحتويات واستخراج الرسائل والصور وبيانات التطبيقات.";
-"backup.createBackup" = "انشاء نسخة";
-"backup.deleteBackup" = "حذف النسخة؟";
-"backup.deleteConfirm" = "سيتم حذف نسخة %@ (%@) نهائيا. لا يمكن التراجع.";
-"backup.encrypted" = "نسخة مشفرة";
-"backup.browseContents" = "تصفح المحتويات";
-"backup.showInFinder" = "عرض في Finder";
-"backup.backupComplete" = "اكتمل النسخ الاحتياطي";
-"backup.backupFailed" = "فشل النسخ الاحتياطي";
-"backup.timeMachine" = "آلة الزمن";
-"backup.restoreThisBackup" = "استعادة هذه النسخة";
-"backup.restoreWarning" = "سيتم استعادة جهازك الى حالة %@. سيتم اعادة تشغيل الجهاز.";
-"backup.scheduled" = "النسخ المجدول";
+"No Backups Found" = "لا توجد نسخ احتياطية";
+"Back up your device to browse its contents, extract messages, photos, and app data." = "انشئ نسخة احتياطية لتصفح المحتويات واستخراج الرسائل والصور وبيانات التطبيقات.";
+"Create Backup" = "انشاء نسخة";
+"Delete Backup?" = "حذف النسخة؟";
+"This will permanently delete the backup of %@ (%@). This cannot be undone." = "سيتم حذف نسخة %@ (%@) نهائيا. لا يمكن التراجع.";
+"Encrypted backup" = "نسخة مشفرة";
+"Browse Contents" = "تصفح المحتويات";
+"Show in Finder" = "عرض في Finder";
+"Backup completed" = "اكتمل النسخ الاحتياطي";
+"Backup failed" = "فشل النسخ الاحتياطي";
+"Restore This Backup" = "استعادة هذه النسخة";
+"This will restore your device to the state from %@. The device will restart." = "سيتم استعادة جهازك الى حالة %@. سيتم اعادة تشغيل الجهاز.";
+"Scheduled Backups" = "النسخ المجدول";
 
 /* Messages */
-"messages.messages" = "الرسائل";
-"messages.noBackupSelected" = "لم يتم اختيار نسخة";
-"messages.selectBackup" = "اختر نسخة احتياطية لعرض محادثات iMessage و SMS.";
-"messages.noConversations" = "لا توجد محادثات";
-"messages.exportCSV" = "تصدير CSV";
-"messages.exportHTML" = "تصدير HTML";
-"messages.exportJSON" = "تصدير JSON";
+"No Backup Selected" = "لم يتم اختيار نسخة";
+"Select a backup to view iMessage and SMS conversations." = "اختر نسخة احتياطية لعرض محادثات iMessage و SMS.";
+"No Conversations" = "لا توجد محادثات";
+"Export CSV" = "تصدير CSV";
+"Export HTML" = "تصدير HTML";
+"Export JSON" = "تصدير JSON";
 
 /* Photos */
-"photos.photos" = "الصور والفيديو";
-"photos.noPhotos" = "لا توجد صور";
-"photos.selectBackup" = "اختر نسخة احتياطية لتصفح صور الكاميرا والفيديو.";
-"photos.filter.all" = "الكل";
-"photos.filter.photos" = "صور";
-"photos.filter.videos" = "فيديو";
-"photos.filter.screenshots" = "لقطات شاشة";
-"photos.extractSelected" = "استخراج المحدد";
+"Photos & Videos" = "الصور والفيديو";
+"No Photos Found" = "لا توجد صور";
+"Select a backup to browse Camera Roll photos and videos." = "اختر نسخة احتياطية لتصفح صور الكاميرا والفيديو.";
+"All" = "الكل";
+"Videos" = "فيديو";
+"Screenshots" = "لقطات شاشة";
+"Extract Selected" = "استخراج المحدد";
 
 /* Watch */
-"watch.appleWatch" = "ساعة ابل";
-"watch.noWatch" = "لم يتم العثور على ساعة ابل";
-"watch.selectBackup" = "اختر نسخة من iPhone مقترن لعرض بيانات ساعة ابل.";
-"watch.overview" = "نظرة عامة";
-"watch.apps" = "تطبيقات الساعة";
-"watch.activity" = "النشاط";
+"No Apple Watch Found" = "لم يتم العثور على ساعة ابل";
+"Select a backup from a paired iPhone to view Apple Watch data." = "اختر نسخة من iPhone مقترن لعرض بيانات ساعة ابل.";
+"Overview" = "نظرة عامة";
+"Watch Apps" = "تطبيقات الساعة";
+"Activity" = "النشاط";
 
 /* Welcome */
-"welcome.title" = "مرحبا بك في Phosphor";
-"welcome.subtitle" = "قم بتوصيل جهاز iOS او اختر قسما من الشريط الجانبي.";
+"Welcome to Phosphor" = "مرحبا بك في Phosphor";
+"Connect an iOS device or select a section from the sidebar." = "قم بتوصيل جهاز iOS او اختر قسما من الشريط الجانبي.";
 
 /* Home Screen */
-"homeScreen.homeScreen" = "الشاشة الرئيسية";
-"homeScreen.noBackupSelected" = "لم يتم تحديد نسخة احتياطية";
-"homeScreen.selectBackup" = "حدد نسخة احتياطية من قسم النسخ الاحتياطية لعرض شاشتها الرئيسية.";
-"homeScreen.noLayout" = "لا توجد بيانات شاشة رئيسية";
-"homeScreen.noLayoutDesc" = "لا تحتوي هذه النسخة الاحتياطية على IconState.plist (HomeDomain/SpringBoard).";
-"homeScreen.readFailed" = "تعذرت قراءة التخطيط";
-"homeScreen.exportPNG" = "تصدير PNG";
-"homeScreen.reload" = "إعادة تحميل";
-"homeScreen.reading" = "جارٍ قراءة تخطيط الشاشة الرئيسية…";
-"browser.allDomains" = "كل النطاقات";
-"browser.items" = "%lld عناصر";
-"browser.preview" = "تبديل المعاينة";
-"browser.extract" = "استخراج";
-
+"Home Screen" = "الشاشة الرئيسية";
+"Select a backup from the Backups section to see its home screen." = "حدد نسخة احتياطية من قسم النسخ الاحتياطية لعرض شاشتها الرئيسية.";
+"No Home Screen Data" = "لا توجد بيانات شاشة رئيسية";
+"This backup does not contain IconState.plist (HomeDomain/SpringBoard)." = "لا تحتوي هذه النسخة الاحتياطية على IconState.plist (HomeDomain/SpringBoard).";
+"Could Not Read Layout" = "تعذرت قراءة التخطيط";
+"Export PNG" = "تصدير PNG";
+"Reload" = "إعادة تحميل";
+"Reading home screen layout…" = "جارٍ قراءة تخطيط الشاشة الرئيسية…";
+"All Domains" = "كل النطاقات";
+"%lld items" = "%lld عناصر";
+"Toggle Preview" = "تبديل المعاينة";
+"Extract" = "استخراج";

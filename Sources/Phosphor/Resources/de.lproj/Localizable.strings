@@ -1,66 +1,62 @@
 /* Phosphor - German */
 
 /* Sidebar */
-"sidebar.devices" = "Gerate";
-"sidebar.backups" = "Backups";
-"sidebar.backupBrowser" = "Backup-Browser";
-"sidebar.timeMachine" = "Time Machine";
-"sidebar.messages" = "Nachrichten";
-"sidebar.whatsapp" = "WhatsApp";
-"sidebar.photos" = "Fotos";
-"sidebar.apps" = "Apps";
-"sidebar.notes" = "Notizen";
-"sidebar.callLog" = "Anrufliste";
-"sidebar.safari" = "Safari";
-"sidebar.health" = "Gesundheit";
-"sidebar.music" = "Musik";
-"sidebar.files" = "Dateisystem";
-"sidebar.diagnostics" = "Diagnose";
-"sidebar.watch" = "Apple Watch";
+"Devices" = "Geräte";
+"Backups" = "Backups";
+"Backup Browser" = "Backup-Browser";
+"Time Machine" = "Time Machine";
+"Messages" = "Nachrichten";
+"WhatsApp" = "WhatsApp";
+"Photos" = "Fotos";
+"Apps" = "Apps";
+"Notes" = "Notizen";
+"Call Log" = "Anrufliste";
+"Safari" = "Safari";
+"Health" = "Gesundheit";
+"Music" = "Musik";
+"File System" = "Dateisystem";
+"Diagnostics" = "Diagnose";
+"Apple Watch" = "Apple Watch";
 
 /* Section Groups */
-"group.device" = "Gerat";
-"group.data" = "Daten";
-"group.backups" = "Backups";
-"group.tools" = "Werkzeuge";
+"Device" = "Gerät";
+"Data" = "Daten";
+"Tools" = "Werkzeuge";
 
 /* Common Actions */
-"action.refresh" = "Aktualisieren";
-"action.export" = "Exportieren...";
-"action.browse" = "Durchsuchen";
-"action.delete" = "Loschen";
-"action.cancel" = "Abbrechen";
-"action.save" = "Speichern";
-"action.search" = "Suchen...";
-"action.restore" = "Wiederherstellen";
-"action.newBackup" = "Neues Backup";
+"Refresh" = "Aktualisieren";
+"Export..." = "Exportieren...";
+"Browse" = "Durchsuchen";
+"Delete" = "Löschen";
+"Cancel" = "Abbrechen";
+"Save" = "Speichern";
+"Search..." = "Suchen...";
+"Restore" = "Wiederherstellen";
+"New Backup" = "Neues Backup";
 
 /* Device */
-"device.noDeviceConnected" = "Kein Gerat verbunden";
-"device.connectViaUSB" = "Verbinden Sie Ihr iPhone, iPad oder iPod touch per USB, um es mit Phosphor zu verwalten.";
-"device.scanForDevices" = "Nach Geraten suchen";
+"No Device Connected" = "Kein Gerät verbunden";
+"Connect your iPhone, iPad, or iPod touch via USB to manage it with Phosphor." = "Verbinden Sie Ihr iPhone, iPad oder iPod touch per USB, um es mit Phosphor zu verwalten.";
+"Scan for Devices" = "Nach Geräten suchen";
 
 /* Backups */
-"backup.backups" = "Backups";
-"backup.noBackupsFound" = "Keine Backups gefunden";
-"backup.timeMachine" = "Time Machine";
+"No Backups Found" = "Keine Backups gefunden";
 
 /* Welcome */
-"welcome.title" = "Willkommen bei Phosphor";
-"welcome.subtitle" = "Verbinden Sie ein iOS-Gerat oder wahlen Sie einen Bereich in der Seitenleiste.";
+"Welcome to Phosphor" = "Willkommen bei Phosphor";
+"Connect an iOS device or select a section from the sidebar." = "Verbinden Sie ein iOS-Gerät oder wählen Sie einen Bereich in der Seitenleiste.";
 
 /* Home Screen */
-"homeScreen.homeScreen" = "Home-Bildschirm";
-"homeScreen.noBackupSelected" = "Kein Backup ausgewählt";
-"homeScreen.selectBackup" = "Wähle ein Backup im Bereich „Backups“, um den Home-Bildschirm zu sehen.";
-"homeScreen.noLayout" = "Keine Home-Bildschirm-Daten";
-"homeScreen.noLayoutDesc" = "Dieses Backup enthält keine IconState.plist (HomeDomain/SpringBoard).";
-"homeScreen.readFailed" = "Layout konnte nicht gelesen werden";
-"homeScreen.exportPNG" = "PNG exportieren";
-"homeScreen.reload" = "Neu laden";
-"homeScreen.reading" = "Home-Bildschirm-Layout wird gelesen…";
-"browser.allDomains" = "Alle Domänen";
-"browser.items" = "%lld Objekte";
-"browser.preview" = "Vorschau ein-/ausblenden";
-"browser.extract" = "Extrahieren";
-
+"Home Screen" = "Home-Bildschirm";
+"No Backup Selected" = "Kein Backup ausgewählt";
+"Select a backup from the Backups section to see its home screen." = "Wähle ein Backup im Bereich „Backups“, um den Home-Bildschirm zu sehen.";
+"No Home Screen Data" = "Keine Home-Bildschirm-Daten";
+"This backup does not contain IconState.plist (HomeDomain/SpringBoard)." = "Dieses Backup enthält keine IconState.plist (HomeDomain/SpringBoard).";
+"Could Not Read Layout" = "Layout konnte nicht gelesen werden";
+"Export PNG" = "PNG exportieren";
+"Reload" = "Neu laden";
+"Reading home screen layout…" = "Home-Bildschirm-Layout wird gelesen…";
+"All Domains" = "Alle Domänen";
+"%lld items" = "%lld Objekte";
+"Toggle Preview" = "Vorschau ein-/ausblenden";
+"Extract" = "Extrahieren";

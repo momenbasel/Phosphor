@@ -1,66 +1,62 @@
 /* Phosphor - French */
 
 /* Sidebar */
-"sidebar.devices" = "Appareils";
-"sidebar.backups" = "Sauvegardes";
-"sidebar.backupBrowser" = "Explorateur";
-"sidebar.timeMachine" = "Time Machine";
-"sidebar.messages" = "Messages";
-"sidebar.whatsapp" = "WhatsApp";
-"sidebar.photos" = "Photos";
-"sidebar.apps" = "Applications";
-"sidebar.notes" = "Notes";
-"sidebar.callLog" = "Journal d'appels";
-"sidebar.safari" = "Safari";
-"sidebar.health" = "Sante";
-"sidebar.music" = "Musique";
-"sidebar.files" = "Systeme de fichiers";
-"sidebar.diagnostics" = "Diagnostics";
-"sidebar.watch" = "Apple Watch";
+"Devices" = "Appareils";
+"Backups" = "Sauvegardes";
+"Backup Browser" = "Explorateur";
+"Time Machine" = "Time Machine";
+"Messages" = "Messages";
+"WhatsApp" = "WhatsApp";
+"Photos" = "Photos";
+"Apps" = "Applications";
+"Notes" = "Notes";
+"Call Log" = "Journal d'appels";
+"Safari" = "Safari";
+"Health" = "Sante";
+"Music" = "Musique";
+"File System" = "Systeme de fichiers";
+"Diagnostics" = "Diagnostics";
+"Apple Watch" = "Apple Watch";
 
 /* Section Groups */
-"group.device" = "Appareil";
-"group.data" = "Donnees";
-"group.backups" = "Sauvegardes";
-"group.tools" = "Outils";
+"Device" = "Appareil";
+"Data" = "Donnees";
+"Tools" = "Outils";
 
 /* Common Actions */
-"action.refresh" = "Actualiser";
-"action.export" = "Exporter...";
-"action.browse" = "Parcourir";
-"action.delete" = "Supprimer";
-"action.cancel" = "Annuler";
-"action.save" = "Enregistrer";
-"action.search" = "Rechercher...";
-"action.restore" = "Restaurer";
-"action.newBackup" = "Nouvelle sauvegarde";
+"Refresh" = "Actualiser";
+"Export..." = "Exporter...";
+"Browse" = "Parcourir";
+"Delete" = "Supprimer";
+"Cancel" = "Annuler";
+"Save" = "Enregistrer";
+"Search..." = "Rechercher...";
+"Restore" = "Restaurer";
+"New Backup" = "Nouvelle sauvegarde";
 
 /* Device */
-"device.noDeviceConnected" = "Aucun appareil connecte";
-"device.connectViaUSB" = "Connectez votre iPhone, iPad ou iPod touch via USB pour le gerer avec Phosphor.";
-"device.scanForDevices" = "Rechercher des appareils";
+"No Device Connected" = "Aucun appareil connecte";
+"Connect your iPhone, iPad, or iPod touch via USB to manage it with Phosphor." = "Connectez votre iPhone, iPad ou iPod touch via USB pour le gerer avec Phosphor.";
+"Scan for Devices" = "Rechercher des appareils";
 
 /* Backups */
-"backup.backups" = "Sauvegardes";
-"backup.noBackupsFound" = "Aucune sauvegarde trouvee";
-"backup.timeMachine" = "Time Machine";
+"No Backups Found" = "Aucune sauvegarde trouvee";
 
 /* Welcome */
-"welcome.title" = "Bienvenue dans Phosphor";
-"welcome.subtitle" = "Connectez un appareil iOS ou selectionnez une section dans la barre laterale.";
+"Welcome to Phosphor" = "Bienvenue dans Phosphor";
+"Connect an iOS device or select a section from the sidebar." = "Connectez un appareil iOS ou selectionnez une section dans la barre laterale.";
 
 /* Home Screen */
-"homeScreen.homeScreen" = "Écran d'accueil";
-"homeScreen.noBackupSelected" = "Aucune sauvegarde sélectionnée";
-"homeScreen.selectBackup" = "Sélectionnez une sauvegarde dans la section Sauvegardes pour voir son écran d'accueil.";
-"homeScreen.noLayout" = "Aucune donnée d'écran d'accueil";
-"homeScreen.noLayoutDesc" = "Cette sauvegarde ne contient pas IconState.plist (HomeDomain/SpringBoard).";
-"homeScreen.readFailed" = "Impossible de lire la disposition";
-"homeScreen.exportPNG" = "Exporter en PNG";
-"homeScreen.reload" = "Recharger";
-"homeScreen.reading" = "Lecture de la disposition de l'écran d'accueil…";
-"browser.allDomains" = "Tous les domaines";
-"browser.items" = "%lld éléments";
-"browser.preview" = "Afficher/masquer l'aperçu";
-"browser.extract" = "Extraire";
-
+"Home Screen" = "Écran d'accueil";
+"No Backup Selected" = "Aucune sauvegarde sélectionnée";
+"Select a backup from the Backups section to see its home screen." = "Sélectionnez une sauvegarde dans la section Sauvegardes pour voir son écran d'accueil.";
+"No Home Screen Data" = "Aucune donnée d'écran d'accueil";
+"This backup does not contain IconState.plist (HomeDomain/SpringBoard)." = "Cette sauvegarde ne contient pas IconState.plist (HomeDomain/SpringBoard).";
+"Could Not Read Layout" = "Impossible de lire la disposition";
+"Export PNG" = "Exporter en PNG";
+"Reload" = "Recharger";
+"Reading home screen layout…" = "Lecture de la disposition de l'écran d'accueil…";
+"All Domains" = "Tous les domaines";
+"%lld items" = "%lld éléments";
+"Toggle Preview" = "Afficher/masquer l'aperçu";
+"Extract" = "Extraire";

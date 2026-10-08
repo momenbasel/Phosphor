@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
+
+ENTRY = re.compile(r'^\s*"((?:[^"\\]|\\.)*)"\s*=\s*"((?:[^"\\]|\\.)*)"\s*;')
+SEMANTIC_KEY = re.compile(r"[a-z][A-Za-z]*(\.[A-Za-z]+)+")
 
 
 def read(root: Path, rel: str) -> str:
@@ -63,3 +67,57 @@ def test_simplified_chinese_has_core_runtime_labels(root: Path) -> None:
         "Screen Capture": "屏幕录制",
     }.items():
         assert f'"{key}" = "{value}";' in strings, f"missing Simplified Chinese translation for {key}"
+
+
+def strings_entries(path: Path) -> dict[str, str]:
+    entries: dict[str, str] = {}
+    for line in path.read_text().splitlines():
+        match = ENTRY.match(line)
+        if match and match.group(1) not in entries:
+            entries[match.group(1)] = match.group(2)
+    return entries
+
+
+def test_localizable_strings_are_keyed_by_english_literals(root: Path) -> None:
+    """Views localize with Text("Devices"), Label("Install IPA", ...) and
+    LocalizedStringKey(section.label), so the English UI string is the key SwiftUI
+    resolves against Bundle.main. Semantic keys such as "sidebar.devices" are never
+    looked up by any Swift code; a German system stayed English because every file
+    was keyed that way (issue #76). en.lproj keeps identity entries as the canonical
+    key list."""
+    resources = root / "Sources/Phosphor/Resources"
+    english = strings_entries(resources / "en.lproj/Localizable.strings")
+    assert english, "en.lproj must list the UI strings"
+    for key, value in english.items():
+        assert key == value, f"en.lproj must map each UI string to itself, got {key!r} = {value!r}"
+    for lproj in sorted(resources.glob("*.lproj")):
+        entries = strings_entries(lproj / "Localizable.strings")
+        assert entries, f"{lproj.name} has no entries"
+        semantic = [key for key in entries if SEMANTIC_KEY.fullmatch(key)]
+        assert not semantic, f"{lproj.name} uses semantic keys that no view reads: {semantic[:5]}"
+        for key, value in entries.items():
+            assert value, f"{lproj.name} has an empty translation for {key!r}"
+
+
+def test_lithuanian_is_declared_and_packaged(root: Path) -> None:
+    info = read(root, "Resources/Info.plist")
+    assert "<string>lt</string>" in info, "Info.plist must declare Lithuanian"
+    strings = strings_entries(root / "Sources/Phosphor/Resources/lt.lproj/Localizable.strings")
+    for key, value in {
+        "Devices": "Įrenginiai",
+        "Backups": "Atsarginės kopijos",
+        "Welcome to Phosphor": "Sveiki atvykę į Phosphor",
+    }.items():
+        assert strings.get(key) == value, f"missing Lithuanian translation for {key}"
+
+
+def test_german_core_labels_keep_their_umlauts(root: Path) -> None:
+    strings = strings_entries(root / "Sources/Phosphor/Resources/de.lproj/Localizable.strings")
+    for key, value in {
+        "Devices": "Geräte",
+        "Device": "Gerät",
+        "Delete": "Löschen",
+        "No Device Connected": "Kein Gerät verbunden",
+        "Scan for Devices": "Nach Geräten suchen",
+    }.items():
+        assert strings.get(key) == value, f"incorrect German translation for {key}"

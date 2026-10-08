@@ -1,94 +1,87 @@
 /* Phosphor - Spanish */
 
 /* Sidebar */
-"sidebar.devices" = "Dispositivos";
-"sidebar.backups" = "Copias de seguridad";
-"sidebar.backupBrowser" = "Explorador de copias";
-"sidebar.timeMachine" = "Time Machine";
-"sidebar.messages" = "Mensajes";
-"sidebar.whatsapp" = "WhatsApp";
-"sidebar.photos" = "Fotos";
-"sidebar.apps" = "Aplicaciones";
-"sidebar.notes" = "Notas";
-"sidebar.callLog" = "Registro de llamadas";
-"sidebar.safari" = "Safari";
-"sidebar.health" = "Salud";
-"sidebar.music" = "Musica";
-"sidebar.files" = "Sistema de archivos";
-"sidebar.diagnostics" = "Diagnosticos";
-"sidebar.watch" = "Apple Watch";
-"sidebar.contacts" = "Contactos";
-"sidebar.calendar" = "Calendario";
+"Devices" = "Dispositivos";
+"Backups" = "Copias de seguridad";
+"Backup Browser" = "Explorador de copias";
+"Time Machine" = "Time Machine";
+"Messages" = "Mensajes";
+"WhatsApp" = "WhatsApp";
+"Photos" = "Fotos";
+"Apps" = "Aplicaciones";
+"Notes" = "Notas";
+"Call Log" = "Registro de llamadas";
+"Safari" = "Safari";
+"Health" = "Salud";
+"Music" = "Musica";
+"File System" = "Sistema de archivos";
+"Diagnostics" = "Diagnosticos";
+"Apple Watch" = "Apple Watch";
+"Contacts" = "Contactos";
+"Calendar" = "Calendario";
 
 /* Section Groups */
-"group.device" = "Dispositivo";
-"group.data" = "Datos";
-"group.backups" = "Copias";
-"group.tools" = "Herramientas";
+"Device" = "Dispositivo";
+"Data" = "Datos";
+"Tools" = "Herramientas";
 
 /* Common Actions */
-"action.refresh" = "Actualizar";
-"action.export" = "Exportar...";
-"action.exportAll" = "Exportar todo...";
-"action.extractHere" = "Extraer aqui";
-"action.browse" = "Explorar";
-"action.delete" = "Eliminar";
-"action.cancel" = "Cancelar";
-"action.save" = "Guardar";
-"action.search" = "Buscar...";
-"action.copyToMac" = "Copiar al Mac...";
-"action.copyToDevice" = "Copiar al dispositivo...";
-"action.mount" = "Montar dispositivo";
-"action.unmount" = "Desmontar";
-"action.restore" = "Restaurar";
-"action.pair" = "Emparejar";
-"action.newBackup" = "Nueva copia";
-"action.importArchive" = "Importar .phosphor";
-"action.exportArchive" = "Exportar .phosphor";
+"Refresh" = "Actualizar";
+"Export..." = "Exportar...";
+"Export All..." = "Exportar todo...";
+"Extract Here" = "Extraer aqui";
+"Browse" = "Explorar";
+"Delete" = "Eliminar";
+"Cancel" = "Cancelar";
+"Save" = "Guardar";
+"Search..." = "Buscar...";
+"Copy to Mac..." = "Copiar al Mac...";
+"Copy to Device..." = "Copiar al dispositivo...";
+"Mount Device" = "Montar dispositivo";
+"Unmount" = "Desmontar";
+"Restore" = "Restaurar";
+"Pair Device" = "Emparejar";
+"New Backup" = "Nueva copia";
+"Import .phosphor" = "Importar .phosphor";
+"Export .phosphor" = "Exportar .phosphor";
 
 /* Device */
-"device.noDeviceConnected" = "Sin dispositivo conectado";
-"device.connectViaUSB" = "Conecta tu iPhone, iPad o iPod touch por USB para gestionarlo con Phosphor.";
-"device.scanForDevices" = "Buscar dispositivos";
-"device.batteryHealth" = "Salud de la bateria";
-"device.storage" = "Almacenamiento";
-"device.deviceInfo" = "Informacion del dispositivo";
-"device.quickActions" = "Acciones rapidas";
+"No Device Connected" = "Sin dispositivo conectado";
+"Connect your iPhone, iPad, or iPod touch via USB to manage it with Phosphor." = "Conecta tu iPhone, iPad o iPod touch por USB para gestionarlo con Phosphor.";
+"Scan for Devices" = "Buscar dispositivos";
+"Battery Health" = "Salud de la bateria";
+"Storage" = "Almacenamiento";
+"Device Information" = "Informacion del dispositivo";
+"Quick Actions" = "Acciones rapidas";
 
 /* Backups */
-"backup.backups" = "Copias de seguridad";
-"backup.noBackupsFound" = "No se encontraron copias";
-"backup.createBackupDesc" = "Crea una copia para explorar contenidos, extraer mensajes, fotos y datos de apps.";
-"backup.timeMachine" = "Time Machine";
+"No Backups Found" = "No se encontraron copias";
+"Back up your device to browse its contents, extract messages, photos, and app data." = "Crea una copia para explorar contenidos, extraer mensajes, fotos y datos de apps.";
 
 /* Messages */
-"messages.messages" = "Mensajes";
-"messages.noBackupSelected" = "Sin copia seleccionada";
+"No Backup Selected" = "Sin copia seleccionada";
 
 /* Photos */
-"photos.photos" = "Fotos y Videos";
-"photos.noPhotos" = "Sin fotos";
+"Photos & Videos" = "Fotos y Videos";
+"No Photos Found" = "Sin fotos";
 
 /* Watch */
-"watch.appleWatch" = "Apple Watch";
-"watch.noWatch" = "Apple Watch no encontrado";
+"No Apple Watch Found" = "Apple Watch no encontrado";
 
 /* Welcome */
-"welcome.title" = "Bienvenido a Phosphor";
-"welcome.subtitle" = "Conecta un dispositivo iOS o selecciona una seccion de la barra lateral.";
+"Welcome to Phosphor" = "Bienvenido a Phosphor";
+"Connect an iOS device or select a section from the sidebar." = "Conecta un dispositivo iOS o selecciona una seccion de la barra lateral.";
 
 /* Home Screen */
-"homeScreen.homeScreen" = "Pantalla de inicio";
-"homeScreen.noBackupSelected" = "Ninguna copia seleccionada";
-"homeScreen.selectBackup" = "Selecciona una copia en la sección Copias para ver su pantalla de inicio.";
-"homeScreen.noLayout" = "Sin datos de pantalla de inicio";
-"homeScreen.noLayoutDesc" = "Esta copia no contiene IconState.plist (HomeDomain/SpringBoard).";
-"homeScreen.readFailed" = "No se pudo leer la disposición";
-"homeScreen.exportPNG" = "Exportar PNG";
-"homeScreen.reload" = "Recargar";
-"homeScreen.reading" = "Leyendo disposición de la pantalla de inicio…";
-"browser.allDomains" = "Todos los dominios";
-"browser.items" = "%lld elementos";
-"browser.preview" = "Mostrar/ocultar vista previa";
-"browser.extract" = "Extraer";
-
+"Home Screen" = "Pantalla de inicio";
+"Select a backup from the Backups section to see its home screen." = "Selecciona una copia en la sección Copias para ver su pantalla de inicio.";
+"No Home Screen Data" = "Sin datos de pantalla de inicio";
+"This backup does not contain IconState.plist (HomeDomain/SpringBoard)." = "Esta copia no contiene IconState.plist (HomeDomain/SpringBoard).";
+"Could Not Read Layout" = "No se pudo leer la disposición";
+"Export PNG" = "Exportar PNG";
+"Reload" = "Recargar";
+"Reading home screen layout…" = "Leyendo disposición de la pantalla de inicio…";
+"All Domains" = "Todos los dominios";
+"%lld items" = "%lld elementos";
+"Toggle Preview" = "Mostrar/ocultar vista previa";
+"Extract" = "Extraer";

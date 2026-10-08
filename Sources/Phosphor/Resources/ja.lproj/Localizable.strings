@@ -1,66 +1,62 @@
 /* Phosphor - Japanese */
 
 /* Sidebar */
-"sidebar.devices" = "デバイス";
-"sidebar.backups" = "バックアップ";
-"sidebar.backupBrowser" = "バックアップブラウザ";
-"sidebar.timeMachine" = "タイムマシン";
-"sidebar.messages" = "メッセージ";
-"sidebar.whatsapp" = "WhatsApp";
-"sidebar.photos" = "写真";
-"sidebar.apps" = "アプリ";
-"sidebar.notes" = "メモ";
-"sidebar.callLog" = "通話履歴";
-"sidebar.safari" = "Safari";
-"sidebar.health" = "ヘルスケア";
-"sidebar.music" = "ミュージック";
-"sidebar.files" = "ファイルシステム";
-"sidebar.diagnostics" = "診断";
-"sidebar.watch" = "Apple Watch";
+"Devices" = "デバイス";
+"Backups" = "バックアップ";
+"Backup Browser" = "バックアップブラウザ";
+"Time Machine" = "タイムマシン";
+"Messages" = "メッセージ";
+"WhatsApp" = "WhatsApp";
+"Photos" = "写真";
+"Apps" = "アプリ";
+"Notes" = "メモ";
+"Call Log" = "通話履歴";
+"Safari" = "Safari";
+"Health" = "ヘルスケア";
+"Music" = "ミュージック";
+"File System" = "ファイルシステム";
+"Diagnostics" = "診断";
+"Apple Watch" = "Apple Watch";
 
 /* Section Groups */
-"group.device" = "デバイス";
-"group.data" = "データ";
-"group.backups" = "バックアップ";
-"group.tools" = "ツール";
+"Device" = "デバイス";
+"Data" = "データ";
+"Tools" = "ツール";
 
 /* Common Actions */
-"action.refresh" = "更新";
-"action.export" = "書き出す...";
-"action.browse" = "ブラウズ";
-"action.delete" = "削除";
-"action.cancel" = "キャンセル";
-"action.save" = "保存";
-"action.search" = "検索...";
-"action.restore" = "復元";
-"action.newBackup" = "新規バックアップ";
+"Refresh" = "更新";
+"Export..." = "書き出す...";
+"Browse" = "ブラウズ";
+"Delete" = "削除";
+"Cancel" = "キャンセル";
+"Save" = "保存";
+"Search..." = "検索...";
+"Restore" = "復元";
+"New Backup" = "新規バックアップ";
 
 /* Device */
-"device.noDeviceConnected" = "デバイスが接続されていません";
-"device.connectViaUSB" = "iPhone、iPad、またはiPod touchをUSBで接続してPhosphorで管理できます。";
-"device.scanForDevices" = "デバイスを検索";
+"No Device Connected" = "デバイスが接続されていません";
+"Connect your iPhone, iPad, or iPod touch via USB to manage it with Phosphor." = "iPhone、iPad、またはiPod touchをUSBで接続してPhosphorで管理できます。";
+"Scan for Devices" = "デバイスを検索";
 
 /* Backups */
-"backup.backups" = "バックアップ";
-"backup.noBackupsFound" = "バックアップが見つかりません";
-"backup.timeMachine" = "タイムマシン";
+"No Backups Found" = "バックアップが見つかりません";
 
 /* Welcome */
-"welcome.title" = "Phosphorへようこそ";
-"welcome.subtitle" = "iOSデバイスを接続するか、サイドバーからセクションを選択してください。";
+"Welcome to Phosphor" = "Phosphorへようこそ";
+"Connect an iOS device or select a section from the sidebar." = "iOSデバイスを接続するか、サイドバーからセクションを選択してください。";
 
 /* Home Screen */
-"homeScreen.homeScreen" = "ホーム画面";
-"homeScreen.noBackupSelected" = "バックアップが選択されていません";
-"homeScreen.selectBackup" = "「バックアップ」セクションからバックアップを選択してホーム画面を表示します。";
-"homeScreen.noLayout" = "ホーム画面データがありません";
-"homeScreen.noLayoutDesc" = "このバックアップには IconState.plist（HomeDomain/SpringBoard）が含まれていません。";
-"homeScreen.readFailed" = "レイアウトを読み取れませんでした";
-"homeScreen.exportPNG" = "PNGを書き出す";
-"homeScreen.reload" = "再読み込み";
-"homeScreen.reading" = "ホーム画面レイアウトを読み取り中…";
-"browser.allDomains" = "すべてのドメイン";
-"browser.items" = "%lld 項目";
-"browser.preview" = "プレビュー表示切替";
-"browser.extract" = "抽出";
-
+"Home Screen" = "ホーム画面";
+"No Backup Selected" = "バックアップが選択されていません";
+"Select a backup from the Backups section to see its home screen." = "「バックアップ」セクションからバックアップを選択してホーム画面を表示します。";
+"No Home Screen Data" = "ホーム画面データがありません";
+"This backup does not contain IconState.plist (HomeDomain/SpringBoard)." = "このバックアップには IconState.plist（HomeDomain/SpringBoard）が含まれていません。";
+"Could Not Read Layout" = "レイアウトを読み取れませんでした";
+"Export PNG" = "PNGを書き出す";
+"Reload" = "再読み込み";
+"Reading home screen layout…" = "ホーム画面レイアウトを読み取り中…";
+"All Domains" = "すべてのドメイン";
+"%lld items" = "%lld 項目";
+"Toggle Preview" = "プレビュー表示切替";
+"Extract" = "抽出";
