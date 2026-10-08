@@ -98,21 +98,36 @@ final class WhatsAppExporter {
         let database = source.flatMap { requested in
             databases.first { $0.source == requested }
         } ?? (source == nil ? databases.first : nil)
-        guard let database else {
-            let label = source?.displayName ?? ""
-            throw NSError(
-                domain: "Phosphor",
-                code: 404,
-                userInfo: [NSLocalizedDescriptionKey: "\(label.isEmpty ? "WhatsApp" : label + " WhatsApp") ChatStorage.sqlite not found in backup."]
-            )
-        }
+        guard let database else { throw Self.sourceNotFound(source) }
+        try self.init(manifest: manifest, database: database)
+    }
 
+    /// Reuse a manifest the caller already opened. BackupManifest decrypts
+    /// Manifest.db for encrypted backups, so a view model that has just listed the
+    /// sources must not pay for a second open to browse one of them.
+    convenience init(manifest: BackupManifest, source: BackupManifest.WhatsAppSource) throws {
+        guard let database = try manifest.whatsAppDatabases().first(where: { $0.source == source }) else {
+            throw Self.sourceNotFound(source)
+        }
+        try self.init(manifest: manifest, database: database)
+    }
+
+    private convenience init(manifest: BackupManifest, database: BackupManifest.WhatsAppDatabase) throws {
         let filePath = try manifest.readablePath(for: database.entry)
         guard FileManager.default.fileExists(atPath: filePath) else {
             throw NSError(domain: "Phosphor", code: 404,
                           userInfo: [NSLocalizedDescriptionKey: "WhatsApp database file not found on disk"])
         }
         try self.init(databasePath: filePath, manifest: manifest, source: database.source)
+    }
+
+    private static func sourceNotFound(_ source: BackupManifest.WhatsAppSource?) -> NSError {
+        let label = source?.displayName ?? ""
+        return NSError(
+            domain: "Phosphor",
+            code: 404,
+            userInfo: [NSLocalizedDescriptionKey: "\(label.isEmpty ? "WhatsApp" : label + " WhatsApp") ChatStorage.sqlite not found in backup."]
+        )
     }
 
     // MARK: - Chats

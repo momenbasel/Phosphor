@@ -205,13 +205,15 @@ struct AppManagerView: View {
 
     private var bulkUninstallControls: some View {
         HStack(spacing: 10) {
-            Text(selectedAppIDs.isEmpty ? "Select user apps to uninstall" : "\(selectedAppIDs.count) selected")
+            Text(appVM.uninstallProgressText ?? (selectedAppIDs.isEmpty ? "Select user apps to uninstall" : "\(selectedAppIDs.count) selected"))
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
 
-            Button(selectedAppIDs.isEmpty ? "Select All User Apps" : "Clear Selection") {
+            // Select only what the user can see. With a search filter active the
+            // unfiltered list would put invisible apps into a destructive batch.
+            Button(selectedAppIDs.isEmpty ? (appVM.searchQuery.isEmpty ? "Select All User Apps" : "Select Matching User Apps") : "Clear Selection") {
                 if selectedAppIDs.isEmpty {
-                    selectedAppIDs = Set(appVM.installedApps.filter { $0.appType == .user }.map(\.id))
+                    selectedAppIDs = Set(appVM.filteredInstalled.filter { $0.appType == .user }.map(\.id))
                 } else {
                     selectedAppIDs.removeAll()
                 }

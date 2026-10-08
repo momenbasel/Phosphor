@@ -12,6 +12,7 @@ final class AppViewModel: ObservableObject {
     @Published var showAlert = false
     @Published var alertMessage = ""
     @Published private(set) var isUninstalling = false
+    @Published private(set) var uninstallProgressText: String?
 
     let appManager = AppManager()
     private var activeInstalledDeviceID: String?
@@ -102,21 +103,30 @@ final class AppViewModel: ObservableObject {
     func uninstall(bundleIds: [String], udid: String) async -> Set<String> {
         guard !isUninstalling else { return [] }
         guard activeInstalledDeviceID == udid else { return [] }
-        let removableIDs = bundleIds.filter { bundleId in
-            installedApps.first(where: { $0.id == bundleId })?.appType == .user
-        }
+        // installedApps is sorted by name, so walking it gives a predictable
+        // removal order instead of the Set order the selection arrives in.
+        let requestedIDs = Set(bundleIds)
+        let removableIDs = installedApps
+            .filter { requestedIDs.contains($0.id) && $0.appType == .user }
+            .map(\.id)
         guard !removableIDs.isEmpty else { return [] }
         isUninstalling = true
-        defer { isUninstalling = false }
+        defer {
+            isUninstalling = false
+            uninstallProgressText = nil
+        }
         var successfulIDs = Set<String>()
         var failedCount = 0
+        var lastFailureReason: String?
 
-        for bundleId in removableIDs {
+        for (index, bundleId) in removableIDs.enumerated() {
             guard activeInstalledDeviceID == udid else { break }
+            uninstallProgressText = "Removing \(index + 1) of \(removableIDs.count)..."
             if await appManager.uninstallApp(bundleId: bundleId, udid: udid) {
                 successfulIDs.insert(bundleId)
             } else {
                 failedCount += 1
+                lastFailureReason = appManager.lastError
             }
         }
 
@@ -126,7 +136,10 @@ final class AppViewModel: ObservableObject {
         if failedCount == 0 {
             alertMessage = "Removed \(removedCount) \(removedCount == 1 ? "app" : "apps")"
         } else {
-            alertMessage = "Removed \(removedCount) \(removedCount == 1 ? "app" : "apps"). Failed to remove \(failedCount) \(failedCount == 1 ? "app" : "apps"); keep them selected and try again."
+            // Keep the tool's own reason, as the single-app path does; a bare count
+            // cannot tell a locked device from an app that will not uninstall.
+            let summary = "Removed \(removedCount) \(removedCount == 1 ? "app" : "apps"). Failed to remove \(failedCount) \(failedCount == 1 ? "app" : "apps"); they stay selected so you can try again."
+            alertMessage = [summary, lastFailureReason].compactMap { $0 }.joined(separator: "\n")
         }
         showAlert = true
         return successfulIDs

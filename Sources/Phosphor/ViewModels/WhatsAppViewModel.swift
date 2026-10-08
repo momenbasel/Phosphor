@@ -63,7 +63,8 @@ final class WhatsAppViewModel: ObservableObject {
         errorMessage = nil
         isLoading = true
         do {
-            let sources = try BackupManifest(backupPath: backupPath).whatsAppDatabases().map(\.source)
+            let manifest = try BackupManifest(backupPath: backupPath)
+            let sources = try manifest.whatsAppDatabases().map(\.source)
             availableSources = sources
             guard let source = requestedSource ?? selectedSource ?? sources.first,
                   sources.contains(source) else {
@@ -71,7 +72,7 @@ final class WhatsAppViewModel: ObservableObject {
                               userInfo: [NSLocalizedDescriptionKey: "WhatsApp ChatStorage.sqlite not found in backup."])
             }
             selectedSource = source
-            let exporter = try WhatsAppExporter(backupPath: backupPath, source: source)
+            let exporter = try WhatsAppExporter(manifest: manifest, source: source)
             self.exporter = exporter
             chats = try exporter.getChats()
         } catch {
@@ -83,7 +84,13 @@ final class WhatsAppViewModel: ObservableObject {
 
     func selectSource(_ source: BackupManifest.WhatsAppSource) {
         guard let backupPath, availableSources.contains(source), source != selectedSource else { return }
+        // The previous source's export result would otherwise stay on screen and
+        // open a file that belongs to the other account.
+        exportResult = nil
         loadChats(from: backupPath, source: source)
+        // Match the initial load in WhatsAppView, which lands on the first chat
+        // instead of an empty message pane.
+        if let first = chats.first { selectChat(first) }
     }
 
     func selectChat(_ chat: WhatsAppExporter.WAChat) {
