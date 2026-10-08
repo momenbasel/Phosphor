@@ -14,21 +14,31 @@ final class PhotoExtractor: ObservableObject {
         isLoading = true
         lastError = nil
 
-        do {
-            let manifest = try BackupManifest(backupPath: backupPath)
-            let photos = manifest.resolvingSizes(for: try manifest.cameraRollPhotos())
-
-            mediaItems = photos.map { entry in
-                MediaItem(
-                    id: entry.id,
-                    filename: entry.fileName,
-                    relativePath: entry.relativePath,
-                    size: entry.size,
-                    domain: entry.domain,
-                    mediaType: MediaItem.mediaType(for: entry.fileName)
-                )
+        // Manifest.db parsing plus one stat per Camera Roll file used to run on
+        // the main actor; on a large backup that is minutes of beach ball (#90).
+        let loaded = await Task.detached(priority: .userInitiated) { () -> Result<[MediaItem], Error> in
+            do {
+                let manifest = try BackupManifest(backupPath: backupPath)
+                let photos = manifest.resolvingSizes(for: try manifest.cameraRollPhotos())
+                return .success(photos.map { entry in
+                    MediaItem(
+                        id: entry.id,
+                        filename: entry.fileName,
+                        relativePath: entry.relativePath,
+                        size: entry.size,
+                        domain: entry.domain,
+                        mediaType: MediaItem.mediaType(for: entry.fileName)
+                    )
+                })
+            } catch {
+                return .failure(error)
             }
-        } catch {
+        }.value
+
+        switch loaded {
+        case .success(let items):
+            mediaItems = items
+        case .failure(let error):
             lastError = error.localizedDescription
             mediaItems = []
         }
@@ -44,6 +54,28 @@ final class PhotoExtractor: ObservableObject {
         preserveStructure: Bool = false
     ) async -> Int {
         extractionProgress = 0
+
+        // Same reason as loadMedia: copying hundreds of files on the main actor
+        // froze the window and the progress bar it was meant to drive.
+        let outcome = await Task.detached(priority: .userInitiated) { () -> Result<Int, Error> in
+            await self.extractMediaOffMain(items: items, from: backupPath, to: destination, preserveStructure: preserveStructure)
+        }.value
+
+        switch outcome {
+        case .success(let extracted):
+            return extracted
+        case .failure(let error):
+            lastError = error.localizedDescription
+            return 0
+        }
+    }
+
+    nonisolated private func extractMediaOffMain(
+        items: [MediaItem],
+        from backupPath: String,
+        to destination: String,
+        preserveStructure: Bool
+    ) async -> Result<Int, Error> {
         let fm = FileManager.default
 
         do {
@@ -110,13 +142,13 @@ final class PhotoExtractor: ObservableObject {
                     }
                 }
 
-                extractionProgress = Double(index + 1) / Double(items.count)
+                let progress = Double(index + 1) / Double(items.count)
+                await MainActor.run { extractionProgress = progress }
             }
 
-            return extracted
+            return .success(extracted)
         } catch {
-            lastError = error.localizedDescription
-            return 0
+            return .failure(error)
         }
     }
 

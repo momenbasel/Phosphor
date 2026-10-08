@@ -93,13 +93,18 @@ struct BatteryView: View {
                     if let health = b.healthPercent {
                         Text(String(format: "%.0f%%", health))
                             .font(.system(size: 32, weight: .bold, design: .rounded))
+                        Text("Health")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
                     } else {
+                        // Without both capacities the ring can only show the
+                        // charge level; labelling that "Health" misled #86.
                         Text("\(b.currentCapacity)%")
                             .font(.system(size: 32, weight: .bold, design: .rounded))
+                        Text("Charge")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
                     }
-                    Text("Health")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
                 }
             }
             .frame(width: 140, height: 140)

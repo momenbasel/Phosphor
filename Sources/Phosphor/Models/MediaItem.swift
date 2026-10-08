@@ -1,7 +1,7 @@
 import Foundation
 
 /// Represents a photo or video from Camera Roll backup.
-struct MediaItem: Identifiable, Hashable {
+struct MediaItem: Identifiable, Hashable, Sendable {
     let id: String // file hash
     let filename: String
     let relativePath: String

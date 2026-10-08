@@ -178,6 +178,9 @@ final class BackupManager: ObservableObject {
         let fm = FileManager.default
         var isDir: ObjCBool = false
         if !fm.fileExists(atPath: path, isDirectory: &isDir) {
+            if let volume = unmountedVolumeName(for: path) {
+                return (false, "The volume \"\(volume)\" that holds the backup folder is not mounted. Connect or mount it, then try again.")
+            }
             guard createIfMissing else {
                 return (false, "Backup directory does not exist at \(path).")
             }
@@ -207,6 +210,21 @@ final class BackupManager: ObservableObject {
             return (false, msg)
         }
         return (true, nil)
+    }
+
+    /// A folder under /Volumes whose volume is absent is offline, not deleted.
+    /// Creating it would put a local directory where the mount point belongs,
+    /// so callers treat this as a wait, never as a missing folder (#52).
+    static func unmountedVolumeName(for path: String) -> String? {
+        let expanded = (path as NSString).expandingTildeInPath
+        let components = (expanded as NSString).pathComponents
+        guard components.count >= 3, components[0] == "/", components[1] == "Volumes" else { return nil }
+        var isDir: ObjCBool = false
+        let volumeRoot = "/Volumes/\(components[2])"
+        if FileManager.default.fileExists(atPath: volumeRoot, isDirectory: &isDir), isDir.boolValue {
+            return nil
+        }
+        return components[2]
     }
 
     /// Cloud file-provider folders can hydrate files lazily and expose partial

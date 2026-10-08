@@ -38,6 +38,17 @@ final class DeviceViewModel: ObservableObject {
                 self?.selectedDevice = device
             }
             .store(in: &cancellables)
+
+        // A backup folder on a NAS or external disk comes and goes with its
+        // mount; re-evaluate readiness on mount events instead of waiting for
+        // a manual refresh (#52).
+        for name in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification] {
+            NSWorkspace.shared.notificationCenter.publisher(for: name)
+                .sink { [weak self] _ in
+                    Task { await self?.refreshReadiness() }
+                }
+                .store(in: &cancellables)
+        }
     }
 
     var hasDevices: Bool { !devices.isEmpty }

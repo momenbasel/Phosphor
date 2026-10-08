@@ -208,11 +208,13 @@ enum ReadinessService {
                 technicalDetail: path
             )
         }
+        let offlineVolume = BackupManager.unmountedVolumeName(for: path)
         return ReadinessItem(
             title: "Backup Folder",
             detail: validation.reason ?? "The active backup folder is not usable.",
             status: .blocked,
-            recoveryAction: "Open Settings and choose a user-owned local backup folder such as ~/Documents/Phosphor Backups.",
+            recoveryAction: offlineVolume.map { "Connect or mount \"\($0)\". Phosphor rechecks the backup folder when a volume mounts." }
+                ?? "Open Settings and choose a user-owned local backup folder such as ~/Documents/Phosphor Backups.",
             technicalDetail: path
         )
     }

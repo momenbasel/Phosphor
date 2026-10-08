@@ -81,8 +81,10 @@ final class DiagnosticsManager: ObservableObject {
                 isCharging: isTruthy(pyBattery["IsCharging"]),
                 isFullyCharged: isTruthy(pyBattery["IsFullyCharged"] ?? pyBattery["FullyCharged"]),
                 externalConnected: isTruthy(pyBattery["ExternalConnected"]),
-                designCapacity: pyBattery["DesignCapacity"].flatMap(Int.init),
-                currentMaxCapacity: pyBattery["NominalChargeCapacity"].flatMap(Int.init) ?? pyBattery["MaxCapacity"].flatMap(Int.init),
+                designCapacity: Self.milliampHours(pyBattery["DesignCapacity"]),
+                currentMaxCapacity: Self.milliampHours(pyBattery["NominalChargeCapacity"])
+                    ?? Self.milliampHours(pyBattery["AppleRawMaxCapacity"])
+                    ?? Self.milliampHours(pyBattery["MaxCapacity"]),
                 cycleCount: pyBattery["CycleCount"].flatMap(Int.init),
                 temperature: pyBattery["Temperature"].flatMap(Double.init).map { $0 / 100.0 },
                 voltage: pyBattery["Voltage"].flatMap(Double.init).map { $0 / 1000.0 },
@@ -103,8 +105,8 @@ final class DiagnosticsManager: ObservableObject {
             isCharging: info["BatteryIsCharging"] == "true",
             isFullyCharged: info["BatteryIsFullyCharged"] == "true",
             externalConnected: info["ExternalConnected"] == "true",
-            designCapacity: info["DesignCapacity"].flatMap(Int.init),
-            currentMaxCapacity: info["NominalChargeCapacity"].flatMap(Int.init),
+            designCapacity: Self.milliampHours(info["DesignCapacity"]),
+            currentMaxCapacity: Self.milliampHours(info["NominalChargeCapacity"]),
             cycleCount: nil,
             temperature: nil,
             voltage: nil,
@@ -113,6 +115,14 @@ final class DiagnosticsManager: ObservableObject {
             connectionType: nil,
             serialNumber: nil
         )
+    }
+
+    /// Current iOS reports MaxCapacity as a percentage, and iOS 27 stops
+    /// exposing the mAh keys on some devices, which showed up as "100 mAh" (#86).
+    /// A value at or under 100 is a percentage, never a capacity.
+    private static func milliampHours(_ value: String?) -> Int? {
+        guard let value, let number = Int(value), number > 100 else { return nil }
+        return number
     }
 
     // MARK: - Storage
