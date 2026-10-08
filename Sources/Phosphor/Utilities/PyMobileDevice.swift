@@ -188,6 +188,9 @@ enum PyMobileDevice {
 
         var environment = ProcessInfo.processInfo.environment
         environment["PATH"] = extendedPath
+        // Python block-buffers stdout behind a pipe. The stream timeout counts
+        // silence, so progress has to reach the pipe as it is produced.
+        environment["PYTHONUNBUFFERED"] = "1"
         return Shell.runStreaming(
             cmd.cmd,
             arguments: cmd.args,

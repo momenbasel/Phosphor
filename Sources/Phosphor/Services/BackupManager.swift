@@ -161,6 +161,9 @@ final class BackupManager: ObservableObject {
         if lower.contains("zero-length") || lower.contains("cannot parse a null") || lower.contains("mberrordomain/205") || lower.contains("error reading backup properties") {
             return ("The existing backup metadata appears incomplete or corrupt. Delete the incomplete backup or choose a fresh local backup folder, then run a full backup with the device unlocked.", .deleteIncompleteAndRunFull)
         }
+        if lower.contains("timed out") {
+            return ("The backup stopped producing output and was terminated. Check the cable, keep the device unlocked and awake, then try again.", .retry)
+        }
         if lower.contains("is not readable") || lower.contains("permission denied") || lower.contains("operation not permitted") {
             return ("""
             macOS is blocking access to the backup directory. The easiest fix is to switch Phosphor's backup directory to a user-owned location:
@@ -244,6 +247,29 @@ final class BackupManager: ObservableObject {
             return "Cloud-synced folders are not recommended for live iOS backups. Use a local folder, then sync or export completed backups afterward."
         }
         return nil
+    }
+
+    /// pymobiledevice3 failures that idevicebackup2 cannot recover from. Running
+    /// the fallback after these burns another full timeout window or fails on the
+    /// same iOS 17+ RemoteXPC/tunneld requirement, and its error then buries the
+    /// one that actually explains what happened.
+    private static func shouldInhibitFallback(stderr: String) -> Bool {
+        let lower = stderr.lowercased()
+        return lower.contains("timed out")
+            || lower.contains("remotexpc")
+            || lower.contains("tunneld")
+    }
+
+    private func failWithoutFallback(operationID: UUID, udid: String, backupRoot: String, primary: String, stderr: String) {
+        finishOperation(operationID)
+        backupProgress = "Backup failed"
+        lastBackupFailure = Self.backupFailure(
+            primary: primary,
+            stderr: stderr,
+            udid: udid,
+            recoveryPath: Self.backupPath(for: udid, in: backupRoot)
+        )
+        lastError = Self.composeFailureMessage(primary: primary, stderr: stderr)
     }
 
     /// Build a composite error string combining stderr tail and diagnostic hint.
@@ -612,6 +638,10 @@ final class BackupManager: ObservableObject {
         }
 
         let pymobiledeviceStderr = pymobiledeviceStderrTail.joined(separator: "\n")
+        if Self.shouldInhibitFallback(stderr: pymobiledeviceStderr) {
+            failWithoutFallback(operationID: operationID, udid: udid, backupRoot: backupRoot, primary: "Backup failed.", stderr: pymobiledeviceStderr)
+            return false
+        }
 
         // Fallback: idevicebackup2
         backupProgress = "Backing up..."
@@ -703,6 +733,9 @@ final class BackupManager: ObservableObject {
         // Entering this async helper is an actor suspension point. Quit may request
         // cancellation after ownership is acquired but before a child is assigned.
         guard !operationWasCancelled(operationID) else { return false }
+        // Reset before the availability guard so the fallback decision below never
+        // reads a previous run's stderr.
+        pymobiledeviceStderrTail.removeAll()
         guard PyMobileDevice.available() else {
             lastError = "pymobiledevice3 not installed. Install with: pipx install pymobiledevice3"
             return false
@@ -710,7 +743,6 @@ final class BackupManager: ObservableObject {
 
         backupProgress = "Backing up..."
         onProgress("Backing up")
-        pymobiledeviceStderrTail.removeAll()
 
         return await withCheckedContinuation { continuation in
             guard !operationWasCancelled(operationID) else {
@@ -874,6 +906,10 @@ final class BackupManager: ObservableObject {
         }
 
         let pymobiledeviceStderr = pymobiledeviceStderrTail.joined(separator: "\n")
+        if Self.shouldInhibitFallback(stderr: pymobiledeviceStderr) {
+            failWithoutFallback(operationID: operationID, udid: udid, backupRoot: backupRoot, primary: "Incremental backup failed.", stderr: pymobiledeviceStderr)
+            return false
+        }
         var idevicebackupStderr = ""
 
         // Fallback: idevicebackup2

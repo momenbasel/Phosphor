@@ -188,12 +188,26 @@ enum Shell {
         private var didFinish = false
         private var timedOut = false
         private var timeoutTask: Task<Void, Never>?
+        private var lastActivity = Date()
 
         func hasFinished() -> Bool {
             lock.lock()
             let value = didFinish
             lock.unlock()
             return value
+        }
+
+        func recordActivity() {
+            lock.lock()
+            lastActivity = Date()
+            lock.unlock()
+        }
+
+        func timeSinceLastActivity() -> TimeInterval {
+            lock.lock()
+            let elapsed = Date().timeIntervalSince(lastActivity)
+            lock.unlock()
+            return elapsed
         }
 
         func markTimedOut() -> Bool {
@@ -650,12 +664,14 @@ enum Shell {
         stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             if !data.isEmpty, let str = String(data: data, encoding: .utf8) {
+                state.recordActivity()
                 DispatchQueue.main.async { onOutput(str) }
             }
         }
         stderrPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             if !data.isEmpty, let str = String(data: data, encoding: .utf8) {
+                state.recordActivity()
                 DispatchQueue.main.async { onError(str) }
             }
         }
@@ -671,18 +687,29 @@ enum Shell {
         exitSource.resume()
 
         if let timeout {
+            // The timeout is an inactivity budget, not a wall-clock cap. Backups of
+            // large devices stream progress for 8-16 hours and the fixed 6 h sleep
+            // this replaces killed them at 95% (issue #74). Every stdout or stderr
+            // chunk resets the clock; only a child that goes silent for the whole
+            // period is terminated.
             let timeoutTask = Task {
-                let nanoseconds = UInt64(max(timeout, 0) * 1_000_000_000)
-                try? await Task.sleep(nanoseconds: nanoseconds)
-                guard !Task.isCancelled, state.markTimedOut() else { return }
-                DispatchQueue.main.async { onError("Command timed out after \(Int(timeout))s") }
-                await terminateTimedOutTree(processTree, grace: streamTerminationGrace)
-                // The exit handler does not reap once timeout owns completion.
-                // Bounded for the same reason as the runAsync watchdog: an
-                // unkillable child must not strand the streaming completion.
-                reapWithinDeadline(process.processIdentifier, timeout: 1.0)
-                guard !Task.isCancelled else { return }
-                finish(exitCode: -1)
+                let checkInterval = min(max(timeout / 4.0, 0.05), 15.0)
+                let checkNanoseconds = UInt64(checkInterval * 1_000_000_000)
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: checkNanoseconds)
+                    if Task.isCancelled || state.hasFinished() { return }
+                    guard state.timeSinceLastActivity() >= timeout else { continue }
+                    guard state.markTimedOut() else { return }
+                    DispatchQueue.main.async { onError("Command timed out after \(Int(timeout))s of inactivity") }
+                    await terminateTimedOutTree(processTree, grace: streamTerminationGrace)
+                    // The exit handler does not reap once timeout owns completion.
+                    // Bounded for the same reason as the runAsync watchdog: an
+                    // unkillable child must not strand the streaming completion.
+                    reapWithinDeadline(process.processIdentifier, timeout: 1.0)
+                    guard !Task.isCancelled else { return }
+                    finish(exitCode: -1)
+                    return
+                }
             }
             state.setTimeoutTask(timeoutTask)
         }

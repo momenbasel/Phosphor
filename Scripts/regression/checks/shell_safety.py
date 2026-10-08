@@ -201,6 +201,30 @@ def test_backup_streaming_callers_are_timeout_bounded_and_cancelable(root: Path)
     assert "Shell.terminate(syslogProcess)" in diagnostics, "stopSyslog should escalate termination for stuck syslog children"
 
 
+def test_backup_streaming_timeout_is_inactivity_based_and_does_not_cascade(root: Path) -> None:
+    """Issue #74: a fixed 6 h wall-clock timeout killed large backups at 95%. The
+    stream timeout must measure silence, pymobiledevice3 must not block-buffer its
+    progress behind the pipe, and a timed-out or RemoteXPC-blocked pymobiledevice3
+    run must not cascade into idevicebackup2, which cannot do better there."""
+    shell = read(root, "Sources/Phosphor/Utilities/Shell.swift")
+    body = shell[shell.index("static func runStreaming("):shell.index("    /// Terminate a long-running managed command")]
+    assert body.count("state.recordActivity()") == 2, "every stdout and stderr chunk must reset the inactivity clock"
+    assert "state.timeSinceLastActivity() >= timeout" in body, "the stream timeout must measure inactivity, not wall-clock time"
+    assert "of inactivity" in body, "the timeout diagnostic must say the child went silent"
+
+    py = read(root, "Sources/Phosphor/Utilities/PyMobileDevice.swift")
+    assert 'environment["PYTHONUNBUFFERED"] = "1"' in py, "pymobiledevice3 streams must not block-buffer stdout behind the pipe"
+
+    backup = read(root, "Sources/Phosphor/Services/BackupManager.swift")
+    start = backup.index("private static func shouldInhibitFallback(stderr: String) -> Bool")
+    helper = backup[start:backup.index("}", start)]
+    assert 'lower.contains("timed out")' in helper, "a timed-out pymobiledevice3 backup must not cascade to idevicebackup2"
+    assert 'lower.contains("remotexpc")' in helper, "the iOS 17+ RemoteXPC requirement must not cascade to idevicebackup2"
+    assert backup.count("if Self.shouldInhibitFallback(stderr: pymobiledeviceStderr)") == 2, (
+        "full and incremental backups must both stop before the idevicebackup2 fallback"
+    )
+
+
 def test_backup_ownership_blocks_same_device_but_allows_different_devices(root: Path) -> None:
     manager = read(root, "Sources/Phosphor/Services/BackupManager.swift")
     coordinator_path = root / "Sources/Phosphor/Services/BackupOperationCoordinator.swift"
