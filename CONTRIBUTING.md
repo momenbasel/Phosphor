@@ -26,6 +26,17 @@ bash Scripts/build.sh
 open .build/Phosphor.app
 ```
 
+### Windows Edition
+
+The Windows edition lives in `windows/` and needs Python 3.12 x64 and Node.js 22+ on Windows 10 or 11:
+
+```powershell
+cd windows
+./scripts/build.ps1
+```
+
+For day-to-day work, run `npm run dev` and `npm start -- --dev`, and `npm test` for the engine regression suite. Format Python with `black backend tests scripts` and the interface with `npm run format`; CI checks both. See [windows/README.md](windows/README.md) for details. When you add or rename a macOS sidebar section, keep the Windows `navigation` list in `windows/src/navigation.ts` in step with it.
+
 ### Project Structure
 
 ```

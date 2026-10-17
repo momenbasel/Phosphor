@@ -9,7 +9,7 @@
 <h1 align="center">Phosphor</h1>
 
 <p align="center">
-  <strong>Free and open-source iOS device manager for macOS.</strong><br>
+  <strong>Free and open-source iOS device manager for macOS and Windows.</strong><br>
   <a href="https://github.com/momenbasel/Phosphor/releases/latest">Download</a> -
   <a href="https://momenbasel.github.io/Phosphor/">Website</a> -
   <a href="#features">Features</a> -
@@ -20,7 +20,7 @@
   <a href="https://github.com/momenbasel/Phosphor/releases/latest"><img src="https://img.shields.io/github/v/release/momenbasel/Phosphor?style=flat-square&color=5856D6" alt="Release"></a>
   <a href="https://github.com/momenbasel/Phosphor/blob/main/LICENSE"><img src="https://img.shields.io/github/license/momenbasel/Phosphor?style=flat-square&color=34C759" alt="License"></a>
   <a href="https://github.com/momenbasel/Phosphor/actions"><img src="https://img.shields.io/github/actions/workflow/status/momenbasel/Phosphor/build.yml?style=flat-square" alt="Build"></a>
-  <img src="https://img.shields.io/badge/platform-macOS%2014%2B-blue?style=flat-square" alt="Platform">
+  <img src="https://img.shields.io/badge/platform-macOS%2014%2B%20%7C%20Windows%2010%2B-blue?style=flat-square" alt="Platform">
   <img src="https://img.shields.io/badge/swift-5.9-orange?style=flat-square" alt="Swift">
 </p>
 
@@ -165,6 +165,10 @@ brew install --cask phosphor
 4. Install pymobiledevice3: `pipx install pymobiledevice3`
 5. Optional fallback: `brew install libimobiledevice ideviceinstaller`
 
+### Windows
+
+Phosphor for Windows (10 and 11, x64) mirrors the macOS sidebar and workflows with an Electron interface and a bundled device engine, so Python and Node.js are not needed to run it. Install [Apple Devices](https://apps.microsoft.com/detail/9np83lwlpz9k) from Microsoft Store for the USB driver, then run the installer or portable executable. See [windows/README.md](windows/README.md) for features, build instructions, and current limitations.
+
 ### Build from Source
 
 ```bash
@@ -210,6 +214,9 @@ Sources/Phosphor/
   Views/         SwiftUI views organized by feature
   Utilities/     Shell (process runner), SQLiteReader, BackupManifest,
                  PlistParser
+
+windows/         Windows edition: Electron shell, React views, and a
+                 Python engine (JSON-lines RPC over stdio)
 ```
 
 **Key design decisions:**

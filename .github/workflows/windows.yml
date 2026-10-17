@@ -1,0 +1,55 @@
+name: Windows
+
+on:
+  push:
+    branches: [main]
+    paths: ['windows/**', 'Resources/AppIcon.icns', '.github/workflows/windows.yml']
+  pull_request:
+    branches: [main]
+    paths: ['windows/**', 'Resources/AppIcon.icns', '.github/workflows/windows.yml']
+
+jobs:
+  test:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: windows
+    env:
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: windows/package-lock.json
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install -r requirements.lock.txt black
+          npm ci
+
+      - name: Check Formatting
+        run: |
+          python -m black --check backend tests scripts
+          npm run format:check
+
+      - name: Engine Regression Tests
+        run: python -m pytest tests -q -p no:cacheprovider
+
+      - name: Electron Regression Tests
+        run: node --test tests/preview-protocol.test.cjs tests/pdf-range.test.cjs
+
+      - name: Type Check
+        run: npx tsc --noEmit --noUnusedLocals --noUnusedParameters
+
+      - name: Build Interface
+        run: |
+          python scripts/create-icon.py
+          npm run build
