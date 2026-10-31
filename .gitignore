@@ -8,3 +8,19 @@ DerivedData/
 *.xcodeproj
 *.xcworkspace
 __pycache__/
+
+# Windows edition (windows/): local environments, build outputs, generated assets
+/windows/.venv/
+/windows/node_modules/
+/windows/dist/
+/windows/backend-dist/
+/windows/backend-build/
+/windows/release/
+/windows/test-output/
+/windows/.test-profile/
+/windows/public/pdfjs/
+/windows/assets/licenses/
+/windows/assets/python-source/
+/windows/assets/source-archives/
+.pytest_cache/
+*.pyc
