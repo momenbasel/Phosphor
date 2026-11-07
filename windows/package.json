@@ -1,0 +1,137 @@
+{
+  "name": "phosphor-windows",
+  "productName": "Phosphor",
+  "version": "1.5.0",
+  "description": "Phosphor for Windows: iPhone backups, data browsing, and device tools.",
+  "author": "Moamen Basel and Phosphor Contributors",
+  "license": "MIT",
+  "private": true,
+  "overrides": {
+    "@electron/get": "^5.0.0"
+  },
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "start": "electron .",
+    "build": "node scripts/prepare-pdf-assets.cjs && tsc --noEmit && vite build",
+    "package": "npm run build && electron-builder --win nsis --x64",
+    "package:portable": "npm run build && electron-builder --win portable --x64",
+    "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"electron/*.cjs\" \"tests/*.cjs\" \"scripts/*.cjs\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"electron/*.cjs\" \"tests/*.cjs\" \"scripts/*.cjs\"",
+    "test": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .venv\\Scripts\\python.exe -m pytest tests -q"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.2.8",
+    "lucide-react": "^0.577.0",
+    "pdfjs-dist": "6.4.299",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "electron": "^44.6.0",
+    "electron-builder": "^26.15.3",
+    "prettier": "^3.9.10",
+    "typescript": "^5.9.0",
+    "vite": "^7.1.0"
+  },
+  "build": {
+    "appId": "org.phosphor.windows",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "assets/icon.*",
+      "package.json",
+      "LICENSE",
+      "THIRD_PARTY_NOTICES.md",
+      "!node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "backend-dist/phosphor-engine",
+        "to": "engine"
+      },
+      {
+        "from": "backend",
+        "to": "source/backend",
+        "filter": [
+          "**/*.py"
+        ]
+      },
+      {
+        "from": "requirements.lock.txt",
+        "to": "source/requirements.lock.txt"
+      },
+      {
+        "from": "assets/licenses",
+        "to": "licenses"
+      },
+      {
+        "from": "assets/python-source",
+        "to": "source/vendor"
+      },
+      {
+        "from": "assets/source-archives",
+        "to": "source/upstream"
+      },
+      {
+        "from": "scripts",
+        "to": "source/scripts",
+        "filter": [
+          "**/*.py",
+          "**/*.ps1",
+          "**/*.nsh"
+        ]
+      },
+      {
+        "from": "engine.spec",
+        "to": "source/engine.spec"
+      },
+      {
+        "from": "requirements.txt",
+        "to": "source/requirements.txt"
+      },
+      {
+        "from": "tests",
+        "to": "source/tests",
+        "filter": [
+          "**/*.py"
+        ]
+      },
+      {
+        "from": "LICENSE",
+        "to": "source/LICENSE"
+      },
+      {
+        "from": "README.md",
+        "to": "README.md"
+      }
+    ],
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "artifactName": "Phosphor-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false,
+      "include": "scripts/installer.nsh",
+      "artifactName": "Phosphor-${version}-${arch}-Setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "Phosphor-${version}-${arch}-Portable.${ext}"
+    }
+  }
+}
