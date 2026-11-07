@@ -1,0 +1,2 @@
+# Keep LF endings on checkout so Prettier and Black see the committed formatting on Windows.
+* text=auto eol=lf
