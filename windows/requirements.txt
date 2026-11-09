@@ -1,0 +1,11 @@
+pymobiledevice3==11.23.1
+cryptography==50.0.2
+Pillow==12.3.0
+pillow-heif==1.8.0
+pyinstaller==6.22.3
+pytest==9.1.1
+pytypedstream==0.1.0
+rawpy==0.27.1
+numpy==2.5.3
+defusedxml==0.7.1
+aiohttp==3.14.4
