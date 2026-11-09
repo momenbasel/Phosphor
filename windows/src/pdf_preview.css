@@ -1,0 +1,149 @@
+.pdf-preview {
+  display: grid;
+  gap: 12px;
+}
+.pdf-toolbar,
+.pdf-page-controls,
+.pdf-zoom,
+.pdf-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.pdf-toolbar {
+  justify-content: space-between;
+}
+.pdf-page-controls label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.pdf-page-controls input {
+  width: 62px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  padding: 4px 7px;
+  font: inherit;
+}
+.pdf-zoom span {
+  font-size: 12px;
+  min-width: 40px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.pdf-search {
+  padding: 10px 12px;
+  background: var(--soft);
+  border-radius: 8px;
+  color: var(--muted);
+}
+.pdf-search input {
+  flex: 1;
+  min-width: 130px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  padding: 6px;
+  font: inherit;
+  outline-offset: 4px;
+}
+.pdf-search-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.pdf-page-surface {
+  height: 55vh;
+  min-height: 260px;
+  max-height: 680px;
+  overflow: auto;
+  position: relative;
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  background: var(--soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+}
+.pdf-page-surface canvas {
+  max-width: none;
+  flex-shrink: 0;
+  box-shadow: 0 3px 18px #0002;
+}
+.pdf-loading {
+  position: sticky;
+  top: 45%;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  color: var(--muted);
+  font-size: 13px;
+  z-index: 1;
+}
+.pdf-error {
+  font-size: 13px;
+  color: var(--danger, #b53d4b);
+  line-height: 1.6;
+}
+.pdf-password {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.pdf-password p {
+  width: 100%;
+  font-size: 13px;
+}
+.pdf-password input {
+  height: 34px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+}
+.pdf-page-text {
+  font-size: 12px;
+  color: var(--muted);
+}
+.pdf-page-text summary {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  cursor: pointer;
+  padding: 8px 0;
+}
+.pdf-page-text p {
+  white-space: pre-wrap;
+  line-height: 1.7;
+  max-height: 160px;
+  overflow: auto;
+  user-select: text;
+}
+.pdf-page-text .button {
+  margin: 5px 0;
+}
+@media (max-width: 850px) {
+  .pdf-page-controls .button {
+    font-size: 0;
+    padding: 8px;
+  }
+  .pdf-page-controls .button svg {
+    width: 17px;
+  }
+  .pdf-page-surface {
+    padding: 10px;
+  }
+}
