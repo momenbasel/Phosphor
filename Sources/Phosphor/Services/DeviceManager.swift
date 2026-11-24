@@ -16,6 +16,7 @@ final class DeviceManager: ObservableObject {
     private var pollTimer: Timer?
     private var deviceInfoCache: [String: (device: DeviceInfo, fetchedAt: Date)] = [:]
     private var batteryInfoCache: [String: (info: [String: String], fetchedAt: Date)] = [:]
+    private var diskInfoCache: [String: (info: [String: String], fetchedAt: Date)] = [:]
     private var pairStatusCache: [String: (isPaired: Bool, fetchedAt: Date)] = [:]
     private var bonjourDeviceCache: (devices: [PyMobileDevice.BonjourDevice], fetchedAt: Date)?
     private var compatibilityOnlyDeviceCache = AuthoritativeSnapshotCache<PyMobileDevice.DeviceEntry>()
@@ -24,6 +25,7 @@ final class DeviceManager: ObservableObject {
     private let compatibilityDiscoveryInterval: TimeInterval = 30
     private let deviceInfoRefreshInterval: TimeInterval = 30
     private let batteryInfoRefreshInterval: TimeInterval = 60
+    private let diskInfoRefreshInterval: TimeInterval = 120
     private let pairStatusRefreshInterval: TimeInterval = 120
     private let bonjourDeviceRefreshInterval: TimeInterval = 30
 
@@ -211,22 +213,27 @@ final class DeviceManager: ObservableObject {
         let devices = currentDevices.filter { $0.connectionType == .usb } + stableNetworkDevices
 
         if devices.isEmpty {
-            nearbyWirelessDevices = await cachedBonjourDevices(forceRefresh: forceRefresh)
-            connectedDevices = []
-            selectedDevice = nil
+            let bonjour = await cachedBonjourDevices(forceRefresh: forceRefresh)
+            if nearbyWirelessDevices != bonjour { nearbyWirelessDevices = bonjour }
+            if !connectedDevices.isEmpty { connectedDevices = [] }
+            if selectedDevice != nil { selectedDevice = nil }
             deviceInfoCache.removeAll()
             batteryInfoCache.removeAll()
             pairStatusCache.removeAll()
             return
         }
 
-        nearbyWirelessDevices = []
-        connectedDevices = devices
+        if !nearbyWirelessDevices.isEmpty { nearbyWirelessDevices = [] }
+        if connectedDevices != devices { connectedDevices = devices }
+        let nextSelection: DeviceInfo?
         if let selectedID = selectedDevice?.id,
            let refreshedSelection = devices.first(where: { $0.id == selectedID }) {
-            selectedDevice = refreshedSelection
+            nextSelection = refreshedSelection
         } else {
-            selectedDevice = devices.first
+            nextSelection = devices.first
+        }
+        if selectedDevice != nextSelection {
+            selectedDevice = nextSelection
         }
     }
 
@@ -318,6 +325,12 @@ final class DeviceManager: ObservableObject {
         let info = await PyMobileDevice.deviceInfo(udid: udid)
         if !info.isEmpty {
             let batteryInfo = await cachedBatteryInfo(udid: udid, forceRefresh: forceRefresh)
+            let diskInfo: [String: String]
+            if info["TotalDiskCapacity"] == nil || info["AmountDataAvailable"] == nil {
+                diskInfo = await cachedDiskInfo(udid: udid, forceRefresh: forceRefresh)
+            } else {
+                diskInfo = [:]
+            }
             let isPaired = await cachedPymobiledevicePairStatus(udid: udid, forceRefresh: forceRefresh)
 
             let batteryLevel = batteryInfo["CurrentCapacity"].flatMap(Int.init)
@@ -345,10 +358,10 @@ final class DeviceManager: ObservableObject {
                 imei: info["InternationalMobileEquipmentIdentity"],
                 batteryLevel: batteryLevel,
                 batteryCharging: batteryCharging,
-                totalDiskCapacity: info["TotalDiskCapacity"].flatMap(UInt64.init),
-                availableDiskSpace: info["AmountDataAvailable"].flatMap(UInt64.init),
-                totalDataCapacity: info["TotalDataCapacity"].flatMap(UInt64.init),
-                totalSystemCapacity: info["TotalSystemCapacity"].flatMap(UInt64.init),
+                totalDiskCapacity: (info["TotalDiskCapacity"] ?? diskInfo["TotalDiskCapacity"]).flatMap(UInt64.init),
+                availableDiskSpace: (info["AmountDataAvailable"] ?? diskInfo["AmountDataAvailable"]).flatMap(UInt64.init),
+                totalDataCapacity: (info["TotalDataCapacity"] ?? diskInfo["TotalDataCapacity"]).flatMap(UInt64.init),
+                totalSystemCapacity: (info["TotalSystemCapacity"] ?? diskInfo["TotalSystemCapacity"]).flatMap(UInt64.init),
                 isPaired: isPaired,
                 isActivated: info["ActivationState"] == "Activated",
                 chipID: info["ChipID"],
@@ -445,6 +458,25 @@ final class DeviceManager: ObservableObject {
         }
         let info = await PyMobileDevice.batteryInfo(udid: udid)
         batteryInfoCache[udid] = (info, Date())
+        return info
+    }
+
+    private func cachedDiskInfo(udid: String, forceRefresh: Bool = false) async -> [String: String] {
+        if !forceRefresh,
+           let cached = diskInfoCache[udid],
+           Date().timeIntervalSince(cached.fetchedAt) < diskInfoRefreshInterval {
+            return cached.info
+        }
+        var info = await PyMobileDevice.diskUsage(udid: udid)
+        if info.isEmpty {
+            let result = await Shell.runAsync("ideviceinfo", arguments: ["-u", udid, "-q", "com.apple.disk_usage"])
+            if result.succeeded {
+                info = result.output.parseKeyValuePairs()
+            }
+        }
+        if !info.isEmpty {
+            diskInfoCache[udid] = (info, Date())
+        }
         return info
     }
 

@@ -118,13 +118,13 @@ struct MessageListView: View {
                         ? "Create a backup first, or choose an existing backup folder."
                         : "Choose a backup below, or use the latest one to browse and export messages.",
                     action: {
-                        if let first = backupVM.backups.first {
+                        if let first = backupVM.preferredBrowsableBackup {
                             selectBackup(first)
                         } else {
                             chooseBackupFolder()
                         }
                     },
-                    actionLabel: backupVM.backups.isEmpty ? "Choose Backup Folder" : "Use Latest Backup"
+                    actionLabel: backupVM.browsableBackups.isEmpty ? "Choose Backup Folder" : "Use Latest Backup"
                 )
             } else if loadedBackupIsCurrent && messageVM.chats.isEmpty {
                 EmptyStateView(
@@ -162,8 +162,8 @@ struct MessageListView: View {
             Image(systemName: "externaldrive.fill")
                 .foregroundStyle(.secondary)
             Menu {
-                ForEach(backupVM.backups) { backup in
-                    Button("\(backup.deviceIdentityLabel) • iOS \(backup.iosVersion) • \(backup.relativeDate)\(backup.isEncrypted ? " • Encrypted" : "")") {
+                ForEach(backupVM.browsableBackups) { backup in
+                    Button("\(backup.deviceIdentityLabel) • iOS \(backup.iosVersion) • \(backup.relativeDate)\(backup.pickerStatusSuffix)\(backup.isEncrypted ? " • Encrypted" : "")") {
                         selectBackup(backup)
                     }
                 }
@@ -173,7 +173,7 @@ struct MessageListView: View {
                 }
             } label: {
                 HStack {
-                    Text(backupVM.selectedBackup.map { "\($0.deviceIdentityLabel) • iOS \($0.iosVersion) • \($0.relativeDate)\($0.isEncrypted ? " • Encrypted" : "")" } ?? "Choose Backup")
+                    Text(backupVM.selectedBackup.map { "\($0.deviceIdentityLabel) • iOS \($0.iosVersion) • \($0.relativeDate)\($0.pickerStatusSuffix)\($0.isEncrypted ? " • Encrypted" : "")" } ?? "Choose Backup")
                         .lineLimit(1)
                     Image(systemName: "chevron.down")
                         .font(.system(size: 9, weight: .semibold))
@@ -409,7 +409,7 @@ struct MessageListView: View {
 
         if let backup = backupVM.selectedBackup {
             loadMessages(from: backup)
-        } else if let latest = backupVM.backups.first {
+        } else if let latest = backupVM.preferredBrowsableBackup {
             selectBackup(latest)
         }
     }
@@ -427,7 +427,7 @@ struct MessageListView: View {
         // user can immediately export without visiting Backups first. If the
         // picker was cancelled, leave the current selection alone.
         guard backupVM.backups.map(\.path) != previousPaths else { return }
-        if let latest = backupVM.backups.first {
+        if let latest = backupVM.preferredBrowsableBackup {
             selectBackup(latest)
         } else {
             messageVM.clear()

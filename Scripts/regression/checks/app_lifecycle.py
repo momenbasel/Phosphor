@@ -45,6 +45,12 @@ def test_application_quit_defers_until_managed_backup_processes_are_reaped(root:
 
     assert "func applicationShouldTerminate" in app, "normal Quit must pass through a termination drain"
     assert "ApplicationTerminationCoordinator.shared.applicationShouldTerminate()" in app
+    assert ".terminateCancel" in coordinator and "confirmTerminationWithActiveBackup" in coordinator, (
+        "Quitting during an active backup must prompt the user with Keep Running / Pause Backup & Quit"
+    )
+    assert '"Keep Running"' in coordinator and '"Pause Backup & Quit"' in coordinator, (
+        "Termination confirmation alert must default to Keep Running and offer Pause Backup & Quit"
+    )
     assert ".terminateLater" in coordinator and "reply(toApplicationShouldTerminate: true)" in coordinator, (
         "AppKit termination must be deferred until managed work is drained"
     )

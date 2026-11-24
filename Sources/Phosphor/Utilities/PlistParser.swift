@@ -19,25 +19,54 @@ enum PlistParser {
         }
     }
 
-    /// Parse the Info.plist from an iOS backup directory.
+    /// Parse the Info.plist from an iOS backup directory, falling back to
+    /// Manifest.plist's Lockdown dictionary + Status.plist when Info.plist is
+    /// truncated or corrupted (e.g. an interrupted write inside a large icon blob).
     static func parseBackupInfo(_ backupPath: String) -> BackupInfoPlist? {
         let infoPath = (backupPath as NSString).appendingPathComponent("Info.plist")
-        guard let dict = parse(infoPath) else { return nil }
+        if let dict = parse(infoPath) {
+            let apps = dict["Applications"] as? [String: Any]
+            let installedApps = dict["Installed Applications"] as? [String]
+            return BackupInfoPlist(
+                deviceName: dict["Device Name"] as? String ?? "Unknown",
+                displayName: dict["Display Name"] as? String ?? "Unknown",
+                productType: dict["Product Type"] as? String ?? "",
+                productVersion: dict["Product Version"] as? String ?? "",
+                buildVersion: dict["Build Version"] as? String ?? "",
+                serialNumber: dict["Serial Number"] as? String ?? "",
+                udid: dict["Target Identifier"] as? String ?? dict["Unique Identifier"] as? String ?? "",
+                iccid: dict["ICCID"] as? String,
+                imei: dict["IMEI"] as? String,
+                meid: dict["MEID"] as? String,
+                phoneNumber: dict["Phone Number"] as? String,
+                lastBackupDate: dict["Last Backup Date"] as? Date,
+                isEncrypted: dict["WasPasscodeSet"] as? Bool ?? false,
+                appCount: apps?.count ?? installedApps?.count ?? 0
+            )
+        }
 
+        let manifestPath = (backupPath as NSString).appendingPathComponent("Manifest.plist")
+        guard let manifest = parse(manifestPath),
+              let lockdown = manifest["Lockdown"] as? [String: Any] else {
+            return nil
+        }
+        let status = parseBackupStatus(backupPath)
+        let dirName = (backupPath as NSString).lastPathComponent
+        let deviceName = lockdown["DeviceName"] as? String ?? "Unknown"
         return BackupInfoPlist(
-            deviceName: dict["Device Name"] as? String ?? "Unknown",
-            displayName: dict["Display Name"] as? String ?? "Unknown",
-            productType: dict["Product Type"] as? String ?? "",
-            productVersion: dict["Product Version"] as? String ?? "",
-            buildVersion: dict["Build Version"] as? String ?? "",
-            serialNumber: dict["Serial Number"] as? String ?? "",
-            udid: dict["Target Identifier"] as? String ?? dict["Unique Identifier"] as? String ?? "",
-            iccid: dict["ICCID"] as? String,
-            imei: dict["IMEI"] as? String,
-            meid: dict["MEID"] as? String,
-            phoneNumber: dict["Phone Number"] as? String,
-            lastBackupDate: dict["Last Backup Date"] as? Date,
-            isEncrypted: dict["WasPasscodeSet"] as? Bool ?? false
+            deviceName: deviceName,
+            displayName: deviceName,
+            productType: lockdown["ProductType"] as? String ?? "",
+            productVersion: lockdown["ProductVersion"] as? String ?? (manifest["SystemDomainsVersion"] as? String ?? ""),
+            buildVersion: lockdown["BuildVersion"] as? String ?? "",
+            serialNumber: lockdown["SerialNumber"] as? String ?? "",
+            udid: lockdown["UniqueDeviceID"] as? String ?? dirName,
+            iccid: nil,
+            imei: nil,
+            meid: nil,
+            phoneNumber: nil,
+            lastBackupDate: (manifest["Date"] as? Date) ?? status?.date,
+            isEncrypted: (manifest["IsEncrypted"] as? Bool) ?? (manifest["WasPasscodeSet"] as? Bool ?? false)
         )
     }
 
@@ -86,6 +115,7 @@ struct BackupInfoPlist {
     let phoneNumber: String?
     let lastBackupDate: Date?
     let isEncrypted: Bool
+    var appCount: Int = 0
 
     /// Convert product type (e.g., "iPhone14,2") to human-readable name.
     var modelName: String {

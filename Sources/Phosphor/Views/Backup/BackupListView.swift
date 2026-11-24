@@ -9,15 +9,21 @@ struct BackupListView: View {
     var onBrowseBackup: () -> Void = {}
     @State private var showDeleteConfirm = false
     @State private var backupToDelete: BackupInfo?
-    @State private var showImportArchive = false
-    @State private var archiveProgress: String?
-    @State private var isArchiving = false
+    @State private var showUnarchiveConfirm = false
+    @State private var backupToUnarchive: BackupInfo?
     @State private var showScheduleSheet = false
     @State private var showFullWiFiBackupConfirm = false
     @State private var pendingFullWiFiBackupUDID: String?
-    @State private var pendingFullWiFiBackupPrefersNetwork = false
     @State private var showIncompleteBackupTrashConfirm = false
     @State private var pendingIncompleteBackupIssue: BackupManager.BackupFailure?
+    @State private var showNonResumableCancelConfirm = false
+    @State private var pendingCancelActivityUDID: String?
+    @State private var diagnosisUDID: String?
+    @State private var showDiagnosisSheet = false
+    @State private var preflightDevice: DeviceInfo?
+    @State private var preflightIncremental = false
+    @State private var preflightPreferNetwork = false
+    @State private var preflightConfig = DeviceBackupConfiguration()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -37,13 +43,16 @@ struct BackupListView: View {
 
                 newBackupMenu
                 .buttonStyle(.borderedProminent)
-                .tint(.brandAccent)
+                .tint(deviceVM.selectedDevice.map { hasResumableBackup(for: $0) } == true ? .orange : .brandAccent)
+                .disabled(backupVM.isLoadingBackups)
+                .help(backupVM.isLoadingBackups ? "Scanning backup folder on disk…" : "Create or manage backups")
 
                 Button {
                     backupVM.loadBackups()
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
+                .disabled(backupVM.isLoadingBackups)
             }
             .padding(20)
 
@@ -60,26 +69,74 @@ struct BackupListView: View {
             }
 
             if backupVM.backups.isEmpty {
-                EmptyStateView(
-                    icon: "externaldrive",
-                    title: "No Backups Found",
-                    subtitle: "Back up your device, or pick an existing backup folder via New Backup -> Open Existing Backup Folder.",
-                    action: {
-                        guard let device = deviceVM.selectedDevice else { return }
-                        startBackup(for: device, incremental: shouldOfferIncremental(for: device))
-                    },
-                    actionLabel: emptyStateBackupActionLabel
-                )
+                if backupVM.isLoadingBackups {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                            .controlSize(.regular)
+                        Text("Scanning Backup Location…")
+                            .font(.headline)
+                        Text("Reading existing backups from \(BackupManager.activeBackupDir)")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if activeBackupActivities.isEmpty {
+                    EmptyStateView(
+                        icon: "externaldrive",
+                        title: "No Backups Found",
+                        subtitle: "Back up your device, or pick an existing backup folder via New Backup -> Open Existing Backup Folder.",
+                        action: {
+                            guard let device = deviceVM.selectedDevice else { return }
+                            startBackup(for: device, incremental: shouldOfferIncremental(for: device))
+                        },
+                        actionLabel: emptyStateBackupActionLabel,
+                        color: .brandAccent
+                    )
+                } else {
+                    Spacer(minLength: 0)
+                }
             } else {
                 List {
                     ForEach(backupVM.backups) { backup in
-                        BackupRow(backup: backup) {
+                        BackupRow(
+                            backup: backup,
+                            activity: backup.isArchivedSnapshot ? nil : backupVM.activity(for: backup.udid),
+                            isDeviceConnected: deviceVM.devices.contains(where: { $0.id == backup.udid }),
+                            hasActiveSlotForDevice: backupVM.backups.contains { !$0.isArchivedSnapshot && $0.udid == backup.udid },
+                            isDeviceBackupRunning: backupVM.isBackupActive(for: backup.udid)
+                        ) {
                             if backupVM.openBackupBrowser(backup) {
                                 onBrowseBackup()
                             }
                         } onDelete: {
-                            backupToDelete = backup
+                            let latest = backupVM.backups.first(where: { $0.id == backup.id }) ?? backup
+                            backupToDelete = latest
                             showDeleteConfirm = true
+                            if !latest.sizeResolved || latest.size == 0 {
+                                let targetPath = latest.path
+                                let targetId = latest.id
+                                Task.detached(priority: .userInitiated) {
+                                    let computed = FileManager.default.directorySize(at: targetPath)
+                                    await MainActor.run {
+                                        if backupToDelete?.id == targetId {
+                                            backupToDelete = backupToDelete?.withSize(computed)
+                                        }
+                                    }
+                                }
+                            }
+                        } onResume: {
+                            Task { await backupVM.restartStalledBackup(udid: backup.udid, device: deviceVM.devices.first(where: { $0.id == backup.udid })) }
+                        } onRepair: {
+                            repairBrokenBackup(backup)
+                        } onPause: {
+                            pauseBackupActivity(for: backup.udid)
+                        } onDiagnose: {
+                            diagnosisUDID = backup.udid
+                            showDiagnosisSheet = true
+                        } onUnarchive: {
+                            let latest = backupVM.backups.first(where: { $0.id == backup.id }) ?? backup
+                            backupToUnarchive = latest
+                            showUnarchiveConfirm = true
                         }
                     }
                 }
@@ -87,15 +144,43 @@ struct BackupListView: View {
             }
         }
         .alert("Delete Backup?", isPresented: $showDeleteConfirm) {
-            Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive) {
+            Button("Delete") {
                 if let backup = backupToDelete {
                     backupVM.deleteBackup(backup)
                 }
             }
+            Button("Cancel", role: .cancel) {}
         } message: {
             if let backup = backupToDelete {
-                Text("This will permanently delete \(backup.deviceIdentityLabel) (\(backup.sizeResolved ? backup.sizeString : "size calculating")). This cannot be undone.")
+                let current = backupVM.backups.first(where: { $0.id == backup.id }) ?? backup
+                let resolvedSize = current.size > 0 ? current.size : backup.size
+                let sizeLabel: String = {
+                    if resolvedSize > 0 {
+                        return resolvedSize.formattedFileSize
+                    }
+                    if !current.sizeResolved && !backup.sizeResolved {
+                        return "Calculating…"
+                    }
+                    return "Empty or incomplete"
+                }()
+                let stateLabel = current.isArchivedSnapshot ? "Archived (\(current.healthState.rawValue))" : current.healthState.rawValue
+                Text("Permanently delete the \(stateLabel.lowercased()) backup for \"\(current.deviceName)\" (\(current.modelName))?\n\nFolder: \(current.id)\nLast modified: \(current.dateString)\nSize on disk: \(sizeLabel)\n\nThis action cannot be undone.")
+            }
+        }
+        .alert("Unarchive Backup?", isPresented: $showUnarchiveConfirm) {
+            Button("Unarchive") {
+                if let backup = backupToUnarchive {
+                    backupVM.unarchiveBackup(backup)
+                }
+                backupToUnarchive = nil
+            }
+            Button("Cancel", role: .cancel) {
+                backupToUnarchive = nil
+            }
+        } message: {
+            if let backup = backupToUnarchive {
+                let current = backupVM.backups.first(where: { $0.id == backup.id }) ?? backup
+                Text("Restore this archived snapshot for \"\(current.deviceName)\" (\(current.modelName)) as the active backup?\n\nFrom: \(current.id)\nTo: \(current.udid)\nBackup date: \(current.dateString)\n\nFuture incremental backups will build upon this snapshot.")
             }
         }
         .alert("Backup", isPresented: $backupVM.showAlert) {
@@ -108,11 +193,17 @@ struct BackupListView: View {
                 issue: issue,
                 primaryActionTitle: backupIssueActionTitle(for: issue),
                 primaryAction: { handleBackupIssueAction(issue) },
+                secondaryActionTitle: issue.recoveryAction == .resumeBackup ? "Delete & Start Fresh" : nil,
+                secondaryAction: issue.recoveryAction == .resumeBackup ? {
+                    pendingIncompleteBackupIssue = issue
+                    backupVM.backupIssue = nil
+                    showIncompleteBackupTrashConfirm = true
+                } : nil,
                 dismiss: { backupVM.backupIssue = nil }
             )
         }
         .alert("Move Incomplete Backup to Trash?", isPresented: $showIncompleteBackupTrashConfirm) {
-            Button("Move to Trash & Run Full Backup", role: .destructive) {
+            Button("Move to Trash & Run Full Backup") {
                 if let issue = pendingIncompleteBackupIssue {
                     Task { await backupVM.deleteIncompleteBackupAndRunFull(for: issue) }
                 }
@@ -125,24 +216,66 @@ struct BackupListView: View {
             Text(incompleteBackupTrashConfirmationMessage)
         }
         .alert("Full Wi-Fi Backup?", isPresented: $showFullWiFiBackupConfirm) {
-            Button("Run Full Wi-Fi Backup") {
-                if let udid = pendingFullWiFiBackupUDID {
-                    let preferNetwork = pendingFullWiFiBackupPrefersNetwork
-                    Task { await backupVM.createBackup(udid: udid, incremental: false, preferNetwork: preferNetwork) }
+            Button("Configure & Run Full Wi-Fi Backup") {
+                if let udid = pendingFullWiFiBackupUDID,
+                   let device = deviceVM.devices.first(where: { $0.id == udid }) ?? deviceVM.selectedDevice {
+                    preflightIncremental = false
+                    preflightPreferNetwork = true
+                    preflightConfig = DeviceBackupConfiguration.load(for: device.id)
+                    preflightDevice = device
                 }
                 pendingFullWiFiBackupUDID = nil
-                pendingFullWiFiBackupPrefersNetwork = false
             }
             Button("Cancel", role: .cancel) {
                 pendingFullWiFiBackupUDID = nil
-                pendingFullWiFiBackupPrefersNetwork = false
             }
         } message: {
             Text(fullWiFiBackupConfirmationMessage)
         }
+        .alert("Pause Backup During Finalization?", isPresented: $showNonResumableCancelConfirm) {
+            Button("Keep Running", role: .cancel) {
+                pendingCancelActivityUDID = nil
+            }
+            Button("Pause and Keep Incomplete") {
+                if let udid = pendingCancelActivityUDID {
+                    backupVM.cancelBackup(udid: udid)
+                }
+                pendingCancelActivityUDID = nil
+            }
+        } message: {
+            Text("All files transferred so far are safely preserved on disk. Because the backup is currently consolidating and sealing its files, stopping now will save it as an Incomplete backup. You can click Resume anytime to finish finalization.")
+        }
         .sheet(isPresented: $showScheduleSheet) {
             BackupScheduleSheet()
                 .frame(width: 480, height: 500)
+        }
+        .sheet(isPresented: $showDiagnosisSheet) {
+            BackupDiagnosisSheet(
+                udid: diagnosisUDID ?? "",
+                text: diagnosisUDID.flatMap { backupVM.diagnosisText(for: $0) }
+                    ?? "No live activity for this device.",
+                dismiss: { showDiagnosisSheet = false; diagnosisUDID = nil }
+            )
+        }
+        .sheet(item: $preflightDevice) { device in
+            BackupPreflightSheet(
+                device: device,
+                incremental: $preflightIncremental,
+                preferNetwork: preflightPreferNetwork,
+                configuration: $preflightConfig,
+                onNavigateToBackups: {},
+                onStartBackup: {
+                    Task {
+                        await backupVM.createBackup(
+                            udid: device.id,
+                            incremental: preflightIncremental,
+                            preferNetwork: preflightPreferNetwork,
+                            device: device,
+                            configuration: preflightConfig
+                        )
+                    }
+                }
+            )
         }
         .onAppear { backupVM.loadBackups() }
     }
@@ -173,13 +306,20 @@ struct BackupListView: View {
                 Label("Schedule Backups...", systemImage: "clock")
             }
         } label: {
-            Label("New Backup", systemImage: "plus")
+            if backupVM.isLoadingBackups {
+                Label("Scanning Backups…", systemImage: "hourglass")
+            } else if let device = deviceVM.selectedDevice, hasResumableBackup(for: device) {
+                Label("Resume Backup", systemImage: "play.circle.fill")
+            } else {
+                Label("New Backup", systemImage: "plus")
+            }
         }
     }
 
     private var activeBackupActivities: [BackupViewModel.BackupActivity] {
         backupVM.backupActivities.values
             .filter(\.isActive)
+            .filter { !hasBackupRow(for: $0.udid) }
             .sorted { lhs, rhs in
                 switch (lhs.state, rhs.state) {
                 case (.running, .queued): true
@@ -189,6 +329,25 @@ struct BackupListView: View {
             }
     }
 
+    /// Pause & Save for a backup rendered inside its persisted row. Finalization
+    /// is not resumable, so it needs the same confirmation the activity card shows.
+    private func pauseBackupActivity(for udid: String) {
+        guard let activity = backupVM.activity(for: udid) else { return }
+        if activity.isNonResumableFinalizationPhase {
+            pendingCancelActivityUDID = udid
+            showNonResumableCancelConfirm = true
+        } else {
+            backupVM.cancelBackup(udid: udid)
+        }
+    }
+
+    /// True when a device with an in-flight backup already has a persisted row.
+    /// That row renders the activity inline, so the standalone activity card
+    /// would be a second surface for the same device.
+    private func hasBackupRow(for udid: String) -> Bool {
+        backupVM.backups.contains { !$0.isArchivedSnapshot && $0.udid == udid }
+    }
+
     private var backedUpDeviceCount: Int {
         Set(backupVM.backups.map { backup in
             backup.udid.isEmpty ? "backup:\(backup.id)" : "device:\(backup.udid)"
@@ -196,24 +355,31 @@ struct BackupListView: View {
     }
 
     private var backupSummary: String {
+        if backupVM.isLoadingBackups && backupVM.backups.isEmpty {
+            return "Scanning backup location…"
+        }
         let backupWord = backupVM.backups.count == 1 ? "backup" : "backups"
         let deviceWord = backedUpDeviceCount == 1 ? "device" : "devices"
         return "\(backupVM.backups.count) \(backupWord) across \(backedUpDeviceCount) \(deviceWord) - \(backupVM.totalSize) total"
     }
 
-    private var selectedDeviceBackupIsActive: Bool {
-        deviceVM.selectedDevice.map { backupVM.isBackupActive(for: $0.id) } == true
-    }
-
-
     @ViewBuilder
     private var backupStateNotice: some View {
         if let device = deviceVM.selectedDevice {
-            let state = backupState(for: device)
-            BackupStateNotice(title: state.title, detail: state.detail, icon: state.icon, tint: state.tint)
-                .padding(.horizontal, 20)
-                .padding(.top, 12)
+            // Suppress notice while scanning backup directory, when a backup is actively running, or when a paused/broken row is already displayed in the list
+            if backupVM.isLoadingBackups || backupVM.isBackupActive(for: device.id) || hasResumableBackup(for: device) {
+                EmptyView()
+            } else {
+                let state = backupState(for: device)
+                BackupStateNotice(title: state.title, detail: state.detail, icon: state.icon, tint: state.tint)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 12)
+            }
         }
+    }
+
+    private func hasResumableBackup(for device: DeviceInfo) -> Bool {
+        backupVM.hasResumableBackup(for: device.id)
     }
 
     private func backupState(for device: DeviceInfo) -> (title: String, detail: String, icon: String, tint: Color) {
@@ -245,6 +411,17 @@ struct BackupListView: View {
 
     @ViewBuilder
     private var backupCreationButtons: some View {
+        if let device = deviceVM.selectedDevice, hasResumableBackup(for: device) {
+            Button {
+                Task { await backupVM.resumeBackup(udid: device.id, preferNetwork: device.connectionType == .wifi, device: device) }
+            } label: {
+                Label("Resume Saved Backup", systemImage: "play.circle.fill")
+            }
+            .disabled(deviceVM.selectedDevice == nil)
+
+            Divider()
+        }
+
         if deviceVM.selectedDevice?.connectionType == .wifi {
             if let device = deviceVM.selectedDevice, shouldOfferIncremental(for: device) {
                 Button {
@@ -272,13 +449,14 @@ struct BackupListView: View {
                 .disabled(deviceVM.selectedDevice == nil)
             }
         } else {
+            let isSelectedDeviceBusy = deviceVM.selectedDevice.map { backupVM.isBackupActive(for: $0.id) } ?? true
             Button {
                 guard let device = deviceVM.selectedDevice else { return }
                 startBackup(for: device, incremental: false)
             } label: {
                 Label("Full USB Backup (Fastest)", systemImage: "externaldrive.badge.plus")
             }
-            .disabled(deviceVM.selectedDevice == nil)
+            .disabled(isSelectedDeviceBusy)
 
             Button {
                 guard let device = deviceVM.selectedDevice else { return }
@@ -286,12 +464,15 @@ struct BackupListView: View {
             } label: {
                 Label("Incremental Backup", systemImage: "arrow.triangle.2.circlepath")
             }
-            .disabled(deviceVM.selectedDevice == nil)
+            .disabled(isSelectedDeviceBusy || deviceVM.selectedDevice.map { shouldOfferIncremental(for: $0) } != true)
         }
     }
 
     private var emptyStateBackupActionLabel: String? {
         guard let device = deviceVM.selectedDevice else { return nil }
+        if hasResumableBackup(for: device) {
+            return "Resume Backup"
+        }
         if device.connectionType == .wifi {
             return shouldOfferIncremental(for: device) ? "Create Incremental Wi-Fi Backup" : "Create Full Wi-Fi Backup"
         }
@@ -316,14 +497,19 @@ struct BackupListView: View {
     }
 
     private func shouldOfferIncremental(for device: DeviceInfo) -> Bool {
-        BackupManager.hasExistingBackup(for: device.id) && backupVM.backups.contains { backup in
-            backup.udid == device.id || backup.id == device.id
+        if let existing = backupVM.backups.first(where: { !$0.isArchivedSnapshot && ($0.udid == device.id || $0.id == device.id) }) {
+            return existing.healthState == .complete
+        }
+        return BackupManager.hasExistingBackup(for: device.id) && backupVM.backups.contains { backup in
+            !backup.isArchivedSnapshot && (backup.udid == device.id || backup.id == device.id)
         }
     }
 
 
     private func backupIssueActionTitle(for issue: BackupManager.BackupFailure) -> String? {
         switch issue.recoveryAction {
+        case .resumeBackup:
+            return "Resume Backup"
         case .runFullBackup:
             return "Run Full Backup"
         case .deleteIncompleteAndRunFull:
@@ -339,6 +525,9 @@ struct BackupListView: View {
 
     private func handleBackupIssueAction(_ issue: BackupManager.BackupFailure) {
         switch issue.recoveryAction {
+        case .resumeBackup:
+            backupVM.backupIssue = nil
+            Task { await backupVM.resumeBackup(for: issue) }
         case .runFullBackup:
             backupVM.backupIssue = nil
             Task { await backupVM.runFullBackup(for: issue) }
@@ -359,11 +548,20 @@ struct BackupListView: View {
     private func startBackup(for device: DeviceInfo, incremental: Bool) {
         if device.connectionType == .wifi && !incremental {
             pendingFullWiFiBackupUDID = device.id
-            pendingFullWiFiBackupPrefersNetwork = true
             showFullWiFiBackupConfirm = true
             return
         }
-        Task { await backupVM.createBackup(udid: device.id, incremental: incremental, preferNetwork: device.connectionType == .wifi) }
+        preflightIncremental = incremental
+        preflightPreferNetwork = device.connectionType == .wifi
+        preflightConfig = DeviceBackupConfiguration.load(for: device.id)
+        preflightDevice = device
+    }
+
+    private func repairBrokenBackup(_ backup: BackupInfo) {
+        guard let device = deviceVM.devices.first(where: { $0.id == backup.udid }) else { return }
+        _ = BackupManager.quarantineBrokenBackup(at: backup.path)
+        backupVM.loadBackups()
+        startBackup(for: device, incremental: false)
     }
 
     private func importPhosphorArchive() {
@@ -375,15 +573,8 @@ struct BackupListView: View {
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
-        isArchiving = true
-        archiveProgress = "Importing archive..."
-
         Task {
-            let result = await BackupArchiver.importArchive(from: url.path) { progress in
-                archiveProgress = progress
-            }
-            isArchiving = false
-            archiveProgress = nil
+            let result = await BackupArchiver.importArchive(from: url.path) { _ in }
             if result != nil {
                 backupVM.loadBackups()
                 backupVM.alertMessage = "Archive imported"
@@ -400,7 +591,7 @@ struct BackupListView: View {
             ForEach(activeBackupActivities) { activity in
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 8) {
-                        Image(systemName: activity.state == .running ? "externaldrive.badge.timemachine" : "clock")
+                        Image(systemName: activity.state == .running ? (activity.isFinalizing ? "arrow.triangle.2.circlepath.circle.fill" : "externaldrive.badge.timemachine") : "clock")
                             .foregroundStyle(Color.brandAccent)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(deviceIdentity(for: activity.udid))
@@ -413,19 +604,83 @@ struct BackupListView: View {
                         .accessibilityElement(children: .combine)
                         .accessibilityLabel("\(deviceIdentity(for: activity.udid)), \(activity.displayProgressText)")
                         Spacer()
-                        Button("Cancel") {
-                            backupVM.cancelBackup(udid: activity.udid)
+                        if activity.isBusy {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.small)
+                                let elapsed = activity.transitionElapsedSeconds.map { " (\($0)s)" } ?? ""
+                                Text(activity.transition == .restarting ? "Restarting…\(elapsed)" : "Pausing…\(elapsed)")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else if activity.isStalled {
+                            Button {
+                                if activity.isNonResumableFinalizationPhase {
+                                    pendingCancelActivityUDID = activity.udid
+                                    showNonResumableCancelConfirm = true
+                                } else {
+                                    backupVM.cancelBackup(udid: activity.udid)
+                                }
+                            } label: {
+                                Label("Pause & Save", systemImage: "pause.circle")
+                            }
+                            .controlSize(.small)
+                            .help("Stops the backup and saves progress. You can resume later.")
+                            Button("Diagnose…") {
+                                diagnosisUDID = activity.udid
+                                showDiagnosisSheet = true
+                            }
+                            .controlSize(.small)
+                            .help("Show why this backup stalled")
+                        } else {
+                            Button {
+                                if activity.isNonResumableFinalizationPhase {
+                                    pendingCancelActivityUDID = activity.udid
+                                    showNonResumableCancelConfirm = true
+                                } else {
+                                    backupVM.cancelBackup(udid: activity.udid)
+                                }
+                            } label: {
+                                Label("Pause & Save", systemImage: "pause.circle")
+                            }
+                            .controlSize(.small)
+                            .help(activity.isNonResumableFinalizationPhase ? "Warning: Finalization is non-resumable. Stopping now will abort this completed backup." : "Stops the backup and saves progress. You can resume later.")
+                            .accessibilityLabel("Cancel backup for \(deviceIdentity(for: activity.udid))")
                         }
-                        .controlSize(.small)
-                        .accessibilityLabel("Cancel backup for \(deviceIdentity(for: activity.udid))")
                     }
                     if case .running = activity.state {
-                        ProgressView(
-                            value: activity.displayProgressFraction,
-                            total: 1.0
-                        )
-                        .progressViewStyle(.linear)
-                        .tint(.brandAccent)
+                        if activity.isAwaitingPasscode {
+                            HStack(spacing: 8) {
+                                Image(systemName: "lock.shield.fill")
+                                    .foregroundStyle(.orange)
+                                    .font(.system(size: 14, weight: .semibold))
+                                Text("Please unlock your device and enter your passcode or tap 'Trust' to proceed...")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(.orange)
+                            }
+                            .padding(.vertical, 4)
+                            .padding(.horizontal, 8)
+                            .background(Color.orange.opacity(0.12))
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                        }
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            if activity.isCalculatingResumeBaseline {
+                                ProgressView()
+                                    .progressViewStyle(.linear)
+                                    .tint(.orange)
+                            } else {
+                                ProgressView(
+                                    value: activity.displayProgressFraction,
+                                    total: 1.0
+                                )
+                                .progressViewStyle(.linear)
+                                .tint(activity.isAwaitingPasscode ? .orange : (activity.isQuiet ? .secondary : .brandAccent))
+                            }
+
+                            Text(activity.isFinalizing ? (activity.finalizationMetrics != nil ? "Reorganizing files from snapshot onto disk. Do not disconnect." : "Consolidating files and sealing backup manifest on disk...") : (activity.isQuiet ? "Waiting for device response…" : "Progress is saved automatically. You can stop or unplug and resume later."))
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
                 .padding(.horizontal, 20)
@@ -504,6 +759,8 @@ struct BackupIssueSheet: View {
     let issue: BackupManager.BackupFailure
     let primaryActionTitle: String?
     let primaryAction: () -> Void
+    var secondaryActionTitle: String? = nil
+    var secondaryAction: (() -> Void)? = nil
     let dismiss: () -> Void
     @State private var showTechnicalDetails = false
 
@@ -522,7 +779,9 @@ struct BackupIssueSheet: View {
                 }
             }
 
-            if let details = issue.technicalDetails, !details.isEmpty {
+            if let details = issue.technicalDetails,
+               !details.isEmpty,
+               details != issue.recoveryPath {
                 DisclosureGroup("Technical details", isExpanded: $showTechnicalDetails) {
                     ScrollView {
                         Text(details)
@@ -538,6 +797,11 @@ struct BackupIssueSheet: View {
             }
 
             HStack {
+                if let secondaryActionTitle, let secondaryAction {
+                    Button(secondaryActionTitle, role: .destructive) {
+                        secondaryAction()
+                    }
+                }
                 Spacer()
                 Button("Cancel") { dismiss() }
                 if let primaryActionTitle {
@@ -553,11 +817,244 @@ struct BackupIssueSheet: View {
     }
 }
 
+/// Live diagnosis for a stalled or failing backup. The stalled state used to
+/// show a Resume button and nothing else, so a backup that produced no progress
+/// gave the user no way to tell whether it was transferring, wedged, or dead.
+struct BackupDiagnosisSheet: View {
+    let udid: String
+    let text: String
+    let dismiss: () -> Void
+    @EnvironmentObject private var backupVM: BackupViewModel
+    @State private var liveText: String = ""
+    @State private var refreshTimer: Timer?
+
+    private var currentText: String {
+        if !liveText.isEmpty { return liveText }
+        return text
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "stethoscope")
+                    .foregroundStyle(.orange)
+                    .font(.system(size: 24))
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Text("Backup Diagnosis")
+                            .font(.title3.weight(.semibold))
+                        if backupVM.isBackupActive(for: udid) {
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(Color.green)
+                                    .frame(width: 7, height: 7)
+                                Text("Live (Updating 1s)")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    Text("What Phosphor last observed for this backup.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            ScrollView {
+                Text(currentText)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+            }
+            .frame(minHeight: 160, maxHeight: 360)
+            .background(Color.secondary.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            HStack {
+                Button("Copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(currentText, forType: .string)
+                }
+                Spacer()
+                Button("Done") {
+                    refreshTimer?.invalidate()
+                    refreshTimer = nil
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(24)
+        .frame(width: 560)
+        .onAppear {
+            liveText = backupVM.diagnosisText(for: udid) ?? text
+            refreshTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+                Task { @MainActor in
+                    if let updated = backupVM.diagnosisText(for: udid) {
+                        liveText = updated
+                    }
+                }
+            }
+        }
+        .onDisappear {
+            refreshTimer?.invalidate()
+            refreshTimer = nil
+        }
+    }
+}
+
 struct BackupRow: View {
     let backup: BackupInfo
+    var activity: BackupViewModel.BackupActivity?
+    var isDeviceConnected: Bool = true
+    var hasActiveSlotForDevice: Bool = true
+    var isDeviceBackupRunning: Bool = false
     let onBrowse: () -> Void
     let onDelete: () -> Void
+    let onResume: () -> Void
+    var onRepair: () -> Void = {}
+    let onPause: () -> Void
+    var onDiagnose: () -> Void = {}
+    var onUnarchive: () -> Void = {}
     @State private var isExporting = false
+    @State private var liveNow: Date = Date()
+    private let rowSecondTicker = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
+
+    private var isActive: Bool { activity?.isActive == true }
+    private var isStalled: Bool { activity?.isStalled == true }
+    private var isQuiet: Bool { activity?.isQuiet == true }
+    private var isBusy: Bool { activity?.isBusy == true }
+
+    /// Progress for a backup running inside this row. The row keeps its identity
+    /// while resuming instead of handing the device off to a separate card.
+    @ViewBuilder
+    private var activityStatus: some View {
+        if let activity, isActive {
+            VStack(alignment: .leading, spacing: 4) {
+                if activity.isAwaitingPasscode {
+                    HStack(spacing: 8) {
+                        Image(systemName: "lock.shield.fill")
+                            .foregroundStyle(.orange)
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("Action Required on iPhone: Unlock your device and enter your passcode to continue the backup...")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.orange)
+                    }
+                    .padding(.vertical, 4)
+                    .padding(.horizontal, 8)
+                    .background(Color.orange.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+
+                if activity.isCalculatingResumeBaseline {
+                    ProgressView()
+                        .progressViewStyle(.linear)
+                        .tint(.orange)
+                } else {
+                    ProgressView(value: activity.displayProgressFraction, total: 1.0)
+                        .progressViewStyle(.linear)
+                        .tint(activity.isAwaitingPasscode ? .orange : (isStalled ? .orange : (isQuiet ? .secondary : .brandAccent)))
+                }
+
+            HStack(spacing: 6) {
+                let pct = Int(activity.displayProgressFraction * 100)
+                let statusText: String = {
+                    if isStalled {
+                        return "Quiet (>5 min) · Device may be processing large files (\(pct)%)"
+                    }
+                    if isQuiet {
+                        let quietSecs = max(1, Int(Date().timeIntervalSince(activity.lastProgressUpdate)))
+                        return "Waiting for device response… (\(quietSecs)s quiet · \(pct)%)"
+                    }
+                    if activity.isFinalizing {
+                        return "Finalizing & sealing (\(pct)%)"
+                    }
+                    if activity.isResume {
+                        if activity.isCalculatingResumeBaseline {
+                            return "Resuming · Calculating previous progress…"
+                        }
+                        if activity.hasReceivedTransferProgress && pct > 0 {
+                            return "Backing up (\(pct)%)"
+                        }
+                        if pct > 0 {
+                            return "Resuming (\(pct)%)"
+                        }
+                        return "Resuming…"
+                    }
+                    return "Backing up (\(pct)%)"
+                }()
+                Text(statusText)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(isStalled ? Color.orange : Color.secondary)
+                    .lineLimit(1)
+                if let speed = activity.speed, !speed.isEmpty {
+                    Text("· Speed: \(speed)")
+                }
+                if let consolidatedETA = activity.consolidatedETADescription(at: liveNow) {
+                    Text("· ETA: \(consolidatedETA)")
+                } else if let predicted = activity.predictiveETA,
+                          predicted.confidence != .none,
+                          predicted.estimatedSeconds > 0,
+                          activity.hasReceivedTransferProgress {
+                    Text("· ETA: ~\(predicted.estimatedSeconds.formattedDuration)")
+                } else if !activity.isAwaitingPasscode && !activity.isFinalizing && !isStalled && !isQuiet {
+                    Text("· Calculating ETA…")
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .font(.system(size: 10))
+            .foregroundStyle(.secondary)
+
+            if let phase = activity.phaseMetrics?.phase {
+                let phaseText = activity.phaseMetrics?.phaseDetail?.description ?? phase.displayName
+                HStack(spacing: 8) {
+                    Label {
+                        Text(phaseText)
+                    } icon: {
+                        Image(systemName: phase.systemImage)
+                    }
+                    if let phaseMetrics = activity.phaseMetrics {
+                        if let transferred = phaseMetrics.filesTransferred, let total = phaseMetrics.totalFiles, total > 0 {
+                            let remaining = max(0, total - transferred)
+                            Text("· Files: \(transferred.formatted()) / \(total.formatted()) (\(remaining.formatted()) left)")
+                        }
+                        if activity.phaseMetrics?.phaseDetail == nil,
+                           let bytes = phaseMetrics.bytesTransferred,
+                           let totalB = phaseMetrics.totalBytes,
+                           totalB > 0 {
+                            Text("· Data: \(bytes.formattedFileSize) / \(totalB.formattedFileSize)")
+                        }
+                    }
+                }
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+            }
+
+            if let stats = activity.throughputStats, stats.samplesCount >= 5 {
+                HStack(spacing: 6) {
+                    Text("Avg: \(Self.formatRate(stats.averageBytesPerSecond))")
+                    Text("· Peak: \(Self.formatRate(stats.peakBytesPerSecond))")
+                    if activity.throughputTrend != .insufficient {
+                        Text("· Trend: \(activity.throughputTrend.description)")
+                    }
+                }
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+            }
+
+            if let metrics = activity.finalizationMetrics, activity.phaseMetrics?.phaseDetail == nil {
+                Text("Finalizing: \(metrics.filesMoved.formatted()) / ~\(metrics.totalFiles.formatted()) files moved")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            }
+        }
+    }
+
+    private static func formatRate(_ bytesPerSecond: Double) -> String {
+        guard bytesPerSecond > 0 else { return "-" }
+        return ByteCountFormatter.string(fromByteCount: Int64(bytesPerSecond), countStyle: .file) + "/s"
+    }
 
     var body: some View {
         HStack(spacing: 14) {
@@ -583,8 +1080,38 @@ struct BackupRow: View {
                             .help("Encrypted backup")
                     }
 
-                    if backup.isFullBackup {
-                        StatusChip(text: "Full", color: .brandAccent)
+                    if backup.isArchivedSnapshot {
+                        StatusChip(text: "Archived", color: .secondary, icon: "archivebox.fill")
+                            .help("Preserved historical snapshot (\(backup.id))")
+                    }
+
+                    if isActive {
+                        let activeChipText: String = {
+                            if activity?.isFinalizing == true { return "Finalizing" }
+                            if activity?.isResume == true { return "Resuming" }
+                            return "Backing Up"
+                        }()
+                        StatusChip(
+                            text: activeChipText,
+                            color: isStalled ? .orange : .brandAccent,
+                            icon: "arrow.triangle.2.circlepath.circle.fill"
+                        )
+                        .help("Live backup in progress for this device")
+                    } else {
+                        switch backup.healthState {
+                        case .complete:
+                            StatusChip(text: "Full", color: .brandAccent)
+                                .help(backup.isFullBackup
+                                    ? "Self-contained full snapshot created in a single session"
+                                    : "Self-contained full snapshot updated across multiple incremental or resumed sessions")
+                            StatusChip(text: "Complete", color: .green, icon: "checkmark.circle.fill")
+                        case .paused:
+                            StatusChip(text: "Full", color: .brandAccent)
+                            StatusChip(text: "Paused", color: .orange, icon: "pause.circle.fill")
+                        case .broken:
+                            StatusChip(text: "Broken", color: .red, icon: "exclamationmark.triangle.fill")
+                                .help("Metadata exists, but zero payload files were found on disk")
+                        }
                     }
                 }
 
@@ -594,33 +1121,124 @@ struct BackupRow: View {
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
 
-                HStack(spacing: 8) {
-                    Text(backup.dateString)
-                    Text("(\(backup.relativeDate))")
-                    Text("-")
+                HStack(spacing: 6) {
+                    if let activity, isActive {
+                        Text(activity.activeTimelineDescription(at: liveNow))
+                    } else {
+                        Text(backup.statusTimestampDescription)
+                    }
+                    Text("·")
                     if backup.sizeResolved {
                         Text(backup.sizeString)
                     } else {
                         Label("Calculating...", systemImage: "clock")
                     }
                     if backup.appCount > 0 {
-                        Text("-")
+                        Text("·")
                         Text("\(backup.appCount) apps")
                     }
                 }
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
+
+                activityStatus
             }
 
             Spacer()
 
             HStack(spacing: 8) {
-                Button("Browse") { onBrowse() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                if isBusy {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        let elapsed = activity?.transitionElapsedSeconds(at: liveNow).map { " (\($0)s)" } ?? ""
+                        Text(activity?.transition == .restarting ? "Restarting…\(elapsed)" : "Pausing…\(elapsed)")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                } else if isActive {
+                    Button("Pause & Save", action: onPause)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .help("Stops the backup and saves progress. You can resume later.")
+                    if isStalled {
+                        Button("Diagnose…") { onDiagnose() }
+                            .controlSize(.small)
+                            .help("Show why this backup stalled")
+                    }
+                } else {
+                    switch backup.healthState {
+                    case .complete:
+                        if backup.isArchivedSnapshot && !hasActiveSlotForDevice {
+                            Button(action: onUnarchive) {
+                                Label("Unarchive", systemImage: "arrow.uturn.backward.circle")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.brandAccent)
+                            .controlSize(.small)
+                            .disabled(isDeviceBackupRunning)
+                            .help("Restore this archived snapshot as the active backup for \(backup.deviceName)")
+                        }
+                    case .paused:
+                        if backup.isArchivedSnapshot {
+                            if !hasActiveSlotForDevice {
+                                Button(action: onUnarchive) {
+                                    Label("Unarchive", systemImage: "arrow.uturn.backward.circle")
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(isDeviceBackupRunning)
+                                .help("Restore this archived snapshot as the active backup for \(backup.deviceName)")
+                            }
+                        } else {
+                            Button("Resume", action: onResume)
+                                .buttonStyle(.borderedProminent)
+                                .tint(.orange)
+                                .controlSize(.small)
+                                .disabled(!isDeviceConnected)
+                                .help(isDeviceConnected
+                                    ? "Resume paused backup from saved progress"
+                                    : "Connect \(backup.deviceName) to resume this backup")
+                        }
+                    case .broken:
+                        if !backup.isArchivedSnapshot {
+                            Button("Repair", action: onRepair)
+                                .buttonStyle(.borderedProminent)
+                                .tint(.orange)
+                                .controlSize(.small)
+                                .disabled(!isDeviceConnected)
+                                .help(isDeviceConnected
+                                    ? "Quarantine this broken folder and start a clean full backup"
+                                    : "Connect \(backup.deviceName) to repair this backup")
+                        }
+                        Button("Delete", role: .destructive, action: onDelete)
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .help("Delete this broken backup folder")
+                    }
+                }
+
+                if !isActive && backup.healthState != .broken {
+                    Button("Browse") { onBrowse() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
 
                 Menu {
                     Button("Browse Contents") { onBrowse() }
+
+                    if backup.isArchivedSnapshot && !hasActiveSlotForDevice && backup.healthState != .broken {
+                        Divider()
+
+                        Button {
+                            onUnarchive()
+                        } label: {
+                            Label(
+                                "Set as Active Backup (Unarchive)…",
+                                systemImage: "arrow.uturn.backward.circle"
+                            )
+                        }
+                        .disabled(isDeviceBackupRunning)
+                    }
 
                     Divider()
 
@@ -628,6 +1246,14 @@ struct BackupRow: View {
                         exportAsArchive()
                     } label: {
                         Label("Export as .phosphor Archive", systemImage: "archivebox")
+                    }
+
+                    Divider()
+
+                    Button {
+                        onDiagnose()
+                    } label: {
+                        Label("Diagnose & Activity Log…", systemImage: "stethoscope")
                     }
 
                     Divider()
@@ -647,6 +1273,11 @@ struct BackupRow: View {
             }
         }
         .padding(.vertical, 6)
+        .onReceive(rowSecondTicker) { tick in
+            if isActive || isBusy {
+                liveNow = tick
+            }
+        }
         .overlay {
             if isExporting {
                 HStack(spacing: 8) {

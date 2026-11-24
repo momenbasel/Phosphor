@@ -94,8 +94,10 @@ def test_finder_wifi_sync_can_be_enabled_from_usb_device(root: Path) -> None:
     assert_contains(view, "Start a backup for this device", "Device overview should surface a backup action")
     assert_contains(view, "Full Wi-Fi Backup?", "Device overview Wi-Fi full backups should use the same safety confirmation pattern")
     assert_contains(view, "BackupManager.hasExistingBackup(for: device.id) && backupVM.backups.contains", "Device overview should only run incremental Wi-Fi backups when complete metadata exists")
-    assert_contains(view, "value: activity.displayProgressFraction", "Device overview backup progress should use a device-scoped linear loading bar")
-    assert_contains(view, "activity.displayProgressText", "Device overview should show sanitized device-scoped backup progress copy")
+    # Progress now shown in BackupListView, not DeviceOverviewView
+    backup_view = read(root, "Sources/Phosphor/Views/Backup/BackupListView.swift")
+    assert_contains(backup_view, "value: activity.displayProgressFraction", "Backup list backup progress should use a device-scoped linear loading bar")
+    assert_contains(backup_view, "activity.displayProgressText", "Backup list should show sanitized device-scoped backup progress copy")
 
 
 def test_backup_progress_ui_uses_sanitized_loading_bar(root: Path) -> None:
@@ -522,14 +524,19 @@ struct BackupInfoPlist {
     let phoneNumber: String?
     let lastBackupDate: Date?
     let isEncrypted: Bool
+    var appCount: Int = 0
     var modelName: String { productType }
 }
-struct BackupStatusProbe { let date: Date?; let isFullBackup: Bool }
+struct BackupStatusProbe { let date: Date?; let isFullBackup: Bool; var backupState: String = "empty"; var snapshotState: String = "finished" }
 struct BackupManifestProbe { let isEncrypted: Bool; let applicationBundleIds: [String] }
 enum PlistParser {
     static func parseBackupInfo(_ path: String) -> BackupInfoPlist? { nil }
     static func parseBackupStatus(_ path: String) -> BackupStatusProbe? { nil }
     static func parseManifest(_ path: String) -> BackupManifestProbe? { nil }
+}
+enum BackupManager {
+    static func backupRootHasPayloadData(_ path: String) -> Bool { false }
+    static func incompleteBackupHasPayloadData(_ path: String) -> Bool { false }
 }
 extension FileManager { func directorySize(at path: String) -> UInt64 { 0 } }
 extension UInt64 { var formattedFileSize: String { "0 B" } }
@@ -603,7 +610,8 @@ def test_multi_device_backup_activity_is_visible_and_device_scoped(root: Path) -
     assert_contains(backup_list, "activeBackupActivities", "the Backups screen should render all active and queued devices")
     assert_contains(backup_list, "deviceIdentity(for: activity.udid)", "same-name devices need a visible UDID discriminator while backing up")
     assert_contains(backup_list, "backupVM.cancelBackup(udid: activity.udid)", "each activity row needs its own cancel action")
-    assert_contains(overview, "backupVM.activity(for: device.id)", "a device card must not show another device's progress")
+    # Device overview no longer shows inline progress bar (moved to BackupListView)
+    # Button label and disabled state still use device-scoped isBackupActive
     assert_contains(overview, 'backupVM.isBackupActive(for: device.id) ? "Backing Up..."', "a device card must not show another device's global backup label")
     assert_contains(overview, ".disabled(backupVM.isBackupActive(for: device.id))", "only the busy device's backup button should be disabled")
     assert "backupVM.isCreating" not in app.split('CommandMenu("Backup")', 1)[1].split('Button("Refresh Backups")', 1)[0], "Cmd-B should remain available when another device is backing up"
@@ -643,8 +651,8 @@ def test_incremental_backups_require_existing_metadata(root: Path) -> None:
     manager = read(root, "Sources/Phosphor/Services/BackupManager.swift")
     assert_contains(manager, "hasExistingBackup(for udid", "BackupManager should expose an existing-backup metadata preflight")
     assert_contains(manager, "backupMetadataHealth(for udid", "BackupManager should distinguish complete, missing, and incomplete backup metadata")
-    assert_contains(manager, "if Self.looksLikeBackupFolder(dir)", "Single-backup discovery should exclude Info.plist-only incomplete folders")
-    assert_contains(manager, "guard Self.looksLikeBackupFolder(fullPath) else { continue }", "Backup discovery should exclude incomplete child backup folders")
+    assert_contains(manager, "if looksLikeBackupFolder(dir)", "Single-backup discovery should exclude Info.plist-only incomplete folders")
+    assert_contains(manager, "guard looksLikeBackupFolder(fullPath) else { continue }", "Backup discovery should exclude incomplete child backup folders")
     assert_contains(manager, "looksLikeBackupFolder(deviceDirectory) ? .complete : .incomplete", "Existing-backup preflight should require Info.plist and Manifest metadata")
     assert_contains(manager, "isNonEmptyFile(info)", "Completeness must require non-empty metadata; zero-length Info.plist stubs are an interrupted backup, not a complete one")
     assert_contains(manager, "Backup needs a full backup first", "Incremental backup should fail before backend calls when metadata is missing")
@@ -936,3 +944,10 @@ def test_global_concurrent_backup_accessibility_names_each_device_and_progress(r
     assert_contains(activity_list, ".accessibilityElement(children: .combine)", "each global backup status container should be one VoiceOver element")
     assert_contains(activity_list, ".accessibilityLabel(\"\\(deviceIdentity(for: activity.udid)), \\(activity.displayProgressText)\")", "global status must announce the device identity and current progress")
     assert_contains(activity_list, ".accessibilityLabel(\"Cancel backup for \\(deviceIdentity(for: activity.udid))\")", "same-name concurrent backups need device-specific cancel labels")
+
+
+def test_parse_backup_info_falls_back_to_manifest_lockdown_when_info_plist_is_corrupt(root: Path) -> None:
+    parser = read(root, "Sources/Phosphor/Utilities/PlistParser.swift")
+    assert_contains(parser, 'manifest["Lockdown"]', "PlistParser.parseBackupInfo should fall back to Manifest.plist Lockdown when Info.plist is truncated")
+    assert_contains(parser, 'lockdown["UniqueDeviceID"]', "PlistParser fallback should read UniqueDeviceID from Lockdown")
+

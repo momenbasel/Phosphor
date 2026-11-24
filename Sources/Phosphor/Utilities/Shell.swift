@@ -18,6 +18,7 @@ enum Shell {
     final class ManagedProcess: @unchecked Sendable {
         let processIdentifier: pid_t
         fileprivate let processTree: ProcessTree
+        private var onCancelClosure: (@Sendable () -> Void)?
 
         init(processIdentifier: pid_t) {
             self.processIdentifier = processIdentifier
@@ -27,8 +28,30 @@ enum Shell {
             self.processTree = ProcessTree(rootProcessID: processIdentifier)
         }
 
+        func setOnCancel(_ closure: @escaping @Sendable () -> Void) {
+            self.onCancelClosure = closure
+        }
+
+        func notifyCancel() {
+            onCancelClosure?()
+            onCancelClosure = nil
+        }
+
         var isRunning: Bool {
             Shell.processExists(processIdentifier)
+        }
+
+        /// Total bytes written to disk by this managed process since launch, queried directly
+        /// from the macOS XNU kernel (`proc_pid_rusage` `RUSAGE_INFO_V4`) with zero disk I/O.
+        var diskBytesWritten: UInt64 {
+            var ri = rusage_info_v4()
+            let rc = withUnsafeMutablePointer(to: &ri) { ptr in
+                ptr.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { rusagePtr in
+                    proc_pid_rusage(processIdentifier, RUSAGE_INFO_V4, rusagePtr)
+                }
+            }
+            guard rc == 0 else { return 0 }
+            return ri.ri_diskio_byteswritten
         }
     }
 
@@ -428,11 +451,9 @@ enum Shell {
     /// Grace given to a streaming command. `runStreaming` is what drives
     /// idevicebackup2 and pymobiledevice3 backup/restore, which flush and close
     /// the snapshot they are part-way through writing when they take SIGTERM.
-    /// The 50ms this replaced meant they never got there, so a timeout or a
-    /// user cancel amputated the backup. Now that cleanupComplete() reaps, a
-    /// child that exits promptly still returns in milliseconds - this is only
-    /// the ceiling for one that needs the time.
-    static let streamTerminationGrace: TimeInterval = 2.0
+    /// Give Python's multiprocessing.resource_tracker and snapshot writers
+    /// ample time (5.0s) to clean up semaphores and flush before escalating to SIGKILL.
+    static let streamTerminationGrace: TimeInterval = 5.0
 
     private static func terminateTimedOutTree(
         _ tree: ProcessTree,
@@ -714,6 +735,10 @@ enum Shell {
             state.setTimeoutTask(timeoutTask)
         }
 
+        process.setOnCancel {
+            finish(exitCode: -1)
+        }
+
         return process
     }
 
@@ -734,6 +759,40 @@ enum Shell {
             terminateProcessTree(processTree, signal: SIGKILL)
             _ = await waitForProcessTreeCleanup(processTree, timeout: 1)
         }
+    }
+
+    /// Cooperative cancellation for user-initiated stop ("Pause & Save").
+    /// Polls `reapIfExited(pid)` up to `streamTerminationGrace` (5.0s) so
+    /// cooperative tools exit as soon as they finish flushing (typically <100ms)
+    /// without waiting for zombie `resource_tracker` children, while still
+    /// allowing full flush time before escalating to SIGKILL.
+    static func cancelAndWait(_ process: ManagedProcess) async {
+        let pid = process.processIdentifier
+        guard pid > 0 else { return }
+        let processTree = process.processTree
+
+        // 1. Cooperative shutdown: give the tool up to streamTerminationGrace to flush & exit.
+        terminateProcessTree(processTree, signal: SIGTERM)
+        let deadline = Date().addingTimeInterval(streamTerminationGrace)
+        var leaderExited = false
+        while Date() < deadline {
+            if reapIfExited(pid) {
+                leaderExited = true
+                break
+            }
+            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms poll
+        }
+
+        // 2. Escalate to SIGKILL for any remaining processes in the group.
+        if !leaderExited {
+            terminateProcessTree(processTree, signal: SIGKILL)
+            _ = reapWithinDeadline(pid, timeout: 1.0)
+        } else {
+            terminateProcessTree(processTree, signal: SIGKILL)
+        }
+
+        // 3. Tear down streaming readability handlers and signal finish.
+        process.notifyCancel()
     }
 
     /// Check if a command-line tool is available.

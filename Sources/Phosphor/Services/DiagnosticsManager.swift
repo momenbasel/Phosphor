@@ -128,8 +128,12 @@ final class DiagnosticsManager: ObservableObject {
     // MARK: - Storage
 
     func getStorageBreakdown(udid: String) async -> StorageBreakdown? {
-        // Try pymobiledevice3 lockdown info first for disk info
-        let info = await PyMobileDevice.deviceInfo(udid: udid)
+        // Try pymobiledevice3 lockdown info first for disk info (merging com.apple.disk_usage domain)
+        var info = await PyMobileDevice.deviceInfo(udid: udid)
+        if info["TotalDiskCapacity"] == nil {
+            let diskDomain = await PyMobileDevice.diskUsage(udid: udid)
+            for (k, v) in diskDomain { info[k] = v }
+        }
         if let totalStr = info["TotalDiskCapacity"], let total = UInt64(totalStr) {
             let available = UInt64(info["AmountDataAvailable"] ?? "0") ?? 0
             let dataCapacity = UInt64(info["TotalDataCapacity"] ?? "0") ?? 0

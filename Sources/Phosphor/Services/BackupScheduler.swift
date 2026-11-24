@@ -410,8 +410,16 @@ final class BackupScheduler: ObservableObject {
         scheduledBackupProgress = "Starting scheduled backup..."
         addLog("Scheduled backup started for \(runSchedule.targetName ?? "device \(udid.prefix(8))...")", success: true)
 
+        let isResumable: Bool = {
+            if case .incomplete(let path) = BackupManager.backupMetadataHealth(for: udid) {
+                return BackupManager.incompleteBackupHasPayloadData(path)
+            }
+            return false
+        }()
         let incremental = runSchedule.incrementalOnly && BackupManager.hasExistingBackup(for: udid)
-        if runSchedule.incrementalOnly && !incremental {
+        if isResumable {
+            addLog("Paused resumable backup detected on disk; resuming backup session", success: true)
+        } else if runSchedule.incrementalOnly && !incremental {
             addLog("No complete backup exists yet; running required first full backup", success: true)
         }
 
@@ -430,7 +438,37 @@ final class BackupScheduler: ObservableObject {
             return
         }
 
-        await backupViewModel.createBackup(udid: udid, incremental: incremental, preferNetwork: preferNetwork)
+        let configuration = DeviceBackupConfiguration.load(for: udid)
+        let activeBackupDir = BackupManager.activeBackupDir
+        var effectiveIncremental = incremental
+        if !isResumable {
+            effectiveIncremental = await Task.detached(priority: .utility) {
+                BackupManager.prepareExistingBackupForRun(
+                    udid: udid,
+                    in: activeBackupDir,
+                    wantsIncremental: incremental,
+                    configuration: configuration
+                )
+            }.value
+        }
+        if isResumable {
+            await backupViewModel.createBackup(
+                udid: udid,
+                incremental: false,
+                preferNetwork: preferNetwork,
+                isResume: true,
+                configuration: configuration
+            )
+        } else if configuration != DeviceBackupConfiguration() || effectiveIncremental != incremental {
+            await backupViewModel.createBackup(
+                udid: udid,
+                incremental: effectiveIncremental,
+                preferNetwork: preferNetwork,
+                configuration: configuration
+            )
+        } else {
+            await backupViewModel.createBackup(udid: udid, incremental: incremental, preferNetwork: preferNetwork)
+        }
         let activity = backupViewModel.activity(for: udid)
         let success = activity?.state == .completed
         let resultMessage = activity?.errorMessage ?? activity?.progressText ?? "Failed"

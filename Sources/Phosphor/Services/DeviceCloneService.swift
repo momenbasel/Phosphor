@@ -91,7 +91,40 @@ final class DeviceCloneService: ObservableObject {
                 .map { ($0.path, backupFingerprint(for: $0)) }
         )
 
-        await backupViewModel.createBackup(udid: sourceUDID, encrypted: encrypted)
+        let shouldResume: Bool = {
+            if case .incomplete(let path) = BackupManager.backupMetadataHealth(for: sourceUDID) {
+                return BackupManager.incompleteBackupHasPayloadData(path)
+            }
+            return false
+        }()
+
+        let sourceConfiguration = DeviceBackupConfiguration.load(for: sourceUDID)
+        let activeBackupDir = BackupManager.activeBackupDir
+        let hasCompleteSourceBackup = !shouldResume && backupManager.backups.contains {
+            !$0.isArchivedSnapshot && ($0.udid == sourceUDID || $0.id == sourceUDID) && $0.healthState == .complete
+        }
+
+        let useIncrementalSourceBackup: Bool
+        if !shouldResume {
+            useIncrementalSourceBackup = await Task.detached(priority: .userInitiated) {
+                BackupManager.prepareExistingBackupForRun(
+                    udid: sourceUDID,
+                    in: activeBackupDir,
+                    wantsIncremental: hasCompleteSourceBackup,
+                    configuration: sourceConfiguration
+                )
+            }.value
+        } else {
+            useIncrementalSourceBackup = false
+        }
+
+        await backupViewModel.createBackup(
+            udid: sourceUDID,
+            incremental: useIncrementalSourceBackup,
+            encrypted: encrypted,
+            isResume: shouldResume,
+            configuration: sourceConfiguration
+        )
         let sourceActivity = backupViewModel.activity(for: sourceUDID)
         let backupSuccess = sourceActivity?.state == .completed
 
@@ -117,7 +150,7 @@ final class DeviceCloneService: ObservableObject {
 
         // Find backup
         backupManager.discoverBackups()
-        let sourceBackups = backupManager.backups.filter { $0.udid == sourceUDID }
+        let sourceBackups = backupManager.backups.filter { $0.udid == sourceUDID && $0.healthState == .complete && !$0.isArchivedSnapshot }
         let freshSourceBackups = sourceBackups.filter {
             previousFingerprints[$0.path] != backupFingerprint(for: $0)
         }

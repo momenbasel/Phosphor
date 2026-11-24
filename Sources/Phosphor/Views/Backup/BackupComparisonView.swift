@@ -29,9 +29,11 @@ struct BackupComparisonView: View {
     }
 
     private var sortedBackups: [BackupInfo] {
-        backupVM.backups.sorted {
-            ($0.lastBackupDate ?? .distantPast) < ($1.lastBackupDate ?? .distantPast)
-        }
+        backupVM.backups
+            .filter { $0.healthState == .complete }
+            .sorted {
+                ($0.lastBackupDate ?? .distantPast) < ($1.lastBackupDate ?? .distantPast)
+            }
     }
 
     private var datedBackups: [BackupInfo] {
@@ -162,7 +164,7 @@ struct BackupComparisonView: View {
             Picker(title, selection: selection) {
                 Text("Choose Backup").tag("")
                 ForEach(backups) { backup in
-                    Text("\(backup.deviceName) — \(backup.dateString)").tag(backup.path)
+                    Text("\(backup.deviceName) — \(backup.dateString)\(backup.pickerStatusSuffix)").tag(backup.path)
                 }
             }
             .labelsHidden()

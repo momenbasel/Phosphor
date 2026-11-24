@@ -1,5 +1,8 @@
 import Foundation
 import Combine
+#if canImport(SQLite3)
+import SQLite3
+#endif
 
 /// Handles iOS backup operations: discovery, creation, browsing, and selective restore.
 /// Primary: pymobiledevice3 (supports iOS 17-26+). Fallback: idevicebackup2.
@@ -15,6 +18,7 @@ final class BackupManager: ObservableObject {
     @Published var lastOperationWasCancelled = false
 
     enum RecoveryAction: String, Hashable {
+        case resumeBackup
         case runFullBackup
         case deleteIncompleteAndRunFull
         case openBackupSettings
@@ -60,6 +64,16 @@ final class BackupManager: ObservableObject {
     /// permitting two writers to operate on the same physical device (#60).
     private static var operationRegistry = BackupOperationRegistry()
     private var activeProcess: Shell.ManagedProcess?
+
+    /// Total bytes written to disk by the currently active backup subprocess (`proc_pid_rusage`),
+    /// allowing 1-second live throughput, on-disk size, and byte-based ETA accounting with zero disk contention.
+    var activeProcessBytesWritten: UInt64 {
+        activeProcess?.diskBytesWritten ?? 0
+    }
+
+    static func activeProcessRunning(for udid: String) -> Bool {
+        operationRegistry.isRunning(udid: udid)
+    }
     private var operationCoordinator = BackupDeviceCoordinator()
     private var cancelledOperationIDs: Set<UUID> = []
     private var cancellationDrainTasks: [UUID: Task<Void, Never>] = [:]
@@ -143,6 +157,9 @@ final class BackupManager: ObservableObject {
         if lower.contains("not paired") || lower.contains("pairingdialogresponsepending") || lower.contains("trust this computer") {
             return ("Device is not trusted. Unlock it and tap 'Trust' when prompted, then try again.", .retry)
         }
+        if lower.contains("mberrordomain/208") || lower.contains("device locked") {
+            return ("The device was locked or the passcode prompt was dismissed. Unlock the device, keep its screen awake, and enter your passcode on the device when prompted.", .retry)
+        }
         if lower.contains("passcodesetuprequired") || lower.contains("setpasscode") {
             return ("Set a passcode on the device before running an encrypted backup.", .retry)
         }
@@ -170,6 +187,9 @@ final class BackupManager: ObservableObject {
             Phosphor -> Settings -> Backup Directory -> ~/Documents/Phosphor Backups.
             Only if you specifically want Phosphor to read Apple's shared MobileSync backups do you need to grant Full Disk Access (System Settings -> Privacy & Security -> Full Disk Access). Full Disk Access is not recommended - Phosphor does not need it for its own backups.
             """, .openBackupSettings)
+        }
+        if lower.contains("timed out") {
+            return ("Backup operation timed out. For large backups, ensure a stable high-speed USB connection and keep the device awake.", .retry)
         }
         return (nil, nil)
     }
@@ -258,9 +278,14 @@ final class BackupManager: ObservableObject {
         return lower.contains("timed out")
             || lower.contains("remotexpc")
             || lower.contains("tunneld")
+            || lower.contains("invalidservice")
+            || lower.contains("passcodesetuprequired")
+            || lower.contains("device locked")
+            || lower.contains("mberrordomain/208")
     }
 
     private func failWithoutFallback(operationID: UUID, udid: String, backupRoot: String, primary: String, stderr: String) {
+        Self.restoreMetadataGuardIfNeeded(for: udid, in: backupRoot)
         finishOperation(operationID)
         backupProgress = "Backup failed"
         lastBackupFailure = Self.backupFailure(
@@ -302,23 +327,23 @@ final class BackupManager: ObservableObject {
     /// Phosphor's default backup location: inside ~/Documents so no special permission
     /// grant is needed, and so Phosphor never shares a directory with Finder's backups
     /// (a misbehaving run could otherwise corrupt the user's Finder backups).
-    static let defaultBackupDir: String = {
+    nonisolated static let defaultBackupDir: String = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return "\(home)/Documents/Phosphor Backups"
     }()
 
     /// Apple's MobileSync directory. Kept as a named constant so settings UI and
     /// migration logic can offer it to users who explicitly opt in.
-    static let systemMobileSyncDir: String = {
+    nonisolated static let systemMobileSyncDir: String = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return "\(home)/Library/Application Support/MobileSync/Backup"
     }()
 
     /// UserDefaults key for the active backup directory.
-    static let backupDirectoryUserDefaultsKey = "phosphor.backupDirectory"
+    nonisolated static let backupDirectoryUserDefaultsKey = "phosphor.backupDirectory"
 
     /// Active backup directory. Falls back to the default when no override is set.
-    static var activeBackupDir: String {
+    nonisolated static var activeBackupDir: String {
         let custom = UserDefaults.standard.string(forKey: backupDirectoryUserDefaultsKey)
         if let custom, !custom.isEmpty {
             return custom
@@ -359,40 +384,33 @@ final class BackupManager: ObservableObject {
 
     // MARK: - Discovery
 
-    func discoverBackups(at directory: String? = nil) {
-        let dir = directory ?? Self.activeBackupDir
+    nonisolated static func scanBackupDirectory(at directory: String? = nil) -> (backups: [BackupInfo], error: String?) {
+        let dir = directory ?? activeBackupDir
         let fm = FileManager.default
 
         var isDir: ObjCBool = false
         guard fm.fileExists(atPath: dir, isDirectory: &isDir) else {
-            backups = []
-            lastError = nil
-            return
+            return ([], nil)
         }
         guard isDir.boolValue else {
-            backups = []
-            lastError = "\(dir) is not a directory."
-            return
+            return ([], "\(dir) is not a directory.")
         }
 
         // Single-backup case: the chosen dir is itself a UDID backup folder
         // (contains Info.plist + Manifest.* at its root). Common when a user
         // points the picker at an individual backup rather than its parent.
-        if Self.looksLikeBackupFolder(dir),
+        if looksLikeBackupFolder(dir),
            let single = BackupInfo.fromDirectory(dir, includeSize: false) {
-            backups = [single]
-            lastError = nil
-            return
+            return ([single], nil)
         }
 
         let contents: [String]
         do {
             contents = try fm.contentsOfDirectory(atPath: dir).sorted()
         } catch {
-            backups = []
             // TCC denial on ~/Library/Application Support/MobileSync/Backup
             // surfaces as a permission error here. Tell the user how to fix it.
-            let isMobileSync = (dir == Self.systemMobileSyncDir)
+            let isMobileSync = (dir == systemMobileSyncDir)
             var msg = "Cannot read backup directory at \(dir): \(error.localizedDescription)"
             if isMobileSync {
                 msg += """
@@ -403,32 +421,44 @@ final class BackupManager: ObservableObject {
                 Alternatively, copy a backup folder into ~/Documents/Phosphor Backups or use Phosphor > Settings to point at a non-protected location.
                 """
             }
-            lastError = msg
-            return
+            return ([], msg)
         }
 
         var discovered: [BackupInfo] = []
         for item in contents {
+            if isAuxiliaryBackupDirectoryName(item) { continue }
             let fullPath = (dir as NSString).appendingPathComponent(item)
             var itemIsDir: ObjCBool = false
             guard fm.fileExists(atPath: fullPath, isDirectory: &itemIsDir), itemIsDir.boolValue else { continue }
 
-            guard Self.looksLikeBackupFolder(fullPath) else { continue }
+            // Auto-heal any clobbered plists from a leftover .<UDID>-phosphor-guard-bkp if a previous session crashed
+            let candidateGuard = metadataGuardPath(for: item, in: dir)
+            if fm.fileExists(atPath: candidateGuard) {
+                _ = restoreMetadataGuardIfNeeded(for: item, in: dir)
+            }
+
+            guard looksLikeBackupFolder(fullPath) else { continue }
 
             if let backup = BackupInfo.fromDirectory(fullPath, includeSize: false) {
                 discovered.append(backup)
             }
         }
 
-        backups = discovered.sorted { ($0.lastBackupDate ?? .distantPast) > ($1.lastBackupDate ?? .distantPast) }
-        lastError = nil
+        let sorted = discovered.sorted { ($0.lastBackupDate ?? .distantPast) > ($1.lastBackupDate ?? .distantPast) }
+        return (sorted, nil)
+    }
+
+    func discoverBackups(at directory: String? = nil) {
+        let result = Self.scanBackupDirectory(at: directory)
+        backups = result.backups
+        lastError = result.error
     }
 
     /// True when a backup metadata file exists AND has real content. An interrupted
     /// backup often leaves zero-length Info.plist / Manifest.* stubs; treating those
     /// as complete makes incremental backups fail with MBErrorDomain/205 (the exact
     /// "cannot parse null plist" failure the completeness check exists to prevent).
-    static func isNonEmptyFile(_ path: String) -> Bool {
+    nonisolated static func isNonEmptyFile(_ path: String) -> Bool {
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
               let size = attributes[.size] as? UInt64 else {
             return false
@@ -436,23 +466,27 @@ final class BackupManager: ObservableObject {
         return size > 0
     }
 
-    /// True when `path` looks like a single iOS backup folder (UDID dir with Info.plist + Manifest.*).
-    static func looksLikeBackupFolder(_ path: String) -> Bool {
+    /// True when `path` looks like a single iOS backup folder (UDID dir with Info.plist + Manifest.* or active Status.plist).
+    nonisolated static func looksLikeBackupFolder(_ path: String) -> Bool {
         let info = (path as NSString).appendingPathComponent("Info.plist")
         let manifestPlist = (path as NSString).appendingPathComponent("Manifest.plist")
         let manifestDb = (path as NSString).appendingPathComponent("Manifest.db")
+        let statusPlist = (path as NSString).appendingPathComponent("Status.plist")
+        let snapshotDir = (path as NSString).appendingPathComponent("Snapshot")
+        var isSnapshotDir: ObjCBool = false
+        let hasSnapshotDir = FileManager.default.fileExists(atPath: snapshotDir, isDirectory: &isSnapshotDir) && isSnapshotDir.boolValue
         return isNonEmptyFile(info) &&
-               (isNonEmptyFile(manifestPlist) || isNonEmptyFile(manifestDb))
+               (isNonEmptyFile(manifestPlist) || isNonEmptyFile(manifestDb) || (isNonEmptyFile(statusPlist) && hasSnapshotDir))
     }
 
-    static func backupPath(for udid: String, in directory: String? = nil) -> String {
+    nonisolated static func backupPath(for udid: String, in directory: String? = nil) -> String {
         let rootDirectory = directory ?? activeBackupDir
         return (rootDirectory as NSString).appendingPathComponent(udid)
     }
 
     /// Check whether a device has complete backup metadata, no backup folder,
     /// or an interrupted partial folder that should be cleaned up before retry.
-    static func backupMetadataHealth(for udid: String, in directory: String? = nil) -> BackupMetadataHealth {
+    nonisolated static func backupMetadataHealth(for udid: String, in directory: String? = nil) -> BackupMetadataHealth {
         let deviceDirectory = backupPath(for: udid, in: directory)
         let fm = FileManager.default
         var isDir: ObjCBool = false
@@ -460,14 +494,117 @@ final class BackupManager: ObservableObject {
             return .missing
         }
         guard isDir.boolValue else { return .incomplete(path: deviceDirectory) }
+        guard backupRootHasPayloadData(deviceDirectory) else { return .incomplete(path: deviceDirectory) }
         return looksLikeBackupFolder(deviceDirectory) ? .complete : .incomplete(path: deviceDirectory)
     }
 
     /// Incremental backups require an existing valid backup metadata folder for
     /// the target UDID. If the folder is missing or partially-created, both
     /// backup backends fail with low-level MBErrorDomain/205 plist errors.
-    static func hasExistingBackup(for udid: String, in directory: String? = nil) -> Bool {
+    nonisolated static func hasExistingBackup(for udid: String, in directory: String? = nil) -> Bool {
         backupMetadataHealth(for: udid, in: directory) == .complete
+    }
+
+    /// Preserves an existing active backup folder by timestamping it
+    /// (`<UDID>-phosphor-bkp-YYYYMMDD-HHmmss`) so subsequent full backups do not clobber historical snapshots
+    /// or fail with a redundant "Incomplete Backup Found" error. If the existing folder has zero payload
+    /// files (`.broken`), it is moved to a `-phosphor-broken-bkp-` quarantine folder instead.
+    @discardableResult
+    nonisolated static func archiveExistingBackup(for udid: String, in directory: String? = nil) -> String? {
+        let root = directory ?? activeBackupDir
+        let currentPath = backupPath(for: udid, in: root)
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: currentPath, isDirectory: &isDir), isDir.boolValue else { return nil }
+
+        let health = backupMetadataHealth(for: udid, in: root)
+        switch health {
+        case .missing:
+            return nil
+        case .incomplete(let path):
+            guard incompleteBackupHasPayloadData(path) else {
+                return quarantineBrokenBackup(at: path)
+            }
+        case .complete:
+            break
+        }
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let timestamp = formatter.string(from: Date())
+        let archivedName = "\(udid)-phosphor-bkp-\(timestamp)"
+        let archivedPath = (root as NSString).appendingPathComponent(archivedName)
+
+        do {
+            try fm.moveItem(atPath: currentPath, toPath: archivedPath)
+            commitMetadataGuard(for: udid, in: root)
+            return archivedPath
+        } catch {
+            return nil
+        }
+    }
+
+    /// Creates a point-in-time historical snapshot (`<UDID>-phosphor-bkp-YYYYMMDD-HHmmss`)
+    /// before an Incremental Backup runs so files deleted on the iPhone (`DLMessageRemoveItems`)
+    /// remain recoverable in the archived snapshot.
+    /// Uses APFS Copy-on-Write (`clonefile(2)`) when supported on the destination volume
+    /// (0 extra disk space for unchanged files, completes in seconds).
+    @discardableResult
+    nonisolated static func cloneBackupSnapshot(for udid: String, in directory: String? = nil) -> String? {
+        let root = directory ?? activeBackupDir
+        let currentPath = backupPath(for: udid, in: root)
+        let fm = FileManager.default
+        guard hasExistingBackup(for: udid, in: root) else { return nil }
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let timestamp = formatter.string(from: Date())
+        let snapshotName = "\(udid)-phosphor-bkp-\(timestamp)"
+        let snapshotPath = (root as NSString).appendingPathComponent(snapshotName)
+
+        // Fast path: APFS Copy-on-Write whole-directory clone via clonefile(2)
+        if Darwin.clonefile(currentPath, snapshotPath, 0) == 0 {
+            return snapshotPath
+        }
+
+        // Fallback for non-APFS volumes: standard directory copy
+        do {
+            try fm.copyItem(atPath: currentPath, toPath: snapshotPath)
+            return snapshotPath
+        } catch {
+            try? fm.removeItem(atPath: snapshotPath)
+            return nil
+        }
+    }
+
+    /// Restores an archived snapshot (`<UDID>-phosphor-bkp-YYYYMMDD-HHmmss`) back to the primary
+    /// `<UDID>` backup slot. Only permitted when no active `<UDID>` folder exists on disk.
+    nonisolated static func unarchiveBackup(_ backup: BackupInfo, in directory: String? = nil) throws -> String {
+        guard backup.isArchivedSnapshot, !backup.udid.isEmpty else {
+            throw NSError(domain: "Phosphor.Backup", code: 10, userInfo: [
+                NSLocalizedDescriptionKey: "Only archived snapshots with a valid device UDID can be unarchived."
+            ])
+        }
+        let fm = FileManager.default
+        let parentDir = directory ?? (backup.path as NSString).deletingLastPathComponent
+        let activePath = backupPath(for: backup.udid, in: parentDir)
+
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: backup.path, isDirectory: &isDir), isDir.boolValue else {
+            throw NSError(domain: "Phosphor.Backup", code: 11, userInfo: [
+                NSLocalizedDescriptionKey: "The archived backup folder no longer exists at \(backup.path)."
+            ])
+        }
+
+        guard !fm.fileExists(atPath: activePath) else {
+            throw NSError(domain: "Phosphor.Backup", code: 12, userInfo: [
+                NSLocalizedDescriptionKey: "An active backup folder already exists for this device (\(backup.udid)). Delete the existing active backup first before unarchiving a snapshot."
+            ])
+        }
+
+        try fm.moveItem(atPath: backup.path, toPath: activePath)
+        commitMetadataGuard(for: backup.udid, in: parentDir)
+        return activePath
     }
 
     static func incompleteBackupHasKnownMarkers(_ path: String) -> Bool {
@@ -519,6 +656,7 @@ final class BackupManager: ObservableObject {
     ) -> Bool {
         switch Self.backupMetadataHealth(for: udid, in: directory) {
         case .complete:
+            Self.commitMetadataGuard(for: udid, in: directory)
             finishOperation(operationID)
             backupProgress = "Backup complete"
             backupPercent = 1.0
@@ -526,6 +664,7 @@ final class BackupManager: ObservableObject {
             onProgress("Backup complete")
             return true
         case .missing:
+            Self.restoreMetadataGuardIfNeeded(for: udid, in: directory)
             let path = Self.backupPath(for: udid, in: directory)
             finishOperation(operationID)
             backupProgress = "Backup metadata incomplete"
@@ -541,13 +680,23 @@ final class BackupManager: ObservableObject {
             onProgress(lastError ?? "Backup metadata incomplete.")
             return false
         case .incomplete(let path):
+            Self.restoreMetadataGuardIfNeeded(for: udid, in: directory)
+            let hasPayload = Self.incompleteBackupHasPayloadData(path)
             finishOperation(operationID)
             backupProgress = "Backup metadata incomplete"
+            let recoveryAction: RecoveryAction = hasPayload ? .resumeBackup : .deleteIncompleteAndRunFull
+            let message = hasPayload
+                ? "The backup command finished, but the resulting backup metadata is incomplete. You can resume to complete remaining files, or move the folder to Trash and start fresh."
+                : "The backup command finished, but the resulting backup metadata is incomplete. Move the incomplete folder to Trash, then run a fresh full backup with the device unlocked and connected over USB when possible."
+            // Without the tool output this failure is undiagnosable: the device
+            // console is the only place the resume's actual errors live, and the
+            // generic metadata message intentionally explains none of them.
+            let stderrTail = pymobiledeviceStderrTail.joined(separator: "\n")
             lastBackupFailure = BackupFailure(
                 title: "Backup Metadata Incomplete",
-                message: "The backup command finished, but the resulting backup metadata is incomplete. Move the incomplete folder to Trash, then run a fresh full backup with the device unlocked and connected over USB when possible.",
-                technicalDetails: path,
-                recoveryAction: .deleteIncompleteAndRunFull,
+                message: message,
+                technicalDetails: stderrTail.isEmpty ? path : "\(path)\n\n\(stderrTail)",
+                recoveryAction: recoveryAction,
                 udid: udid,
                 recoveryPath: path
             )
@@ -562,6 +711,7 @@ final class BackupManager: ObservableObject {
         udid: String,
         encrypted: Bool = false,
         preferNetwork: Bool = false,
+        configuration: DeviceBackupConfiguration? = nil,
         onProgress: @escaping (String) -> Void
     ) async -> Bool {
         // Per-device ownership first (#60): if another owner already holds this
@@ -600,13 +750,18 @@ final class BackupManager: ObservableObject {
         }
 
         if case .incomplete(let path) = Self.backupMetadataHealth(for: udid, in: backupRoot) {
+            let hasPayload = Self.incompleteBackupHasPayloadData(path)
             finishOperation(operationID)
             backupProgress = "Incomplete backup found"
+            let recoveryAction: RecoveryAction = hasPayload ? .resumeBackup : .deleteIncompleteAndRunFull
+            let message = hasPayload
+                ? "An interrupted backup with existing files was found for this device. You can resume this backup to transfer only remaining files, or delete it and start fresh."
+                : "A previous backup for this device did not finish, so iOS may reject another backup in this folder. Delete the incomplete folder, then run a full backup again."
             lastBackupFailure = BackupFailure(
                 title: "Incomplete Backup Found",
-                message: "A previous backup for this device did not finish, so iOS may reject another backup in this folder. Delete the incomplete folder, then run a full backup again.",
+                message: message,
                 technicalDetails: path,
-                recoveryAction: .deleteIncompleteAndRunFull,
+                recoveryAction: recoveryAction,
                 udid: udid,
                 recoveryPath: path
             )
@@ -620,12 +775,16 @@ final class BackupManager: ObservableObject {
             return false
         }
 
+        // Snapshot valid existing metadata before pymobiledevice3 / idevicebackup2 mutates the folder
+        Self.stageMetadataGuard(for: udid, in: backupRoot)
+
         // Primary: pymobiledevice3
         let pySuccess = await createBackupViaPymobiledevice(
             udid: udid,
             directory: backupRoot,
             full: true,
             preferNetwork: preferNetwork,
+            configuration: configuration,
             operationID: operationID,
             onProgress: onProgress
         )
@@ -633,6 +792,7 @@ final class BackupManager: ObservableObject {
             return finalizeSuccessfulBackup(udid: udid, directory: backupRoot, operationID: operationID, onProgress: onProgress)
         }
         if operationWasCancelled(operationID) {
+            Self.restoreMetadataGuardIfNeeded(for: udid, in: backupRoot)
             markOperationCancelled(operationID)
             return false
         }
@@ -644,8 +804,9 @@ final class BackupManager: ObservableObject {
         }
 
         // Fallback: idevicebackup2
+        let fallbackReason = pymobiledeviceStderr.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n").last ?? "pymobiledevice3 failed"
+        onProgress("Fallback: \(fallbackReason)")
         backupProgress = "Backing up..."
-        onProgress("Backing up")
 
         let args = idevicebackupArguments(udid: udid, directory: backupRoot, full: true, preferNetwork: preferNetwork)
         var idevicebackupStderr = ""
@@ -679,6 +840,7 @@ final class BackupManager: ObservableObject {
                         }
                         if self.operationWasCancelled(operationID) {
                             await self.awaitCancellationDrain(operationID)
+                            Self.restoreMetadataGuardIfNeeded(for: udid, in: backupRoot)
                             self.markOperationCancelled(operationID)
                             continuation.resume(returning: false)
                             return
@@ -688,6 +850,7 @@ final class BackupManager: ObservableObject {
                             continuation.resume(returning: verified)
                             return
                         } else {
+                            Self.restoreMetadataGuardIfNeeded(for: udid, in: backupRoot)
                             let combinedStderr = [pymobiledeviceStderr, idevicebackupStderr]
                                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                                 .joined(separator: "\n---\n")
@@ -727,9 +890,12 @@ final class BackupManager: ObservableObject {
         directory: String,
         full: Bool,
         preferNetwork: Bool,
+        configuration: DeviceBackupConfiguration? = nil,
         operationID: UUID,
         onProgress: @escaping (String) -> Void
     ) async -> Bool {
+    // Use configuration as local variable for backward compatibility
+    let configuration = configuration
         // Entering this async helper is an actor suspension point. Quit may request
         // cancellation after ownership is acquired but before a child is assigned.
         guard !operationWasCancelled(operationID) else { return false }
@@ -740,6 +906,14 @@ final class BackupManager: ObservableObject {
             lastError = "pymobiledevice3 not installed. Install with: pipx install pymobiledevice3"
             return false
         }
+
+        // Generate domain preservation regex from configuration
+        let onlyRegex: [String]? = {
+            guard let config = configuration else { return nil }
+            return config.profileType.preservationRegex(
+                excludedBundleIds: config.excludedBundleIds
+            )
+        }()
 
         backupProgress = "Backing up..."
         onProgress("Backing up")
@@ -754,6 +928,12 @@ final class BackupManager: ObservableObject {
                 udid: udid,
                 full: full,
                 preferNetwork: preferNetwork,
+                onlyRegex: onlyRegex,
+                // IMPORTANT: pymobiledevice3's `_should_do_full_backup` forces `full = True` whenever
+                // `patch_manifest = True` (`return full or patch_manifest or ...`), which wipes out
+                // incremental/resume delta state! Only pass `patchManifest: true` on full backups (`full == true`),
+                // so resuming or incremental backups keep `--only-regex` filtering without resetting to a full backup.
+                patchManifest: full && (onlyRegex != nil && !onlyRegex!.isEmpty),
                 timeout: Self.streamingBackupTimeout,
                 onOutput: { [weak self] output in
                     let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -771,8 +951,8 @@ final class BackupManager: ObservableObject {
                     // pymobiledevice3 sends progress on stderr.
                     if let pct = PyMobileDevice.parseProgress(from: trimmed) {
                         self?.backupPercent = pct
-                        self?.backupProgress = "Backup: \(Int(pct * 100))%"
-                        onProgress("Backing up \(Int(pct * 100))%")
+                        self?.backupProgress = trimmed
+                        onProgress(trimmed)
                         return
                     }
                     // Retain non-progress stderr lines so a failure surfaces the real reason.
@@ -780,6 +960,11 @@ final class BackupManager: ObservableObject {
                     for line in trimmed.components(separatedBy: "\n") {
                         let l = line.trimmingCharacters(in: .whitespacesAndNewlines)
                         if l.isEmpty { continue }
+                        let lower = l.lowercased()
+                        if lower.contains("passcode") || lower.contains("enter pin") || lower.contains("trust this computer") || lower.contains("unlock") || lower.contains("not paired") || lower.contains("dismissed") || lower.contains("domain_changed") {
+                            self.backupProgress = l
+                            onProgress(l)
+                        }
                         self.pymobiledeviceStderrTail.append(l)
                         if self.pymobiledeviceStderrTail.count > Self.stderrTailLineLimit {
                             self.pymobiledeviceStderrTail.removeFirst(
@@ -813,6 +998,7 @@ final class BackupManager: ObservableObject {
     func createIncrementalBackup(
         udid: String,
         preferNetwork: Bool = false,
+        configuration: DeviceBackupConfiguration? = nil,
         onProgress: @escaping (String) -> Void
     ) async -> Bool {
         // Per-device ownership first (#60): if another owner already holds this
@@ -866,13 +1052,18 @@ final class BackupManager: ObservableObject {
             onProgress(lastError ?? "Run a full backup first.")
             return false
         case .incomplete(let path):
+            let hasPayload = Self.incompleteBackupHasPayloadData(path)
             finishOperation(operationID)
             backupProgress = "Incomplete backup found"
+            let recoveryAction: RecoveryAction = hasPayload ? .resumeBackup : .deleteIncompleteAndRunFull
+            let message = hasPayload
+                ? "An interrupted backup with existing files was found for this device. You can resume this backup to transfer only remaining files, or delete it and start fresh."
+                : "A previous backup for this device did not finish. Delete the incomplete folder, then run a full backup again."
             lastBackupFailure = BackupFailure(
                 title: "Incomplete Backup Found",
-                message: "A previous backup for this device did not finish. Delete the incomplete folder, then run a full backup again.",
+                message: message,
                 technicalDetails: path,
-                recoveryAction: .deleteIncompleteAndRunFull,
+                recoveryAction: recoveryAction,
                 udid: udid,
                 recoveryPath: path
             )
@@ -886,6 +1077,9 @@ final class BackupManager: ObservableObject {
             return false
         }
 
+        // Snapshot valid existing metadata before pymobiledevice3 / idevicebackup2 mutates the folder
+        Self.stageMetadataGuard(for: udid, in: backupRoot)
+
         // Primary: pymobiledevice3 (without --full flag)
         if PyMobileDevice.available() {
             let success = await createBackupViaPymobiledevice(
@@ -893,6 +1087,7 @@ final class BackupManager: ObservableObject {
                 directory: backupRoot,
                 full: false,
                 preferNetwork: preferNetwork,
+                configuration: configuration,
                 operationID: operationID,
                 onProgress: onProgress
             )
@@ -900,6 +1095,7 @@ final class BackupManager: ObservableObject {
                 return finalizeSuccessfulBackup(udid: udid, directory: backupRoot, operationID: operationID, onProgress: onProgress)
             }
             if operationWasCancelled(operationID) {
+                Self.restoreMetadataGuardIfNeeded(for: udid, in: backupRoot)
                 markOperationCancelled(operationID)
                 return false
             }
@@ -913,6 +1109,8 @@ final class BackupManager: ObservableObject {
         var idevicebackupStderr = ""
 
         // Fallback: idevicebackup2
+        let fallbackReason = pymobiledeviceStderr.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n").last ?? "pymobiledevice3 failed"
+        onProgress("Fallback: \(fallbackReason)")
         return await withCheckedContinuation { continuation in
             guard !operationWasCancelled(operationID) else {
                 markOperationCancelled(operationID)
@@ -942,6 +1140,7 @@ final class BackupManager: ObservableObject {
                         }
                         if self.operationWasCancelled(operationID) {
                             await self.awaitCancellationDrain(operationID)
+                            Self.restoreMetadataGuardIfNeeded(for: udid, in: backupRoot)
                             self.markOperationCancelled(operationID)
                             continuation.resume(returning: false)
                             return
@@ -951,6 +1150,7 @@ final class BackupManager: ObservableObject {
                             continuation.resume(returning: verified)
                             return
                         } else {
+                            Self.restoreMetadataGuardIfNeeded(for: udid, in: backupRoot)
                             let combinedStderr = [pymobiledeviceStderr, idevicebackupStderr]
                                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                                 .joined(separator: "\n---\n")
@@ -965,6 +1165,175 @@ final class BackupManager: ObservableObject {
                             self.lastBackupFailure = failure
                             self.lastError = Self.composeFailureMessage(
                                 primary: "Incremental backup failed via both backends.",
+                                stderr: combinedStderr
+                            )
+                        }
+                        continuation.resume(returning: false)
+                    }
+                }
+            )
+        }
+    }
+
+    /// Resume an incomplete backup by sanitizing any corrupted plists or uncheckpointed
+    /// WAL journals first, then invoking the backup runner so iOS can delta-verify
+    /// already-transferred files and only stream remaining chunks.
+    func resumeIncompleteBackup(
+        udid: String,
+        encrypted: Bool = false,
+        preferNetwork: Bool = false,
+        configuration: DeviceBackupConfiguration? = nil,
+        onProgress: @escaping (String) -> Void
+    ) async -> Bool {
+        guard let operationID = beginCancellableOperation(udid: udid) else { return false }
+        let backupRoot = Self.activeBackupDir
+        let coordinatorToken = BackupOperationCoordinator.shared.beginBackup()
+        defer {
+            if let coordinatorToken { BackupOperationCoordinator.shared.endBackup(coordinatorToken) }
+        }
+        isCreatingBackup = true
+        backupProgress = "Preparing to resume backup..."
+        backupPercent = 0
+        lastError = nil
+        lastBackupFailure = nil
+
+        let preflight = Self.validateBackupDirectory(backupRoot)
+        if !preflight.ok {
+            finishOperation(operationID)
+            backupProgress = "Backup failed"
+            lastError = preflight.reason
+            lastBackupFailure = BackupFailure(
+                title: "Backup Folder Not Accessible",
+                message: preflight.reason ?? "Phosphor cannot read or write the selected backup folder.",
+                technicalDetails: backupRoot,
+                recoveryAction: .openBackupSettings,
+                udid: udid,
+                recoveryPath: backupRoot
+            )
+            onProgress(preflight.reason ?? "Backup directory is not accessible.")
+            return false
+        }
+
+        let targetPath = Self.backupPath(for: udid, in: backupRoot)
+        // Perform pre-resume sanitization and metadata guard staging off the MainActor
+        // so SQLite WAL checkpointing and plist copies on external USB drives never block UI rendering or 1s timers.
+        let sanitizeResult = await Task.detached(priority: .utility) {
+            let res = Self.sanitizeIncompleteBackup(at: targetPath)
+            Self.stageMetadataGuard(for: udid, in: backupRoot)
+            return res
+        }.value
+        onProgress("Sanitizing: \(sanitizeResult.filesScanned) scanned, \(sanitizeResult.filesCleaned) cleaned, wal: \(sanitizeResult.walCheckpointed)")
+
+        if operationWasCancelled(operationID) {
+            Self.restoreMetadataGuardIfNeeded(for: udid, in: backupRoot)
+            markOperationCancelled(operationID)
+            return false
+        }
+
+        backupProgress = "Resuming backup..."
+        onProgress("Resuming backup...")
+
+        // Primary: pymobiledevice3 without --full flag to allow delta resumption
+        if PyMobileDevice.available() {
+            var pySuccess = false
+            var attempts = 0
+            while attempts < 3 && !pySuccess && !operationWasCancelled(operationID) {
+                attempts += 1
+                pySuccess = await createBackupViaPymobiledevice(
+                    udid: udid,
+                    directory: backupRoot,
+                    full: false,
+                    preferNetwork: preferNetwork,
+                    configuration: configuration,
+                    operationID: operationID,
+                    onProgress: onProgress
+                )
+                if pySuccess {
+                    return finalizeSuccessfulBackup(udid: udid, directory: backupRoot, operationID: operationID, onProgress: onProgress)
+                }
+                if operationWasCancelled(operationID) {
+                    Self.restoreMetadataGuardIfNeeded(for: udid, in: backupRoot)
+                    markOperationCancelled(operationID)
+                    return false
+                }
+                let err = pymobiledeviceStderrTail.joined(separator: "\n").lowercased()
+                // If iOS refused the initial handshake because the screen was asleep or passcode entry was pending (MBErrorDomain/208),
+                // notify user and give a grace window before retrying so it does not fail abruptly in 2 seconds.
+                if attempts < 3 && (err.contains("mberrordomain/208") || err.contains("device locked")) {
+                    onProgress("Device locked. Please unlock iPhone and enter passcode...")
+                    try? await Task.sleep(nanoseconds: 6_000_000_000)
+                } else {
+                    break
+                }
+            }
+        }
+
+        let pymobiledeviceStderr = pymobiledeviceStderrTail.joined(separator: "\n")
+        if Self.shouldInhibitFallback(stderr: pymobiledeviceStderr) {
+            failWithoutFallback(operationID: operationID, udid: udid, backupRoot: backupRoot, primary: "Resume backup failed.", stderr: pymobiledeviceStderr)
+            return false
+        }
+        let fallbackReason = pymobiledeviceStderr.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n").last ?? "pymobiledevice3 failed"
+        onProgress("Fallback: \(fallbackReason)")
+
+        // Fallback: idevicebackup2 without --full flag
+        let args = idevicebackupArguments(udid: udid, directory: backupRoot, full: false, preferNetwork: preferNetwork)
+        var idevicebackupStderr = ""
+
+        return await withCheckedContinuation { continuation in
+            guard !operationWasCancelled(operationID) else {
+                markOperationCancelled(operationID)
+                continuation.resume(returning: false)
+                return
+            }
+            activeProcess = Shell.runStreaming(
+                "idevicebackup2",
+                arguments: args,
+                timeout: Self.streamingBackupTimeout,
+                onOutput: { [weak self] output in
+                    let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                    self?.backupProgress = trimmed
+                    if let pct = PyMobileDevice.parseProgress(from: trimmed) {
+                        self?.backupPercent = pct
+                    }
+                    onProgress(output)
+                },
+                onError: { error in
+                    idevicebackupStderr.append(error)
+                },
+                completion: { [weak self] exitCode in
+                    Task { @MainActor in
+                        guard let self else {
+                            continuation.resume(returning: false)
+                            return
+                        }
+                        if self.operationWasCancelled(operationID) {
+                            await self.awaitCancellationDrain(operationID)
+                            Self.restoreMetadataGuardIfNeeded(for: udid, in: backupRoot)
+                            self.markOperationCancelled(operationID)
+                            continuation.resume(returning: false)
+                            return
+                        }
+                        if exitCode == 0 {
+                            let verified = self.finalizeSuccessfulBackup(udid: udid, directory: backupRoot, operationID: operationID, onProgress: onProgress)
+                            continuation.resume(returning: verified)
+                            return
+                        } else {
+                            Self.restoreMetadataGuardIfNeeded(for: udid, in: backupRoot)
+                            let combinedStderr = [pymobiledeviceStderr, idevicebackupStderr]
+                                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                                .joined(separator: "\n---\n")
+                            self.finishOperation(operationID)
+                            self.backupProgress = "Backup failed"
+                            let failure = Self.backupFailure(
+                                primary: "Resume backup failed via both backends.",
+                                stderr: combinedStderr,
+                                udid: udid,
+                                recoveryPath: Self.backupPath(for: udid, in: backupRoot)
+                            )
+                            self.lastBackupFailure = failure
+                            self.lastError = Self.composeFailureMessage(
+                                primary: "Resume backup failed via both backends.",
                                 stderr: combinedStderr
                             )
                         }
@@ -1076,11 +1445,9 @@ final class BackupManager: ObservableObject {
         if let activeOperationID = operationCoordinator.activeOperationID {
             cancelledOperationIDs.insert(activeOperationID)
             if let activeProcess, cancellationDrainTasks[activeOperationID] == nil {
-                // Keep the per-device operation lease until every descendant is
-                // gone. The streaming leader can exit before a TERM-ignoring
-                // child, so its completion alone is not cancellation completion.
+                // Fast cancel for pause/save: SIGTERM with grace window, then clean reap
                 cancellationDrainTasks[activeOperationID] = Task {
-                    await Shell.terminateAndWait(activeProcess)
+                    await Shell.cancelAndWait(activeProcess)
                 }
             }
         }

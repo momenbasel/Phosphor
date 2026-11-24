@@ -12,6 +12,9 @@ struct DeviceOverviewView: View {
     @State private var copiedField: String?
     @State private var showFullWiFiBackupConfirm = false
     @State private var pendingBackupDevice: DeviceInfo?
+    @State private var pendingIncompleteBackupIssue: BackupManager.BackupFailure?
+    @State private var showIncompleteBackupTrashConfirm = false
+    var onShowPreflight: ((DeviceInfo) -> Void)? = nil
 
     var body: some View {
         Group {
@@ -47,15 +50,39 @@ struct DeviceOverviewView: View {
         } message: {
             Text(backupVM.alertMessage)
         }
-        .alert("Backup Issue", isPresented: backupIssuePresented) {
-            Button("OK", role: .cancel) { backupVM.backupIssue = nil }
+        .sheet(item: $backupVM.backupIssue) { issue in
+            BackupIssueSheet(
+                issue: issue,
+                primaryActionTitle: backupIssueActionTitle(for: issue),
+                primaryAction: { handleBackupIssueAction(issue) },
+                secondaryActionTitle: issue.recoveryAction == .resumeBackup ? "Delete & Start Fresh" : nil,
+                secondaryAction: issue.recoveryAction == .resumeBackup ? {
+                    pendingIncompleteBackupIssue = issue
+                    backupVM.backupIssue = nil
+                    showIncompleteBackupTrashConfirm = true
+                } : nil,
+                dismiss: { backupVM.backupIssue = nil }
+            )
+        }
+        .confirmationDialog(
+            "Move Incomplete Backup to Trash?",
+            isPresented: $showIncompleteBackupTrashConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Move to Trash & Run Full Backup") {
+                if let issue = pendingIncompleteBackupIssue {
+                    Task { await backupVM.deleteIncompleteBackupAndRunFull(for: issue) }
+                }
+                pendingIncompleteBackupIssue = nil
+            }
+            Button("Cancel", role: .cancel) { pendingIncompleteBackupIssue = nil }
         } message: {
-            Text(backupVM.backupIssue.map { "\($0.title)\n\n\($0.message)" } ?? "Backup failed")
+            Text("The incomplete backup folder will be moved to the Trash. The device needs to be unlocked and connected over USB for the full backup to succeed.")
         }
         .alert("Full Wi-Fi Backup?", isPresented: $showFullWiFiBackupConfirm) {
-            Button("Run Full Wi-Fi Backup") {
+            Button("Configure & Run Full Wi-Fi Backup") {
                 if let device = pendingBackupDevice {
-                    Task { await backupVM.createBackup(udid: device.id, incremental: false, preferNetwork: true) }
+                    onShowPreflight?(device)
                 }
                 pendingBackupDevice = nil
             }
@@ -65,11 +92,38 @@ struct DeviceOverviewView: View {
         }
     }
 
-    private var backupIssuePresented: Binding<Bool> {
-        Binding(
-            get: { backupVM.backupIssue != nil },
-            set: { if !$0 { backupVM.backupIssue = nil } }
-        )
+    private func backupIssueActionTitle(for issue: BackupManager.BackupFailure) -> String? {
+        switch issue.recoveryAction {
+        case .resumeBackup: return "Resume Backup"
+        case .runFullBackup: return "Run Full Backup"
+        case .deleteIncompleteAndRunFull: return "Delete Incomplete Backup & Run Full"
+        case .openBackupSettings: return "Open Backup Settings"
+        case .retry: return "Retry"
+        case .none: return nil
+        }
+    }
+
+    private func handleBackupIssueAction(_ issue: BackupManager.BackupFailure) {
+        switch issue.recoveryAction {
+        case .resumeBackup:
+            backupVM.backupIssue = nil
+            Task { await backupVM.resumeBackup(for: issue) }
+        case .runFullBackup:
+            backupVM.backupIssue = nil
+            Task { await backupVM.runFullBackup(for: issue) }
+        case .deleteIncompleteAndRunFull:
+            pendingIncompleteBackupIssue = issue
+            backupVM.backupIssue = nil
+            showIncompleteBackupTrashConfirm = true
+        case .openBackupSettings:
+            backupVM.backupIssue = nil
+            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        case .retry:
+            backupVM.backupIssue = nil
+            Task { await backupVM.retryBackup(for: issue) }
+        case .none:
+            backupVM.backupIssue = nil
+        }
     }
 
     private var noDeviceView: some View {
@@ -383,14 +437,15 @@ struct DeviceOverviewView: View {
                     Task { await deviceVM.takeScreenshot() }
                 }
                 ActionButton(
-                    icon: backupVM.isBackupActive(for: device.id) ? "hourglass" : backupActionIcon(for: device),
-                    label: backupVM.isBackupActive(for: device.id) ? "Backing Up..." : backupActionLabel(for: device),
-                    color: .brandAccent
+                    icon: (backupVM.isBackupActive(for: device.id) || backupVM.isLoadingBackups) ? "hourglass" : backupActionIcon(for: device),
+                    label: backupVM.isBackupActive(for: device.id) ? "Backing Up..." : (backupVM.isLoadingBackups ? "Scanning Disk..." : backupActionLabel(for: device)),
+                    color: hasResumableBackup(for: device) ? .orange : .brandAccent
                 ) {
                     startBackup(for: device)
                 }
                 .disabled(backupVM.isBackupActive(for: device.id))
-                .help("Start a backup for this device")
+                .disabled(backupVM.isLoadingBackups)
+                .help(backupVM.isLoadingBackups ? "Scanning backup location on disk…" : (hasResumableBackup(for: device) ? "Resume interrupted backup from saved progress" : "Start a backup for this device"))
                 if !device.isPaired {
                     ActionButton(icon: "link", label: "Pair", color: .green) {
                         Task { await deviceVM.pair() }
@@ -409,26 +464,6 @@ struct DeviceOverviewView: View {
                 }
             }
 
-            if let activity = backupVM.activity(for: device.id), activity.isActive {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text(activity.displayProgressText)
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                        Spacer()
-                        Button("Cancel") { backupVM.cancelBackup(udid: device.id) }
-                            .controlSize(.small)
-                    }
-                    ProgressView(
-                        value: activity.displayProgressFraction,
-                        total: 1.0
-                    )
-                        .progressViewStyle(.linear)
-                        .tint(.brandAccent)
-                }
-            }
-
             if device.connectionType == .usb {
                 Text("Enable Wi-Fi turns on Finder's \"Show this iPhone when on Wi-Fi\" option. After it succeeds, unplug the cable, keep the device unlocked, then scan again.")
                     .font(.caption)
@@ -441,12 +476,22 @@ struct DeviceOverviewView: View {
     // MARK: - Helpers
 
     private func hasCompleteBackup(for device: DeviceInfo) -> Bool {
-        BackupManager.hasExistingBackup(for: device.id) && backupVM.backups.contains { backup in
-            backup.udid == device.id || backup.id == device.id
+        if let existing = backupVM.backups.first(where: { !$0.isArchivedSnapshot && ($0.udid == device.id || $0.id == device.id) }) {
+            return existing.healthState == .complete
+        }
+        return BackupManager.hasExistingBackup(for: device.id) && backupVM.backups.contains { backup in
+            !backup.isArchivedSnapshot && (backup.udid == device.id || backup.id == device.id)
         }
     }
 
+    private func hasResumableBackup(for device: DeviceInfo) -> Bool {
+        backupVM.hasResumableBackup(for: device.id)
+    }
+
     private func backupActionLabel(for device: DeviceInfo) -> String {
+        if hasResumableBackup(for: device) {
+            return "Resume Backup"
+        }
         if device.connectionType == .wifi {
             return hasCompleteBackup(for: device) ? "Wi-Fi Backup" : "Full Wi-Fi"
         }
@@ -454,18 +499,35 @@ struct DeviceOverviewView: View {
     }
 
     private func backupActionIcon(for device: DeviceInfo) -> String {
-        device.connectionType == .wifi ? "wifi" : "externaldrive.badge.plus"
+        if hasResumableBackup(for: device) {
+            return "play.circle.fill"
+        }
+        return device.connectionType == .wifi ? "wifi" : "externaldrive.badge.plus"
     }
 
     private func startBackup(for device: DeviceInfo) {
+        if hasResumableBackup(for: device) {
+            Task {
+                await backupVM.resumeBackup(
+                    udid: device.id,
+                    preferNetwork: device.connectionType == .wifi,
+                    device: device
+                )
+            }
+            return
+        }
         let preferNetwork = device.connectionType == .wifi
-        let incremental = preferNetwork && hasCompleteBackup(for: device)
+        let incremental = hasCompleteBackup(for: device)
         if preferNetwork && !incremental {
             pendingBackupDevice = device
             showFullWiFiBackupConfirm = true
             return
         }
-        Task { await backupVM.createBackup(udid: device.id, incremental: incremental, preferNetwork: preferNetwork) }
+        if let onShowPreflight {
+            onShowPreflight(device)
+        } else {
+            Task { await backupVM.createBackup(udid: device.id, incremental: incremental, preferNetwork: preferNetwork) }
+        }
     }
 
     private func copyableInfoRow(label: String, value: String, icon: String) -> some View {
@@ -524,7 +586,8 @@ struct ActionButton: View {
                 Text(label)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.primary)
-                    .lineLimit(1)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
                     .minimumScaleFactor(0.75)
             }
             .frame(width: 78, height: 62)

@@ -65,17 +65,20 @@ struct SettingsView: View {
                         panel.canChooseDirectories = true
                         if panel.runModal() == .OK, let url = panel.url {
                             backupDirectory = url.path
+                            backupVM.loadBackups()
                         }
                     }
 
                     Button("Reset") {
                         backupDirectory = BackupManager.defaultBackupDir
+                        backupVM.loadBackups()
                     }
                 }
 
                 HStack {
                     Button("Use Apple MobileSync directory") {
                         backupDirectory = BackupManager.systemMobileSyncDir
+                        backupVM.loadBackups()
                     }
                     Spacer()
                 }
