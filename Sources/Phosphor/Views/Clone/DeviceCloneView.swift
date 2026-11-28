@@ -28,8 +28,8 @@ struct DeviceCloneView: View {
         }
         .onAppear { scanDevices() }
         .alert("Start Clone?", isPresented: $showConfirmation) {
+            Button("Clone") { startClone() }
             Button("Cancel", role: .cancel) {}
-            Button("Clone", role: .destructive) { startClone() }
         } message: {
             let srcName = availableDevices.first(where: { $0.udid == sourceUDID })?.name ?? "Unknown"
             let dstName = availableDevices.first(where: { $0.udid == destinationUDID })?.name ?? "Unknown"

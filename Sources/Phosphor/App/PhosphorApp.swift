@@ -75,12 +75,12 @@ struct PhosphorApp: App {
                     // that delay must not terminate an app with enabled schedules.
                     scheduler.attachBackupViewModel(backupVM)
                     scheduler.startMonitoring()
+                    backupVM.loadBackups()
                     Task {
                         // Let SwiftUI paint the first window before starting
-                        // device polling and backup discovery work.
+                        // device polling.
                         try? await Task.sleep(for: .milliseconds(750))
                         deviceVM.deviceManager.startPolling(interval: 4.0)
-                        backupVM.loadBackups()
                     }
                 }
                 .sheet(isPresented: showOnboarding) {
@@ -102,7 +102,7 @@ struct PhosphorApp: App {
                 Button("Backup Now") {
                     startBackupNow()
                 }
-                .disabled(deviceVM.selectedDevice == nil || backupVM.isCreating)
+                .disabled(deviceVM.selectedDevice == nil || backupVM.isCreating || backupVM.isLoadingBackups)
 
                 Button("Open Backup Folder") {
                     openBackupFolder()
@@ -157,7 +157,7 @@ struct PhosphorApp: App {
             }
 
             CommandMenu("Backup") {
-                Button("Backup Now") {
+                Button(deviceVM.selectedDevice.map { hasResumableBackup(for: $0) } == true ? "Resume Backup" : "Backup Now") {
                     startBackupNow()
                 }
                 .keyboardShortcut("b", modifiers: .command)
@@ -167,6 +167,7 @@ struct PhosphorApp: App {
                 // device that is perfectly free.
                 .disabled(
                     deviceVM.selectedDevice == nil ||
+                    backupVM.isLoadingBackups ||
                     deviceVM.selectedDevice.map { backupVM.isBackupActive(for: $0.id) } == true
                 )
 
@@ -196,17 +197,52 @@ struct PhosphorApp: App {
         )
     }
 
+    private func hasResumableBackup(for device: DeviceInfo) -> Bool {
+        backupVM.hasResumableBackup(for: device.id)
+    }
+
     private func startBackupNow() {
-        guard let device = deviceVM.selectedDevice, !backupVM.isCreating else { return }
+        guard let device = deviceVM.selectedDevice, !backupVM.isCreating, !backupVM.isLoadingBackups else { return }
+        if hasResumableBackup(for: device) {
+            selectedSection = .backups
+            Task {
+                await backupVM.resumeBackup(
+                    udid: device.id,
+                    preferNetwork: device.connectionType == .wifi,
+                    device: device
+                )
+            }
+            return
+        }
         if device.connectionType == .wifi && !BackupManager.hasExistingBackup(for: device.id) {
             guard confirmFirstFullWiFiBackup(for: device) else { return }
         }
+        let hasCompleteBackup = BackupManager.hasExistingBackup(for: device.id)
+            && backupVM.backups.contains(where: {
+                !$0.isArchivedSnapshot
+                    && ($0.udid == device.id || $0.id == device.id)
+                    && $0.healthState == .complete
+            })
+        let targetUDID = device.id
+        let targetDir = BackupManager.activeBackupDir
+        let preferNetwork = device.connectionType == .wifi
+        let config = DeviceBackupConfiguration.load(for: targetUDID)
         selectedSection = .backups
         Task {
+            let useIncremental = await Task.detached(priority: .userInitiated) {
+                BackupManager.prepareExistingBackupForRun(
+                    udid: targetUDID,
+                    in: targetDir,
+                    wantsIncremental: hasCompleteBackup,
+                    configuration: config
+                )
+            }.value
             await backupVM.createBackup(
-                udid: device.id,
-                incremental: false,
-                preferNetwork: device.connectionType == .wifi
+                udid: targetUDID,
+                incremental: useIncremental,
+                preferNetwork: preferNetwork,
+                device: device,
+                configuration: config
             )
         }
     }

@@ -23,19 +23,22 @@ final class DeviceViewModel: ObservableObject {
     init() {
         deviceManager.$connectedDevices
             .sink { [weak self] devices in
-                self?.devices = devices
+                guard let self, self.devices != devices else { return }
+                self.devices = devices
             }
             .store(in: &cancellables)
 
         deviceManager.$nearbyWirelessDevices
             .sink { [weak self] devices in
-                self?.nearbyWirelessDevices = devices
+                guard let self, self.nearbyWirelessDevices != devices else { return }
+                self.nearbyWirelessDevices = devices
             }
             .store(in: &cancellables)
 
         deviceManager.$selectedDevice
             .sink { [weak self] device in
-                self?.selectedDevice = device
+                guard let self, self.selectedDevice != device else { return }
+                self.selectedDevice = device
             }
             .store(in: &cancellables)
 

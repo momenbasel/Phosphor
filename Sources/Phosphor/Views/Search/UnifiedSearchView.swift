@@ -32,7 +32,7 @@ struct UnifiedSearchView: View {
         }
         .onAppear {
             if viewModel.selectedBackup == nil {
-                viewModel.chooseBackup(backupVM.selectedBackup ?? backupVM.backups.first)
+                viewModel.chooseBackup(backupVM.selectedBackup ?? backupVM.preferredBrowsableBackup)
             }
         }
         .onChange(of: backupVM.backups.map(\.path)) { _, paths in
@@ -69,8 +69,8 @@ struct UnifiedSearchView: View {
                 Spacer()
                 Picker("Choose Backup", selection: selectedBackupID) {
                     Text("Choose Backup").tag("")
-                    ForEach(backupVM.backups) { backup in
-                        Text("\(backup.deviceName) — \(backup.dateString)").tag(backup.id)
+                    ForEach(backupVM.browsableBackups) { backup in
+                        Text("\(backup.deviceName) — \(backup.dateString)\(backup.pickerStatusSuffix)").tag(backup.id)
                     }
                 }
                 .frame(width: 280)

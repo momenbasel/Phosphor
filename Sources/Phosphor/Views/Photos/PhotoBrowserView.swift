@@ -299,12 +299,12 @@ struct PhotoBrowserView: View {
                     title: "No Backup Selected",
                     subtitle: "Go to Backups, select a backup, then return here.",
                     action: {
-                        if let first = backupVM.backups.first {
+                        if let first = backupVM.preferredBrowsableBackup {
                             backupVM.openBackupBrowser(first)
                             Task { await photoVM.loadPhotos(from: first.path) }
                         }
                     },
-                    actionLabel: backupVM.backups.isEmpty ? nil : "Use Latest Backup"
+                    actionLabel: backupVM.browsableBackups.isEmpty ? nil : "Use Latest Backup"
                 )
             } else if photoVM.items.isEmpty {
                 EmptyStateView(

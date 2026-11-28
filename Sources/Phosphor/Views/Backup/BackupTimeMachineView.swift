@@ -83,10 +83,10 @@ struct BackupTimeMachineView: View {
             isPresented: restoreConfirmationPresented,
             presenting: pendingRestore
         ) { request in
-            Button("Cancel", role: .cancel) {}
-            Button("Restore", role: .destructive) {
+            Button("Restore") {
                 performRestore(request)
             }
+            Button("Cancel", role: .cancel) {}
         } message: { request in
             Text("Restore \(request.targetName) · ID …\(request.targetUDID.suffix(8)) using \(request.backup.deviceIdentityLabel) from \(request.backup.dateString)? The target device will restart, and this cannot be undone.")
         }
@@ -168,6 +168,16 @@ struct BackupTimeMachineView: View {
                         .foregroundStyle(.orange)
                 }
 
+                if backup.healthState != .complete {
+                    Text(backup.healthState == .paused ? "Paused" : "Broken")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(backup.healthState == .paused ? Color.orange.opacity(0.85) : Color.red.opacity(0.85))
+                        .clipShape(Capsule())
+                }
+
                 Text(backup.sizeString)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.7))
@@ -207,6 +217,8 @@ struct BackupTimeMachineView: View {
                         .buttonStyle(.borderedProminent)
                         .tint(.brandAccent)
                         .controlSize(.small)
+                        .disabled(backup.healthState != .complete)
+                        .help(backup.healthState != .complete ? "Incomplete backups cannot be restored until resumed and finalized." : "Restore this backup to the selected device")
 
                         Button("Browse") {
                             if backupVM.openBackupBrowser(backup) {
@@ -230,7 +242,7 @@ struct BackupTimeMachineView: View {
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                         .tint(.white)
-                        .disabled(backupVM.isCreating || backupVM.backups.filter { $0.udid == backup.udid }.count < 2)
+                        .disabled(backup.healthState != .complete || backupVM.isCreating || backupVM.backups.filter { $0.udid == backup.udid && $0.healthState == .complete }.count < 2)
                     }
                     .padding(.top, 4)
                 }

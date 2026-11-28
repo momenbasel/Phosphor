@@ -39,6 +39,10 @@ struct BackupOperationRegistry {
         operationByDevice.removeValue(forKey: udid)
         return true
     }
+
+    func isRunning(udid: String) -> Bool {
+        operationByDevice[udid] != nil
+    }
 }
 
 /// Per-BackupManager identity paired with the shared per-device registry.

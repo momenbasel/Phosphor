@@ -127,18 +127,18 @@ struct AppManagerView: View {
     /// which nothing in the UI told you about (issue #46).
     private var backupPicker: some View {
         Menu {
-            ForEach(backupVM.backups) { backup in
-                Button("\(backup.deviceIdentityLabel) • iOS \(backup.iosVersion) • \(backup.relativeDate)\(backup.isEncrypted ? " • Encrypted" : "")") {
+            ForEach(backupVM.browsableBackups) { backup in
+                Button("\(backup.deviceIdentityLabel) • iOS \(backup.iosVersion) • \(backup.relativeDate)\(backup.pickerStatusSuffix)\(backup.isEncrypted ? " • Encrypted" : "")") {
                     selectBackup(backup)
                 }
             }
-            if !backupVM.backups.isEmpty { Divider() }
+            if !backupVM.browsableBackups.isEmpty { Divider() }
             Button("Choose Backup Folder...") { chooseBackupFolder() }
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "externaldrive.fill")
                     .foregroundStyle(.secondary)
-                Text(backupVM.selectedBackup.map { "\($0.deviceIdentityLabel) • \($0.relativeDate)" } ?? "Choose Backup")
+                Text(backupVM.selectedBackup.map { "\($0.deviceIdentityLabel) • \($0.relativeDate)\($0.pickerStatusSuffix)" } ?? "Choose Backup")
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 9, weight: .semibold))
@@ -319,7 +319,7 @@ struct AppManagerView: View {
                     icon: "archivebox",
                     title: "Choose a Backup",
                     subtitle: "Pick a backup to list the apps inside it. Each app row then gets an Extract Data button for its container.",
-                    action: { if let latest = backupVM.backups.first { selectBackup(latest) } },
+                    action: { if let latest = backupVM.preferredBrowsableBackup { selectBackup(latest) } },
                     actionLabel: "Use Latest Backup"
                 )
             } else if appVM.backupApps.isEmpty {
@@ -388,7 +388,7 @@ struct AppManagerView: View {
             if backupVM.backups.isEmpty { backupVM.loadBackups() }
             if backupVM.selectedBackup != nil {
                 reloadBackupApps()
-            } else if let latest = backupVM.backups.first {
+            } else if let latest = backupVM.preferredBrowsableBackup {
                 // Land on something usable instead of an empty screen that tells
                 // the user to go somewhere else.
                 selectBackup(latest)
@@ -415,9 +415,10 @@ struct AppManagerView: View {
     private func chooseBackupFolder() {
         let previous = backupVM.backups.map(\.path)
         backupVM.openExistingBackupFolder()
-        guard backupVM.backups.map(\.path) != previous,
-              let latest = backupVM.backups.first else { return }
-        selectBackup(latest)
+        guard backupVM.backups.map(\.path) != previous else { return }
+        if let latest = backupVM.backups.first {
+            selectBackup(backupVM.preferredBrowsableBackup ?? latest)
+        }
     }
 
     private func installIPA() {

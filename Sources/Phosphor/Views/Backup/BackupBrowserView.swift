@@ -64,14 +64,14 @@ struct BackupBrowserView: View {
             set: { if let d = $0 { backupVM.browseDomain(d) } }
         )) {
             Section("Backups") {
-                ForEach(backupVM.backups) { backup in
+                ForEach(backupVM.browsableBackups) { backup in
                     Label {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(backup.deviceIdentityLabel)
                                 .font(.system(size: 12, weight: .medium))
                                 .lineLimit(1)
                                 .truncationMode(.middle)
-                            Text(backup.dateString)
+                            Text("\(backup.dateString)\(backup.pickerStatusSuffix)")
                                 .font(.system(size: 10))
                                 .foregroundStyle(.secondary)
                         }

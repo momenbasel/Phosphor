@@ -140,8 +140,8 @@ struct WhatsAppView: View {
         HStack(spacing: 8) {
             Image(systemName: "externaldrive.fill").foregroundStyle(.secondary)
             Menu {
-                ForEach(backupVM.backups) { backup in
-                    Button("\(backup.displayName) • iOS \(backup.iosVersion) • \(backup.relativeDate)\(backup.isEncrypted ? " • Encrypted" : "")") {
+                ForEach(backupVM.browsableBackups) { backup in
+                    Button("\(backup.displayName) • iOS \(backup.iosVersion) • \(backup.relativeDate)\(backup.pickerStatusSuffix)\(backup.isEncrypted ? " • Encrypted" : "")") {
                         selectBackup(backup)
                     }
                 }
@@ -150,7 +150,7 @@ struct WhatsAppView: View {
             } label: {
                 HStack {
                     Text(backupVM.selectedBackup.map {
-                        "\($0.displayName) • iOS \($0.iosVersion) • \($0.relativeDate)\($0.isEncrypted ? " • Encrypted" : "")"
+                        "\($0.displayName) • iOS \($0.iosVersion) • \($0.relativeDate)\($0.pickerStatusSuffix)\($0.isEncrypted ? " • Encrypted" : "")"
                     } ?? "Choose Backup")
                     .lineLimit(1)
                     Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
@@ -368,7 +368,7 @@ struct WhatsAppView: View {
     }
 
     private func useLatestBackup() {
-        if let latest = backupVM.backups.first { selectBackup(latest) }
+        if let latest = backupVM.preferredBrowsableBackup { selectBackup(latest) }
     }
 
     private func selectBackup(_ backup: BackupInfo) {
@@ -387,7 +387,7 @@ struct WhatsAppView: View {
         let previousPaths = backupVM.backups.map(\.path)
         backupVM.openExistingBackupFolder()
         guard backupVM.backups.map(\.path) != previousPaths else { return }
-        if let latest = backupVM.backups.first { selectBackup(latest) } else { whatsAppVM.clear() }
+        if let latest = backupVM.preferredBrowsableBackup { selectBackup(latest) } else { whatsAppVM.clear() }
     }
 
     private func handleSelectedBackupChange() {

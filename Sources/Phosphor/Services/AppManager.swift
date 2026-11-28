@@ -84,6 +84,80 @@ final class AppManager: ObservableObject {
         isLoading = false
     }
 
+    /// List installed apps instantly, returning AppBackupTarget entries without waiting for disk size scans.
+    func listInstalledAppsFast(udid: String) async -> [AppBackupTarget] {
+        let pyApps = await PyMobileDevice.appsList(udid: udid, calculateSizes: false, timeoutOverride: 30)
+        return parseAppBackupTargets(from: pyApps)
+    }
+
+    /// List installed apps with exact DynamicDiskUsage and StaticDiskUsage.
+    func listInstalledAppsWithSizes(udid: String, timeout: TimeInterval? = nil) async -> [AppBackupTarget] {
+        let pyApps = await PyMobileDevice.appsList(udid: udid, calculateSizes: true, timeoutOverride: timeout)
+        return parseAppBackupTargets(from: pyApps)
+    }
+
+    private func parseAppBackupTargets(from pyApps: [[String: Any]]) -> [AppBackupTarget] {
+        var targets: [AppBackupTarget] = []
+
+        for appDict in pyApps {
+            let bundleId = appDict["CFBundleIdentifier"] as? String ?? ""
+            guard !bundleId.isEmpty else { continue }
+
+            let name = appDict["CFBundleDisplayName"] as? String
+                ?? appDict["CFBundleName"] as? String
+                ?? bundleId.split(separator: ".").last.map(String.init) ?? bundleId
+            let version = appDict["CFBundleShortVersionString"] as? String
+                ?? appDict["CFBundleVersion"] as? String ?? ""
+
+            let dynamicBytes = (appDict["DynamicDiskUsage"] as? NSNumber)?.int64Value
+            let staticBytes = (appDict["StaticDiskUsage"] as? NSNumber)?.int64Value
+
+            let isApple = bundleId.hasPrefix("com.apple.")
+            if isApple {
+                // Known user-facing Apple productivity and media applications that store user documents
+                let userFacingAppleApps: Set<String> = [
+                    "com.apple.iBooks",
+                    "com.apple.Pages",
+                    "com.apple.Keynote",
+                    "com.apple.Numbers",
+                    "com.apple.garageband",
+                    "com.apple.iMovie",
+                    "com.apple.podcasts",
+                    "com.apple.shortcuts",
+                    "com.apple.freeform",
+                    "com.apple.clips",
+                    "com.apple.Music",
+                    "com.apple.mobileslideshow"
+                ]
+
+                // If it's an internal Apple system daemon/service or has 0 bytes, completely exclude from UI
+                let isAllowedUserApp = userFacingAppleApps.contains(bundleId)
+                if !isAllowedUserApp {
+                    // Do not expose internal system services/daemons to backup exclusion list
+                    continue
+                }
+            }
+
+            targets.append(AppBackupTarget(
+                id: bundleId,
+                displayName: name,
+                version: version,
+                dynamicDiskBytes: dynamicBytes,
+                staticDiskBytes: staticBytes,
+                isSystemApp: isApple
+            ))
+        }
+
+        return targets.sorted {
+            let total0 = $0.effectiveTotalBytes
+            let total1 = $1.effectiveTotalBytes
+            if total0 != total1 {
+                return total0 > total1
+            }
+            return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+        }
+    }
+
     // MARK: - Backup Apps
 
     func loadBackupApps(backupPath: String) async {

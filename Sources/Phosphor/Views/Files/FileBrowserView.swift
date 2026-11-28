@@ -30,8 +30,7 @@ struct FileBrowserView: View {
             Text(fileManager.lastError ?? "")
         }
         .alert("Delete File?", isPresented: $showDeleteConfirm) {
-            Button("Cancel", role: .cancel) { pendingDeleteFile = nil }
-            Button("Delete", role: .destructive) {
+            Button("Delete") {
                 guard let entry = pendingDeleteFile else { return }
                 pendingDeleteFile = nil
                 Task {
@@ -42,6 +41,7 @@ struct FileBrowserView: View {
                     }
                 }
             }
+            Button("Cancel", role: .cancel) { pendingDeleteFile = nil }
         } message: {
             if let entry = pendingDeleteFile {
                 Text("This will delete \(entry.name) from the connected device. This cannot be undone.")
